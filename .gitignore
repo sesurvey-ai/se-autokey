@@ -1,0 +1,21 @@
+# credentials
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# bundled portable runtime (rebuild with build-runtime.bat — don't commit, ~250MB)
+runtime/
+
+# ข้อมูลระหว่างรัน
+downloaded_images/
+runs/
+
+# ไฟล์งานเฉพาะเครื่อง
+*.zip
+SURV_REPORT_*.txt
+
+# ข้อมูลธุรกิจ/พนักงาน + ไฟล์ scratch (อาจมีข้อมูลส่วนตัว/รหัส) — ห้าม commit
+*.xlsx
+New*.txt
