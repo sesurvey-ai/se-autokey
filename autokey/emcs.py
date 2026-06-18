@@ -56,6 +56,15 @@ MAX_DAMAGE_ITEMS = 8
 OPO_PREFIX = "dtlOpo_ctl{n:02d}_wuOpo_"
 MAX_OPPONENTS = 20
 
+# ---------------------------------------------------------------- ผู้บาดเจ็บ/ทรัพย์สิน
+# Tab 5/6 (ปลดล็อกหลังบันทึกหน้าหลัก เหมือนคู่กรณี): เลือกจำนวน → กรอกบล็อก → บันทึก
+INJ_PREFIX = "dtlInj_ctl{n:02d}_wuInj_"      # imbInjure_Person / ddlInj_Count / btnSave_InjurePerson
+ASSET_PREFIX = "dtlAsset_ctl{n:02d}_wuAsset_"  # imbAsset / ddlAsset_Count / btnSave_Asset
+MAX_INJURIES = 5
+MAX_ASSETS = 5
+# ประเภทบุคคล: code XML (PERSON_TYPE) → value ของ ddlPerson_Type
+PERSON_TYPE_MAP = {"DV": "01", "PV": "03", "ON": "05"}  # ผู้ขับขี่ / ผู้โดยสาร / บุคคลภายนอก
+
 # คำนำหน้าชื่อ (เรียงยาว→สั้น เพื่อให้ 'นางสาว' จับก่อน 'นาง')
 THAI_TITLES = ["เด็กหญิง", "เด็กชาย", "นางสาว", "ด.ญ.", "ด.ช.", "นาง", "นาย"]
 
@@ -291,32 +300,37 @@ def fill_third_parties(driver, data: ClaimData):
                         f"({type(e).__name__}) — กรอกเองภายหลัง")
 
 
-def _save_opponents(driver, max_rounds: int = 5) -> bool:
-    """กดบันทึกรถคู่กรณี (btnSave_Opponent) แล้วตรวจผลจริง
+def _save_section(driver, button_id: str, name: str, max_rounds: int = 5) -> bool:
+    """กดปุ่มบันทึกของ section (คู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน) แล้วตรวจ validation จริง
     - ไม่มี alert / alert ไม่มีคำว่า 'กรุณา' = บันทึกสำเร็จ
     - alert 'กรุณาใส่ข้อมูลให้ครบ...' = validation ไม่ผ่าน → หยุดรอให้คนกรอกช่องที่ฟ้อง
       บนหน้า EMCS แล้วลองใหม่ (unattended/EOF = ข้าม ไม่แจ้งสำเร็จลวง)
     คืน True เมื่อบันทึกสำเร็จ"""
     for attempt in range(1, max_rounds + 1):
-        log(f"EMCS: กดบันทึกรถคู่กรณี (รอบ {attempt})")
-        wait_clickable(driver, By.ID, "btnSave_Opponent").click()
+        log(f"EMCS: กดบันทึก{name} (รอบ {attempt})")
+        wait_clickable(driver, By.ID, button_id).click()
         try:
             alert_text = accept_alert(driver, timeout=15)
         except TimeoutException:
             alert_text = ""        # ไม่มี alert = ผ่าน
         if "กรุณา" not in (alert_text or ""):
-            log("EMCS: บันทึกรถคู่กรณีสำเร็จ ✓ — ตรวจจังหวัด/อำเภอด้วยตาอีกครั้ง")
+            log(f"EMCS: บันทึก{name}สำเร็จ ✓")
             return True
         missing = _parse_missing_fields(alert_text)
-        label = "ข้อมูลคู่กรณีที่ยังขาด" + (f": {missing}" if missing else "")
+        label = f"ข้อมูล{name}ที่ยังขาด" + (f": {missing}" if missing else "")
         if wait_for_manual_fill(label, reason=(alert_text or "").strip()):
-            log("   ↻ ลองบันทึกคู่กรณีใหม่หลังผู้ใช้กรอกข้อมูล")
+            log(f"   ↻ ลองบันทึก{name}ใหม่หลังผู้ใช้กรอกข้อมูล")
             continue
-        log("   ⚠️ คู่กรณียังไม่ถูกบันทึก (ช่องบังคับขาด — ISURVEY ไม่มีข้อมูล) → "
-            "กรอกช่องที่ฟ้องบน EMCS แล้วกด 'บันทึกรถคู่กรณี' เอง")
+        log(f"   ⚠️ {name}ยังไม่ถูกบันทึก (ช่องบังคับขาด — ISURVEY ไม่มีข้อมูล) → "
+            f"กรอกช่องที่ฟ้องบน EMCS แล้วกดปุ่มบันทึก{name}เอง")
         return False
-    log("   ⚠️ บันทึกคู่กรณีไม่ผ่านหลายรอบเกินไป — ตรวจช่องสีแดงบน EMCS แล้วบันทึกเอง")
+    log(f"   ⚠️ บันทึก{name}ไม่ผ่านหลายรอบเกินไป — ตรวจช่องสีแดงบน EMCS แล้วบันทึกเอง")
     return False
+
+
+def _save_opponents(driver, max_rounds: int = 5) -> bool:
+    """กดบันทึกรถคู่กรณี (btnSave_Opponent) + ตรวจ validation (ดู _save_section)"""
+    return _save_section(driver, "btnSave_Opponent", "รถคู่กรณี", max_rounds)
 
 
 def fill_opponent_damage(driver, prefix, damages, main_window):
@@ -387,6 +401,127 @@ def fill_opponent_damage(driver, prefix, damages, main_window):
     except Exception:
         pass
     log("   ✓ บันทึกความเสียหายคู่กรณีแล้ว")
+
+
+def fill_injuries(driver, data: ClaimData):
+    """กรอกผู้บาดเจ็บ (Tab 5) — กดเมนู imbInjure_Person → เลือกจำนวน ddlInj_Count
+    → กรอกทีละบล็อก (dtlInj_ctl00_wuInj_*) → บันทึก btnSave_InjurePerson
+    (รูปแบบเดียวกับคู่กรณี; ปลดล็อกหลังบันทึกหน้าหลัก) — เรียกหลัง save_main_form"""
+    injs = data.injuries
+    if not injs:
+        return
+    log(f"EMCS: กรอกผู้บาดเจ็บ {len(injs)} คน")
+    click_retry(driver, By.ID, "wuMenuPage1_imbInjure_Person")
+    try:
+        wait_present(driver, By.ID, "ddlInj_Count", 20)
+    except TimeoutException:
+        log("   ⚠️ ส่วนผู้บาดเจ็บไม่ปลดล็อก (ddlInj_Count ไม่โผล่) — ข้าม กรอกเอง")
+        return
+    if len(injs) > MAX_INJURIES:
+        log(f"   ⚠️ ผู้บาดเจ็บ {len(injs)} คน เกิน {MAX_INJURIES} — กรอกเท่าที่ได้")
+
+    Select(driver.find_element(By.ID, "ddlInj_Count")).select_by_visible_text(
+        str(min(len(injs), MAX_INJURIES)))
+    time.sleep(1.5)   # JS เปิดบล็อก
+
+    for n, inj in enumerate(injs[:MAX_INJURIES]):
+        p = INJ_PREFIX.format(n=n)
+        log(f"   --- คนที่ {n + 1}: {inj.get('name', '')} ---")
+
+        # ประเภทบุคคล (* บังคับ) — map code XML (DV/PV/ON) → value
+        pt = PERSON_TYPE_MAP.get((inj.get("person_type", "") or "").strip().upper())
+        if pt:
+            try:
+                Select(driver.find_element(By.ID, p + "ddlPerson_Type")
+                       ).select_by_value(pt)
+                log(f"   ✓ ประเภทบุคคล (code {inj.get('person_type')}→{pt})")
+            except Exception:
+                log(f"   ⚠️ เลือกประเภทบุคคล {n + 1} ไม่ได้")
+
+        # ชื่อ — แยกคำนำหน้า/ชื่อ/สกุล; layout มี 2 แบบ (แยกช่อง vs ช่องเดียว)
+        title, first, last = split_thai_name(inj.get("name", ""))
+        if _is_displayed(driver, p + "txtInj_Name01"):
+            if title and _select_has_options(driver, p + "ddlInj_Title_ID"):
+                fuzzy_select(driver, p + "ddlInj_Title_ID", title,
+                             label=f"คำนำหน้าผู้บาดเจ็บ {n + 1}")
+            set_text(driver, p + "txtInj_Name01", first)
+            set_text(driver, p + "txtInj_LastName01", last)
+        elif _is_displayed(driver, p + "txtInj_Name"):
+            set_text(driver, p + "txtInj_Name", inj.get("name", ""))
+
+        # เพศ (0=ชาย M / 1=หญิง F,W)
+        g = (inj.get("gender", "") or "").strip().upper()
+        if g in ("M", "F", "W"):
+            try:
+                driver.find_element(
+                    By.ID, p + f"rdoGender_{'0' if g == 'M' else '1'}").click()
+            except Exception:
+                log(f"   ⚠️ เลือกเพศผู้บาดเจ็บ {n + 1} ไม่ได้")
+
+        set_text(driver, p + "txtInj_Age", inj.get("age", ""))
+        set_text(driver, p + "txtCitizen_ID", inj.get("citizen_id", ""))
+        set_text(driver, p + "txtInj_Job", inj.get("job", ""))
+        set_text(driver, p + "txtCar_RegNo", inj.get("car_regno", ""))
+        set_text(driver, p + "txtInj_Address", inj.get("address", ""))
+        set_text(driver, p + "txtInj_Tel_No", inj.get("tel_no", ""))
+        set_text(driver, p + "txtInj_Hos_Name", inj.get("hospital", ""))
+        set_text(driver, p + "txtInj_Cost", inj.get("cost", ""))
+
+        # ประเภทบาดเจ็บ — value ของ ddlWounded_Type = code XML (01-06) ตรงๆ
+        wt = (inj.get("wounded_type", "") or "").strip()
+        if wt:
+            try:
+                Select(driver.find_element(By.ID, p + "ddlWounded_Type")
+                       ).select_by_value(wt)
+                log(f"   ✓ ประเภทบาดเจ็บ (code {wt})")
+            except Exception:
+                log(f"   ⚠️ เลือกประเภทบาดเจ็บ {n + 1} (code {wt}) ไม่ได้")
+        set_text(driver, p + "txtInj_Injure", inj.get("injure", ""))
+
+    _save_section(driver, "btnSave_InjurePerson", "ผู้บาดเจ็บ")
+
+
+def fill_assets(driver, data: ClaimData):
+    """กรอกทรัพย์สิน (Tab 6) — กดเมนู imbAsset → เลือกจำนวน ddlAsset_Count →
+    กรอกทีละบล็อก (dtlAsset_ctl00_wuAsset_*) → บันทึก btnSave_Asset
+    (รูปแบบเดียวกับคู่กรณี) — เรียกหลัง save_main_form"""
+    assets = data.assets
+    if not assets:
+        return
+    log(f"EMCS: กรอกทรัพย์สิน {len(assets)} รายการ")
+    click_retry(driver, By.ID, "wuMenuPage1_imbAsset")
+    try:
+        wait_present(driver, By.ID, "ddlAsset_Count", 20)
+    except TimeoutException:
+        log("   ⚠️ ส่วนทรัพย์สินไม่ปลดล็อก (ddlAsset_Count ไม่โผล่) — ข้าม กรอกเอง")
+        return
+    if len(assets) > MAX_ASSETS:
+        log(f"   ⚠️ ทรัพย์สิน {len(assets)} รายการ เกิน {MAX_ASSETS} — กรอกเท่าที่ได้")
+
+    Select(driver.find_element(By.ID, "ddlAsset_Count")).select_by_visible_text(
+        str(min(len(assets), MAX_ASSETS)))
+    time.sleep(1.5)
+
+    for n, a in enumerate(assets[:MAX_ASSETS]):
+        p = ASSET_PREFIX.format(n=n)
+        log(f"   --- ชิ้นที่ {n + 1}: {a.get('name', '')} ---")
+        set_text(driver, p + "txtAsset_Desc", a.get("name", ""))
+        set_text(driver, p + "txtAsset_Damage", a.get("damage_detail", ""))
+        set_text(driver, p + "txtAsset_Damage_Cause", a.get("damage_cause", ""))
+        set_text(driver, p + "txtCost_Damage", a.get("damage_cost", ""))
+
+        # เจ้าของ — คำนำหน้าแยกจากชื่อ (ถ้ามี), ที่เหลือชื่อเต็มลง txtOwner
+        title, first, last = split_thai_name(a.get("owner_name", ""))
+        if title and _select_has_options(driver, p + "ddlAsset_Title_ID"):
+            fuzzy_select(driver, p + "ddlAsset_Title_ID", title,
+                         label=f"คำนำหน้าเจ้าของ {n + 1}")
+            set_text(driver, p + "txtOwner", f"{first} {last}".strip())
+        else:
+            set_text(driver, p + "txtOwner", a.get("owner_name", ""))
+        set_text(driver, p + "txtAddress", a.get("owner_address", ""))
+        set_text(driver, p + "txtTel_No", a.get("owner_phone", ""))
+
+    _save_section(driver, "btnSave_Asset", "ทรัพย์สิน")
 
 
 def login(driver, cfg):
@@ -1634,8 +1769,10 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
     fill_verdict(driver, data)
 
     esurvey = save_main_form(driver, data)
-    # เคลมสด: ส่วนคู่กรณีถูกปลดล็อกหลังบันทึกหน้าหลักเท่านั้น
+    # เคลมสด: ส่วนคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน ปลดล็อกหลังบันทึกหน้าหลักเท่านั้น
     fill_third_parties(driver, data)
+    fill_injuries(driver, data)
+    fill_assets(driver, data)
     fill_damage_list(driver, data, main_window)
 
     if images_folder is not None:

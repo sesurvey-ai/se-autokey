@@ -289,6 +289,17 @@ try:
 except RuntimeError:
     check("pick: ไม่มี draft + หลายเรื่อง → error", True)
 
+# ---- 9.5 ผู้บาดเจ็บ/ทรัพย์สิน (Tab 5/6) ----
+check("PERSON_TYPE_MAP: DV→01 / PV→03 / ON→05",
+      emcs.PERSON_TYPE_MAP == {"DV": "01", "PV": "03", "ON": "05"})
+check("INJ/ASSET prefix + count cap",
+      emcs.INJ_PREFIX.format(n=0) == "dtlInj_ctl00_wuInj_"
+      and emcs.ASSET_PREFIX.format(n=1) == "dtlAsset_ctl01_wuAsset_"
+      and emcs.MAX_INJURIES == 5 and emcs.MAX_ASSETS == 5)
+check("fill_injuries/fill_assets + _save_section generic มีจริง",
+      all(hasattr(emcs, f) for f in
+          ("fill_injuries", "fill_assets", "_save_section")))
+
 # ---- 10. parse SURV_REPORT XML ----
 from autokey import surv_xml  # noqa: E402
 
