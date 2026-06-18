@@ -404,6 +404,20 @@ if bill_xmls:
     check("ไม่มี bill หน้าจอ → fallback XML",
           emcs._money(_d2.bill.get("invest")) == 300.0)
 
+# enrich ต้องคง third_parties ที่ enrich Tab4 มาแล้ว (กัน --data-json ลบ veh_type)
+_xml_48453 = list(pathlib.Path("runs/xml").glob("2026013048453_*.txt"))
+if _xml_48453:
+    _de = claim_data.ClaimData()
+    _de.third_parties = [{"plate_no": "9กฆ5003", "veh_type": "รถจักรยานยนต์",
+                          "damages": [{"part": "x"}]}]   # จำลอง enrich Tab 4 แล้ว
+    surv_xml.enrich_claim_from_xml(_de, _xml_48453[0])
+    check("enrich: คง third_parties ที่ enrich Tab4 (veh_type/damages ไม่หาย)",
+          len(_de.third_parties) == 1
+          and _de.third_parties[0].get("veh_type") == "รถจักรยานยนต์"
+          and len(_de.third_parties[0].get("damages", [])) == 1)
+    check("enrich: injuries/assets ยังว่าง → เซ็ตจาก XML (2 / 1)",
+          len(_de.injuries) == 2 and len(_de.assets) == 1)
+
 # ---- 14. isurvey_api: ฟังก์ชันแปลง + diff (ไม่ต่อเน็ต/ไม่เปิด browser) ----
 from autokey import isurvey_api as _api  # noqa: E402
 check("_ddmmyyyy: ISO→dd/mm/yyyy คง ค.ศ.",

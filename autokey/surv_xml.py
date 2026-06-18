@@ -139,9 +139,15 @@ def enrich_claim_from_xml(data, xml_path) -> bool:
         log(f"   ⚠️ parse XML ไม่ได้: {e}")
         return False
 
-    data.third_parties = parsed["third_parties"]
-    data.injuries = parsed["injuries"]
-    data.assets = parsed["assets"]
+    # เขียนทับจาก XML เฉพาะตอน "ยังว่าง" — กัน flow --data-json (โหลด JSON ที่
+    # enrich Tab 4 มาแล้ว เช่น veh_type/insure_type/policy_no/damages ของคู่กรณี)
+    # โดน XML (ซึ่งมีแค่ basics) ลบทิ้ง. ใน read flow ปกติ field พวกนี้ยังว่าง→เซ็ตจาก XML
+    if not data.third_parties:
+        data.third_parties = parsed["third_parties"]
+    if not data.injuries:
+        data.injuries = parsed["injuries"]
+    if not data.assets:
+        data.assets = parsed["assets"]
     data.xml_file = str(xml_path)
 
     # เพศผู้ขับขี่รถประกัน — EMCS บังคับกรอก แต่หน้าจอ ISURVEY ไม่มี

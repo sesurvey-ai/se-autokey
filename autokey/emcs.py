@@ -1048,25 +1048,20 @@ def _opponent_image_batches(folder, n_opponents: int, rename: bool = True):
     return batches
 
 
-def _upload_one_type(driver, paths, image_type: str):
-    """นำทางเข้าหน้ารูปประกอบ → เลือกประเภท image_type → อัปโหลดทุกไฟล์ใน paths
-    (list[Path]) → ปิดกล่องผล. เรียกซ้ำได้หลายประเภท (นำทางใหม่ทุกครั้งกัน stale)
+def _upload_one_batch(driver, paths, image_type: str, html5_ui: bool):
+    """[อยู่หน้ารูปแล้ว] เลือกประเภท image_type → ส่ง paths → อัปโหลด → ปิดกล่องผล
+    **ไม่ navigate** — ฟอร์มอัปโหลด (ddlImage_Type_Html5) คงอยู่บนหน้ารูปหลังอัป
+    แต่ละชุด ส่วนเมนู wuMenuPage1_imbImage จะ disabled เพราะอยู่หน้านี้แล้ว
+    (ห้ามกดซ้ำ — เคยทำให้ TimeoutException) → เรียกซ้ำได้หลายชุดบนหน้าเดียว
 
-    หน้าอัปโหลดเป็น UI แบบ HTML5: เลือกประเภทก่อน (input file ถูก disable
-    จนกว่าจะเลือก) แล้วส่งทุกไฟล์เข้า input ตัวเดียว (multiple) รวดเดียว
-    — ถ้าไม่เจอ UI ใหม่จะ fallback ไปแบบเก่า (ทีละไฟล์ + ประเภทต่อแถว)"""
+    HTML5: เลือกประเภทก่อน (input file disable จนเลือก) → ส่งทุกไฟล์เข้า input
+    ตัวเดียว (multiple) รวดเดียว — UI เก่า fallback (ทีละไฟล์ + ประเภทต่อแถว)"""
     if not paths:
         return
     log(f"EMCS: อัปโหลดรูป {len(paths)} ไฟล์ (ประเภท '{image_type}')")
-    click_retry(driver, By.ID, "wuMenuPage1_imbImage")
-
-    try:
-        wait_present(driver, By.ID, "ddlImage_Type_Html5", 15)
-        html5_ui = True
-    except TimeoutException:
-        html5_ui = False
-
     if html5_ui:
+        # หน้าอาจเพิ่ง refresh จากชุดก่อน — รอ dropdown พร้อมก่อน (กัน stale)
+        wait_present(driver, By.ID, "ddlImage_Type_Html5", 15)
         # 1) เลือกประเภทรูป → ระบบ enable ช่องเลือกไฟล์ให้
         fuzzy_select(driver, "ddlImage_Type_Html5", image_type,
                      label="ประเภทรูป")
@@ -1129,7 +1124,8 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
         log("EMCS: ไม่มีรูปให้อัปโหลด — ข้าม")
         return
 
-    # ----- รูปรถประกัน (โฟลเดอร์หลัก) -----
+    # รวมทุกชุดที่จะอัป (รูปรถประกัน + รูปคู่กรณีแต่ละคัน) แล้วค่อยนำทางครั้งเดียว
+    batches = []   # [(ประเภทรูป, [Path,...]), ...]
     if files:
         # ให้ผู้ใช้เลือกรูปที่จะอัปโหลด (หน้าเว็บ); console/ไม่ตอบ = ทุกรูปตามเดิม
         if only is None:
@@ -1138,13 +1134,27 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
             chosen = set(only)
             files = [f for f in files if f in chosen]
         if files:
-            _upload_one_type(driver, [folder / name for name in files], image_type)
+            batches.append((image_type, [folder / name for name in files]))
         elif only is not None:
             log("EMCS: ผู้ใช้ไม่ได้เลือกรูปรถประกัน — ข้ามส่วนรูปรถประกัน")
+    batches.extend(opp_batches)   # รูปรถคู่กรณี (tp_veh/) แยกตามคัน
 
-    # ----- รูปรถคู่กรณี (tp_veh/) — อัปครบเสมอ แยกตามคัน -----
-    for label, batch in opp_batches:
-        _upload_one_type(driver, batch, label)
+    if not batches:
+        log("EMCS: ไม่มีรูปให้อัปโหลด — ข้าม")
+        return
+
+    # นำทางเข้าหน้ารูป "ครั้งเดียว" — หลังอัปชุดแรกเมนู imbImage จะ disabled (อยู่
+    # หน้านี้แล้ว กดซ้ำ = TimeoutException) แต่ฟอร์มอัปโหลดยังอยู่ → อัปชุดถัดไป
+    # บนหน้าเดิมได้เลย
+    click_retry(driver, By.ID, "wuMenuPage1_imbImage")
+    try:
+        wait_present(driver, By.ID, "ddlImage_Type_Html5", 15)
+        html5_ui = True
+    except TimeoutException:
+        html5_ui = False
+
+    for label, paths in batches:
+        _upload_one_batch(driver, paths, label, html5_ui)
 
     log("EMCS: อัปโหลดรูปเสร็จ")
 
