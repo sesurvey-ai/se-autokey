@@ -270,6 +270,35 @@ with tempfile.TemporaryDirectory() as tmp:
           and sorted(p.name for p in out) ==
           ["รูปรถคู่กรณีคันที่1_1.jpg", "รูปรถคู่กรณีคันที่1_2.jpg"], str(out))
 
+# ---- 8.6.2 _tp_image_batches generic: ผู้บาดเจ็บ (คนที่N) / ทรัพย์สิน (รายการที่N) ----
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    # ผู้บาดเจ็บ 2 คน — 2 prefix (id ต่อคน)
+    (tmp / "tp_person").mkdir()
+    (tmp / "tp_person" / "p1_a.jpg").write_bytes(b"PA")
+    (tmp / "tp_person" / "p1_b.jpg").write_bytes(b"PB")
+    (tmp / "tp_person" / "p2_a.jpg").write_bytes(b"QA")
+    b = emcs._tp_image_batches(tmp, "tp_person", 2,
+                               "รูปผู้บาดเจ็บ คนที่{i}", "รูปผู้บาดเจ็บคนที่{i}_{seq}")
+    got = {lbl: sorted(p.name for p in ps) for lbl, ps in b}
+    check("tp_image: ผู้บาดเจ็บ 2 คน → 'คนที่1/คนที่2' + ชื่อสะอาด",
+          got == {"รูปผู้บาดเจ็บ คนที่1":
+                  ["รูปผู้บาดเจ็บคนที่1_1.jpg", "รูปผู้บาดเจ็บคนที่1_2.jpg"],
+                  "รูปผู้บาดเจ็บ คนที่2": ["รูปผู้บาดเจ็บคนที่2_1.jpg"]}, str(got))
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    (tmp / "tp_prop").mkdir()
+    (tmp / "tp_prop" / "x_a.jpg").write_bytes(b"X1")
+    (tmp / "tp_prop" / "x_b.jpg").write_bytes(b"X2")
+    b = emcs._tp_image_batches(tmp, "tp_prop", 1,
+                               "รูปทรัพย์สิน รายการที่{i}", "รูปทรัพย์สินรายการที่{i}_{seq}")
+    check("tp_image: ทรัพย์สิน 1 รายการ → 'รายการที่1' + ชื่อสะอาด",
+          len(b) == 1 and b[0][0] == "รูปทรัพย์สิน รายการที่1"
+          and sorted(p.name for p in b[0][1]) ==
+          ["รูปทรัพย์สินรายการที่1_1.jpg", "รูปทรัพย์สินรายการที่1_2.jpg"], str(b))
+    check("tp_image: ไม่มีโฟลเดอร์ = []",
+          emcs._tp_image_batches(tmp, "tp_person", 1, "x{i}", "y{i}_{seq}") == [])
+
 # ---- 8.7 _pick_draft_report: เลือกเรื่อง draft ที่จะเติมรูป ----
 _DRAFT = "S111111111 ... 2026013047934 ... รายงานสร้างใหม่ ... SEABI-1"
 _SENT = "S222222222 ... 2026013047934 ... ประกันตรวจสอบรายงาน ... SEABI-2"

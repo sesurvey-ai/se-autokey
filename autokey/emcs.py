@@ -1095,22 +1095,22 @@ def _dedup_images(paths):
     return out
 
 
-def _rename_opponent_files(paths, car: int):
-    """เปลี่ยนชื่อไฟล์รูปคู่กรณี (list[Path] ในโฟลเดอร์เดียวกัน เรียงแล้ว) เป็น
-    'รูปรถคู่กรณีคันที่<car>_<ลำดับ>.jpg' — แพทเทิร์นเดียวกับรูปรถประกัน
-    (คอลัมน์รายการใน EMCS = ชื่อไฟล์นี้). two-phase กันชนชื่อระหว่างสลับ
-    idempotent: ถ้าชื่อตรงเป้าอยู่แล้วไม่ขยับ. คืน list[Path] ชื่อใหม่"""
+def _rename_clean_files(paths, name_tmpl: str, idx: int):
+    """เปลี่ยนชื่อ paths (list[Path] โฟลเดอร์เดียวกัน เรียงแล้ว) เป็น
+    name_tmpl.format(i=idx, seq=ลำดับ) + นามสกุลเดิม — แพทเทิร์นเดียวกับรูปรถประกัน
+    (คอลัมน์รายการใน EMCS = ชื่อไฟล์นี้). two-phase กันชนชื่อ + idempotent
+    name_tmpl เช่น 'รูปรถคู่กรณีคันที่{i}_{seq}' / 'รูปผู้บาดเจ็บคนที่{i}_{seq}'"""
     if not paths:
         return []
     folder = paths[0].parent
-    targets = [f"รูปรถคู่กรณีคันที่{car}_{i}{p.suffix.lower()}"
-               for i, p in enumerate(paths, start=1)]
+    targets = [f"{name_tmpl.format(i=idx, seq=s)}{p.suffix.lower()}"
+               for s, p in enumerate(paths, start=1)]
     if all(p.name == t for p, t in zip(paths, targets)):
         return list(paths)                       # ชื่อถูกหมดแล้ว — ไม่แตะ
     # phase 1: ทุกไฟล์ → ชื่อชั่วคราว (กันชนกับชื่อเป้าที่ไฟล์อื่นถืออยู่)
     temps = []
-    for i, p in enumerate(paths):
-        tmp = folder / f"__tpren_{i}{p.suffix.lower()}"
+    for j, p in enumerate(paths):
+        tmp = folder / f"__tpren_{j}{p.suffix.lower()}"
         p.rename(tmp)
         temps.append(tmp)
     # phase 2: ชั่วคราว → ชื่อเป้า (สำรองไฟล์เก่าที่บังเอิญชื่อชนไว้ก่อน)
@@ -1124,17 +1124,23 @@ def _rename_opponent_files(paths, car: int):
     return out
 
 
-def _opponent_image_batches(folder, n_opponents: int, rename: bool = True):
-    """สร้างชุดอัปโหลดรูปรถคู่กรณีจากโฟลเดอร์ tp_veh/ (รูปที่โหลดมาจาก Tab 4)
-    คืน list ของ (ประเภทรูป, [Path,...]) — ประเภท = 'รูปรถคู่กรณี คันที่N'
+def _rename_opponent_files(paths, car: int):
+    """(คงไว้เพื่อ backward-compat) รูปคู่กรณี → 'รูปรถคู่กรณีคันที่N_ลำดับ.jpg'"""
+    return _rename_clean_files(paths, "รูปรถคู่กรณีคันที่{i}_{seq}", car)
 
-    - dedup รูปซ้ำตามเนื้อหาก่อนเสมอ (ย้ายตัวซ้ำเข้า tp_veh/_dup/ กันรก)
-    - คู่กรณี 1 คัน (หรือนับจำนวนไม่ได้): รูปทั้งหมด → 'รูปรถคู่กรณี คันที่1'
-    - หลายคัน: แยกตามโฟลเดอร์คัน (zip ใส่ prefix '<โฟลเดอร์คัน>_' หน้าชื่อไฟล์)
-      ถ้าได้กลุ่ม = จำนวนคันพอดี → map คันที่ 1..N; ไม่งั้นรวมเป็นคันที่1 + เตือน
-    - rename=True: เปลี่ยนชื่อไฟล์เป็น 'รูปรถคู่กรณีคันที่N_ลำดับ.jpg' บนดิสก์
-      ก่อนอัป (ให้ชื่อในตาราง EMCS สะอาดเหมือนรูปรถประกัน)"""
-    tp = Path(folder) / "tp_veh"
+
+def _tp_image_batches(folder, subdir: str, count: int, type_tmpl: str,
+                      name_tmpl: str, rename: bool = True):
+    """สร้างชุดอัปรูป "บุคคลที่สาม" จากโฟลเดอร์ subdir (tp_veh/tp_person/tp_prop)
+    คืน list ของ (ประเภทรูป, [Path,...]) — dedup + ย้ายซ้ำเข้า _dup + เปลี่ยนชื่อสะอาด
+
+    - count = จำนวนรายการ (คัน/คน/ชิ้น): 1 (หรือนับไม่ได้) → รวมเป็นรายการที่1;
+      >1 → แยกตามโฟลเดอร์ย่อย (prefix ก่อน '_' = id ต่อราย) ถ้าได้กลุ่ม=count;
+      ไม่งั้นรวมเป็นที่1 + เตือน
+    - type_tmpl: ส่งให้ fuzzy_select เลือก option dynamic (โผล่หลังบันทึก section นั้น)
+      เช่น 'รูปรถคู่กรณี คันที่{i}' / 'รูปผู้บาดเจ็บ คนที่{i}' / 'รูปทรัพย์สิน รายการที่{i}'
+    - name_tmpl: ชื่อไฟล์สะอาดบนดิสก์ เช่น 'รูปผู้บาดเจ็บคนที่{i}_{seq}'"""
+    tp = Path(folder) / subdir
     if not tp.is_dir():
         return []
     all_names = list_images(tp)
@@ -1156,31 +1162,38 @@ def _opponent_image_batches(folder, n_opponents: int, rename: bool = True):
                     dst = dup_dir / f"{d.stem}_{k}{d.suffix}"
                     k += 1
                 d.rename(dst)
-            log(f"   ย้ายรูปคู่กรณีซ้ำ {len(dropped)} ไฟล์ → tp_veh/_dup/")
+            log(f"   ย้ายรูปซ้ำ {len(dropped)} ไฟล์ → {subdir}/_dup/")
 
-    n = max(1, int(n_opponents or 0))
+    n = max(1, int(count or 0))
     if n == 1:
         groups = {1: files}
     else:
-        # หลายคัน — แยกตามชื่อโฟลเดอร์คัน (ส่วนหน้าก่อน '_' แรก) เรียงคงที่
+        # หลายราย — แยกตามชื่อโฟลเดอร์ย่อย (ส่วนหน้าก่อน '_' แรก) เรียงคงที่
         raw = {}
         for p in files:
             raw.setdefault(p.name.split("_", 1)[0], []).append(p)
         if len(raw) == n:
             groups = {i: raw[k] for i, k in enumerate(sorted(raw), start=1)}
         else:
-            log(f"   ⚠️ มีคู่กรณี {n} คัน แต่แยกรูปตามคันอัตโนมัติไม่ชัด "
-                f"({len(raw)} กลุ่มจากชื่อไฟล์) → รวมเป็น 'คันที่1' ทั้งหมด "
-                "ตรวจ/ย้ายรูปคันที่ 2+ เองบนหน้าเว็บ")
+            log(f"   ⚠️ {subdir}: มี {n} รายการ แต่แยกรูปตามรายการไม่ชัด "
+                f"({len(raw)} กลุ่มจากชื่อไฟล์) → รวมเป็น 'ที่1' ทั้งหมด "
+                "ตรวจ/ย้ายเองบนหน้าเว็บ")
             groups = {1: files}
 
     batches = []
-    for car in sorted(groups):
-        paths = groups[car]               # เรียง natural อยู่แล้วจาก list_images
+    for idx in sorted(groups):
+        paths = groups[idx]               # เรียง natural อยู่แล้วจาก list_images
         if rename:
-            paths = _rename_opponent_files(paths, car)
-        batches.append((f"รูปรถคู่กรณี คันที่{car}", paths))
+            paths = _rename_clean_files(paths, name_tmpl, idx)
+        batches.append((type_tmpl.format(i=idx), paths))
     return batches
+
+
+def _opponent_image_batches(folder, n_opponents: int, rename: bool = True):
+    """(คงไว้เพื่อ backward-compat/tests) รูปคู่กรณี tp_veh/ → 'รูปรถคู่กรณี คันที่N'"""
+    return _tp_image_batches(folder, "tp_veh", n_opponents,
+                             "รูปรถคู่กรณี คันที่{i}", "รูปรถคู่กรณีคันที่{i}_{seq}",
+                             rename)
 
 
 def _upload_one_batch(driver, paths, image_type: str, html5_ui: bool):
@@ -1244,22 +1257,29 @@ def _upload_one_batch(driver, paths, image_type: str, html5_ui: bool):
 
 
 def upload_images(driver, folder, image_type: str = "รูปรถประกัน", only=None,
-                  n_opponents: int = 0):
-    """อัปโหลดรูปทั้งหมด: รูปรถประกัน (โฟลเดอร์หลัก) + รูปรถคู่กรณี (tp_veh/)
+                  n_opponents: int = 0, n_injuries: int = 0, n_assets: int = 0):
+    """อัปโหลดรูปทั้งหมด: รูปรถประกัน (หลัก) + บุคคลที่สาม (tp_veh/tp_person/tp_prop)
 
     - รูปรถประกัน: เลือกประเภท image_type ('รูปรถประกัน') — only คุมว่าจะอัปรูปไหน
       (None = ให้ผู้ใช้เลือกบนหน้าเว็บ / console = ทุกไฟล์; list ว่าง = ไม่อัป)
-    - รูปรถคู่กรณี: ทุกไฟล์ใน tp_veh/ (โหลดจาก Tab 4) → 'รูปรถคู่กรณี คันที่N'
-      ตามจำนวนคู่กรณี n_opponents (1 คัน = คันที่1 ทั้งหมด — ดู _opponent_image_batches)"""
+    - รูปคู่กรณี (tp_veh/) → 'รูปรถคู่กรณี คันที่N' / ผู้บาดเจ็บ (tp_person/) →
+      'รูปผู้บาดเจ็บ คนที่N' / ทรัพย์สิน (tp_prop/) → 'รูปทรัพย์สิน รายการที่N'
+      (option dynamic — โผล่หลังบันทึก section นั้นแล้ว ซึ่ง upload รันหลัง fill_*)
+      แยกตามรายการด้วยจำนวน n_opponents/n_injuries/n_assets"""
     folder = Path(folder)
     files = list_images(folder)
     opp_batches = _opponent_image_batches(folder, n_opponents)
+    inj_batches = _tp_image_batches(folder, "tp_person", n_injuries,
+                                    "รูปผู้บาดเจ็บ คนที่{i}", "รูปผู้บาดเจ็บคนที่{i}_{seq}")
+    asset_batches = _tp_image_batches(folder, "tp_prop", n_assets,
+                                      "รูปทรัพย์สิน รายการที่{i}",
+                                      "รูปทรัพย์สินรายการที่{i}_{seq}")
 
-    if not files and not opp_batches:
+    if not files and not (opp_batches or inj_batches or asset_batches):
         log("EMCS: ไม่มีรูปให้อัปโหลด — ข้าม")
         return
 
-    # รวมทุกชุดที่จะอัป (รูปรถประกัน + รูปคู่กรณีแต่ละคัน) แล้วค่อยนำทางครั้งเดียว
+    # รวมทุกชุดที่จะอัป (รูปหลัก + บุคคลที่สามแต่ละราย) แล้วค่อยนำทางครั้งเดียว
     batches = []   # [(ประเภทรูป, [Path,...]), ...]
     if files:
         # ให้ผู้ใช้เลือกรูปที่จะอัปโหลด (หน้าเว็บ); console/ไม่ตอบ = ทุกรูปตามเดิม
@@ -1272,7 +1292,9 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
             batches.append((image_type, [folder / name for name in files]))
         elif only is not None:
             log("EMCS: ผู้ใช้ไม่ได้เลือกรูปรถประกัน — ข้ามส่วนรูปรถประกัน")
-    batches.extend(opp_batches)   # รูปรถคู่กรณี (tp_veh/) แยกตามคัน
+    batches.extend(opp_batches)     # รูปคู่กรณี (tp_veh/)
+    batches.extend(inj_batches)     # รูปผู้บาดเจ็บ (tp_person/)
+    batches.extend(asset_batches)   # รูปทรัพย์สิน (tp_prop/)
 
     if not batches:
         log("EMCS: ไม่มีรูปให้อัปโหลด — ข้าม")
@@ -1354,11 +1376,13 @@ def add_images_only(driver, cfg, data: ClaimData, images_folder,
             "ให้เติมรูป (สร้างเรื่องก่อนด้วย flow ปกติ)")
     target = _pick_draft_report(reports, esurvey)
     log(f"EMCS: เปิดเรื่องเดิม {target} เพื่อเติมรูป "
-        f"({'รูปรถประกัน+คู่กรณี' if include_main else 'เฉพาะรูปรถคู่กรณี'})")
+        f"({'รูปรถประกัน+บุคคลที่สาม' if include_main else 'เฉพาะรูปบุคคลที่สาม'})")
     open_report_images(driver, data.claim_value, target)
     upload_images(driver, images_folder, image_type=image_type,
                   only=(None if include_main else []),
-                  n_opponents=len(data.third_parties or []))
+                  n_opponents=len(data.third_parties or []),
+                  n_injuries=len(data.injuries or []),
+                  n_assets=len(data.assets or []))
     return target
 
 
@@ -1777,7 +1801,9 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
 
     if images_folder is not None:
         upload_images(driver, images_folder, image_type=image_type,
-                      n_opponents=len(data.third_parties or []))
+                      n_opponents=len(data.third_parties or []),
+                      n_injuries=len(data.injuries or []),
+                      n_assets=len(data.assets or []))
 
     fill_billing(driver, data, save_price=save_price)
     return esurvey
