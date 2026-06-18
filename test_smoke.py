@@ -547,6 +547,28 @@ check("parse_selected: ไม่มีคีย์ selected → None",
 check("parse_selected: selected ไม่ใช่ list → None",
       browser._parse_selected('{"selected":"x"}', _files) is None)
 
+# ---- 17.5 wait_for_injury_inputs: marker + parse ค่าจาก webui ----
+import io as _io
+_spec = [{"name": "นาย ก", "person_type_value": "05", "car_regno": ""}]
+_save_webui, _save_stdin = browser._WEBUI, sys.stdin
+browser._WEBUI = True
+sys.stdin = _io.StringIO('{"persons":[{"person_type":"01","car_regno":"9กฆ5003"}]}\n')
+_r = browser.wait_for_injury_inputs(_spec)
+check("injury inputs: parse ค่าจาก webui (person_type+เลขทะเบียน)",
+      _r == [{"person_type": "01", "car_regno": "9กฆ5003"}], str(_r))
+sys.stdin = _io.StringIO("")          # EOF (ไม่มีคนเฝ้า)
+check("injury inputs: EOF → None (ใช้ค่า ISURVEY เดิม)",
+      browser.wait_for_injury_inputs(_spec) is None)
+sys.stdin = _io.StringIO("ขยะ\n")     # JSON พัง
+check("injury inputs: JSON พัง → None",
+      browser.wait_for_injury_inputs(_spec) is None)
+browser._WEBUI = False
+check("injury inputs: ไม่ใช่ webui → None (console ไม่ถาม)",
+      browser.wait_for_injury_inputs(_spec) is None)
+browser._WEBUI, sys.stdin = _save_webui, _save_stdin
+check("injury options: 01/03/05 (ผู้ขับขี่/ผู้โดยสาร/บุคคลภายนอก)",
+      [o["value"] for o in browser.INJ_PERSON_TYPE_OPTIONS] == ["01", "03", "05"])
+
 # ---- 18. browser._image_categories: หมวดของรูปจาก manifest ----
 import json as _json
 with tempfile.TemporaryDirectory() as _d:

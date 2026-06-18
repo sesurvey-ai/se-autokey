@@ -35,6 +35,7 @@ BASE = Path(__file__).resolve().parent
 MANUAL_MARKER = "@@MANUAL_FILL@@"
 SUBMIT_MARKER = "@@READY_SUBMIT@@"   # ต้องตรงกับ autokey/browser.py (พร้อมส่งงาน)
 SELECT_MARKER = "@@SELECT_IMAGES@@"  # ต้องตรงกับ autokey/browser.py (เลือกรูปอัปโหลด)
+INJURY_MARKER = "@@INJURY_INPUTS@@"  # ต้องตรงกับ autokey/browser.py (กรอกข้อมูลผู้บาดเจ็บ)
 
 # จำนวนงานที่รันพร้อมกันได้สูงสุด (กันเปิด Chrome เยอะเกินจนเครื่องค้าง)
 MAX_CONCURRENT = int(os.environ.get("SE_MAX_CONCURRENT", "4") or "4")
@@ -178,6 +179,8 @@ def _reader(proc, run_id: int):
                 marker, kind = SUBMIT_MARKER, "submit"
             elif line.startswith(SELECT_MARKER):
                 marker, kind = SELECT_MARKER, "images"
+            elif line.startswith(INJURY_MARKER):
+                marker, kind = INJURY_MARKER, "injury"
             else:
                 marker = None
             if marker:
@@ -527,6 +530,14 @@ PAGE = r"""<!doctype html>
   /* แผงเลือกประเภทงานตอนส่งงาน (ลอกจาก se-key extension) */
   .pause-worktype{margin-top:10px;padding:10px 12px;background:#fff;
     border:1px solid #fde68a;border-radius:10px}
+  .pause-injury{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+  .inj-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 12px;
+    background:#fff;border:1px solid #fde68a;border-radius:10px}
+  .inj-name{font-weight:600;color:#334155;font-size:13.5px;min-width:160px}
+  .inj-f{display:flex;align-items:center;gap:6px;font-size:13px;color:#475569}
+  .inj-f select,.inj-f input{padding:5px 8px;border:1px solid #cbd5e1;border-radius:7px;
+    font-size:13px}
+  .inj-f input.inj-plate{width:130px}
   .wt-radios{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px}
   .wt-radios label,.wt-batch-lbl{display:flex;align-items:center;gap:6px;
     font-size:13.5px;color:#334155;cursor:pointer}
@@ -739,6 +750,24 @@ function buildWorkType(c, r){
     '<input type="text" class="wt-mix-input" placeholder="SEABI-... (เลข invoice)">';
   applyWtState(c);
 }
+function buildInjuryForm(c, r){
+  const persons = (r.pause && r.pause.persons) || [];
+  const opts = (r.pause && r.pause.person_type_options) || [];
+  let html = "";
+  persons.forEach((p, i) => {
+    const sel = opts.map(o => '<option value="' + escAttr(o.value) + '"'
+      + (o.value === p.person_type_value ? ' selected' : '') + '>'
+      + escHtml(o.label) + '</option>').join("");
+    html += '<div class="inj-row">'
+      + '<span class="inj-name">' + (i+1) + '. ' + escHtml(p.name || "ผู้บาดเจ็บ") + '</span>'
+      + '<label class="inj-f">ประเภท: <select class="inj-type">' + sel + '</select></label>'
+      + '<label class="inj-f">เลขทะเบียน: <input type="text" class="inj-plate" '
+      + 'placeholder="เช่น 9กฆ5003" value="' + escAttr(p.car_regno || "") + '"></label>'
+      + '</div>';
+  });
+  c.injWrap.innerHTML = html;
+  c.injSig = JSON.stringify(persons.map(p => p.name));
+}
 function makeCard(r){
   const root = document.createElement("div");
   root.className = "run-card"; root.dataset.id = r.id;
@@ -775,6 +804,7 @@ function makeCard(r){
     +         '<button type="button" class="gal-none">ไม่เลือกเลย</button></div>'
     +       '<div class="gal-grid"></div>'
     +     '</div>'
+    +     '<div class="pause-injury" hidden></div>'
     +     '<button class="continue"></button>'
     +   '</div>'
     + '</div>'
@@ -797,6 +827,7 @@ function makeCard(r){
     wtRadios: root.querySelectorAll(".wt-base"), wtBatch: root.querySelector(".wt-batch"),
     wtMix: root.querySelector(".wt-mix"), wtMixList: root.querySelector(".wt-mix-list"),
     wtMixAdd: root.querySelector(".wt-mix-add"), wtSig: null,
+    injWrap: root.querySelector(".pause-injury"), injSig: null,
   };
   c.stopBtn.addEventListener("click", async () => {
     if (!confirm("ต้องการหยุดงาน " + (r.title || ("#"+r.id)) + " ?")) return;
@@ -825,12 +856,22 @@ function makeCard(r){
                    + "(ส่งงานใหม่ หรือ ส่งผลงานต่อเนื่อง ตามสถานะเรื่อง — ส่งงานจริง) "
                    + "+ แจ้ง ISURVEY + บันทึก se-key — ย้อนกลับไม่ได้")) return;
       body.payload = {submit:true, base_type:base, batch:batch, mix:mix};
+    } else if (kind === "injury"){
+      const rows = [...c.injWrap.querySelectorAll(".inj-row")];
+      const miss = rows.filter(row => !row.querySelector(".inj-plate").value.trim());
+      if (miss.length){
+        alert("กรุณากรอกเลขทะเบียนให้ครบทุกคน (" + miss.length + " คนยังว่าง)"); return;
+      }
+      body.payload = {persons: rows.map(row => ({
+        person_type: row.querySelector(".inj-type").value,
+        car_regno: row.querySelector(".inj-plate").value.trim()}))};
     }
     c.contBtn.disabled = true;
     try{ await postJSON("/continue", body); }catch(e){}
     c.pauseEl.hidden = true;
     c.galWrap.style.display = "none"; c.galSig = null;
     c.wtWrap.hidden = true; c.wtSig = null;
+    c.injWrap.hidden = true; c.injSig = null;
   });
   c.galAll.addEventListener("click", () => setAllChecks(c, true));
   c.galNone.addEventListener("click", () => setAllChecks(c, false));
@@ -875,7 +916,18 @@ function renderRun(r){
     const rs = r.pause.reason || "";
     c.preason.textContent = rs; c.preason.hidden = !rs;
     c.contBtn.dataset.kind = k;
-    if (k === "images"){
+    c.injWrap.hidden = (k !== "injury");
+    if (k === "injury"){
+      c.galWrap.style.display = "none"; c.galSig = null;
+      c.wtWrap.hidden = true; c.wtSig = null;
+      const isig = JSON.stringify((r.pause.persons || []).map(p => p.name));
+      if (c.injSig !== isig){ buildInjuryForm(c, r); }
+      c.ptitle.textContent = "กรอกข้อมูลผู้บาดเจ็บ (EMCS บังคับก่อนหน้าค่าใช้จ่าย)";
+      c.phint.innerHTML = "ISURVEY ไม่มี <b>เลขทะเบียน</b> ของผู้บาดเจ็บ — กรอกเลขทะเบียน "
+        + "+ เลือกประเภทผู้บาดเจ็บแต่ละคน (ค่าตั้งต้นมาจาก ISURVEY แก้ได้) แล้วกดปุ่ม";
+      c.contBtn.textContent = "✓ บันทึกข้อมูลผู้บาดเจ็บ — ดำเนินการต่อ";
+      c.contBtn.className = "continue submitbtn";
+    } else if (k === "images"){
       c.ptitle.textContent = "เลือกรูปที่จะอัปโหลดเข้า EMCS";
       c.phint.innerHTML = "ติ๊กเฉพาะรูปที่ต้องการนำเข้า EMCS แล้วกดปุ่มด้านล่าง — "
         + "รูปที่ <b>ไม่ติ๊ก</b> จะไม่ถูกอัปโหลด";
@@ -911,6 +963,7 @@ function renderRun(r){
     c.pauseEl.hidden = true;
     c.galWrap.style.display = "none"; c.galSig = null;
     c.wtWrap.hidden = true; c.wtSig = null;
+    c.injWrap.hidden = true; c.injSig = null;
   }
   updateEmpty();
 }

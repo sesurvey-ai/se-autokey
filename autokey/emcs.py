@@ -9,7 +9,10 @@ import time
 from pathlib import Path
 
 from rapidfuzz import fuzz, process
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import (
+    TimeoutException,
+    UnexpectedAlertPresentException,
+)
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
@@ -27,6 +30,7 @@ from .browser import (
     today_buddhist,
     wait_clickable,
     wait_for_image_select,
+    wait_for_injury_inputs,
     wait_for_manual_fill,
     wait_present,
     wait_visible,
@@ -438,6 +442,16 @@ def fill_injuries(driver, data: ClaimData):
     if not injs:
         return
     log(f"EMCS: กรอกผู้บาดเจ็บ {len(injs)} คน")
+
+    # ให้ผู้ใช้กรอก 'เลขทะเบียน' (ISURVEY ว่าง — EMCS บังคับก่อนเข้าหน้าค่าใช้จ่าย) +
+    # เลือก/ยืนยัน 'ประเภทผู้บาดเจ็บ' (default จาก ISURVEY) บน webui ก่อนกรอกจริง
+    spec = [{"name": inj.get("name", ""),
+             "person_type_value": PERSON_TYPE_MAP.get(
+                 (inj.get("person_type", "") or "").strip().upper(), ""),
+             "car_regno": ""}
+            for inj in injs[:MAX_INJURIES]]
+    user_inputs = wait_for_injury_inputs(spec)   # None = console/EOF → ใช้ค่า ISURVEY
+
     click_retry(driver, By.ID, "wuMenuPage1_imbInjure_Person")
     try:
         wait_present(driver, By.ID, "ddlInj_Count", 20)
@@ -453,15 +467,17 @@ def fill_injuries(driver, data: ClaimData):
 
     for n, inj in enumerate(injs[:MAX_INJURIES]):
         p = INJ_PREFIX.format(n=n)
+        ui = user_inputs[n] if (user_inputs and n < len(user_inputs)) else None
         log(f"   --- คนที่ {n + 1}: {inj.get('name', '')} ---")
 
-        # ประเภทบุคคล (* บังคับ) — map code XML (DV/PV/ON) → value
-        pt = PERSON_TYPE_MAP.get((inj.get("person_type", "") or "").strip().upper())
+        # ประเภทบุคคล (* บังคับ) — ใช้ค่าที่ผู้ใช้เลือกบน webui ถ้ามี ไม่งั้น map ISURVEY
+        pt = (ui.get("person_type") if ui else None) or PERSON_TYPE_MAP.get(
+            (inj.get("person_type", "") or "").strip().upper())
         if pt:
             try:
                 Select(driver.find_element(By.ID, p + "ddlPerson_Type")
                        ).select_by_value(pt)
-                log(f"   ✓ ประเภทบุคคล (code {inj.get('person_type')}→{pt})")
+                log(f"   ✓ ประเภทบุคคล (value {pt})")
             except Exception:
                 log(f"   ⚠️ เลือกประเภทบุคคล {n + 1} ไม่ได้")
 
@@ -488,7 +504,10 @@ def fill_injuries(driver, data: ClaimData):
         set_text(driver, p + "txtInj_Age", inj.get("age", ""))
         set_text(driver, p + "txtCitizen_ID", inj.get("citizen_id", ""))
         set_text(driver, p + "txtInj_Job", inj.get("job", ""))
-        set_text(driver, p + "txtCar_RegNo", _plate(inj.get("car_regno", "")))
+        # เลขทะเบียน — ใช้ค่าที่ผู้ใช้กรอกบน webui ถ้ามี (ISURVEY ว่าง)
+        regno = ui.get("car_regno") if ui else None
+        set_text(driver, p + "txtCar_RegNo",
+                 _plate(regno if regno is not None else inj.get("car_regno", "")))
         set_text(driver, p + "txtInj_Address", inj.get("address", ""))
         set_text(driver, p + "txtInj_Tel_No", inj.get("tel_no", ""))
         set_text(driver, p + "txtInj_Hos_Name", inj.get("hospital", ""))
@@ -1537,7 +1556,26 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
     if navigate:
         click_retry(driver, By.ID, "wuMenuPage1_imbSpend")
 
-    wait_visible(driver, By.ID, "txtBill_No", 15)
+    # EMCS อาจ gate ก่อนเข้าหน้าค่าใช้จ่าย (alert "ไม่สามารถไปหน้า [ค่าใช้จ่าย] ได้
+    # กรุณาตรวจสอบ ... เลขทะเบียนผู้บาดเจ็บ" ฯลฯ) — รันผ่าน webui ผู้ใช้กรอกเลขทะเบียน
+    # แล้ว ไม่ติด; รัน console/ไม่มีคนเฝ้า = อ่าน alert → หยุดรอคนกรอกแล้วกดเมนูใหม่ (cap 5)
+    for _ in range(5):
+        try:
+            wait_visible(driver, By.ID, "txtBill_No", 15)
+            break
+        except UnexpectedAlertPresentException:
+            alert_text = (accept_alert(driver, timeout=3) or "").strip()
+            log(f"   ⚠️ เข้าหน้าค่าใช้จ่ายไม่ได้ (EMCS gate): {alert_text[:140]}")
+            if wait_for_manual_fill(
+                    "ข้อมูลที่ EMCS บังคับก่อนเข้าหน้าค่าใช้จ่าย (เช่น เลขทะเบียนผู้บาดเจ็บ)",
+                    reason=alert_text):
+                click_retry(driver, By.ID, "wuMenuPage1_imbSpend")
+            else:
+                log("   → ข้ามหน้าค่าใช้จ่าย — เข้า/กรอกเองภายหลัง")
+                return
+        except TimeoutException:
+            log("   ⚠️ หน้าค่าใช้จ่ายไม่โหลด (txtBill_No ไม่โผล่) — ข้าม กรอกเอง")
+            return
     # เคลียร์ก่อนกรอก — งานต่อเนื่องช่องอาจมีค่าครั้งก่อนค้าง (set_text ต่อท้ายไม่ทับ)
     for fid in ("txtBill_No", "wuCale_Bill_Date_txtCalendar"):
         try:

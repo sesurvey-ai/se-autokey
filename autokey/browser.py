@@ -465,6 +465,54 @@ def wait_for_image_select(folder, files):
     return sel
 
 
+INJURY_INPUTS_MARKER = "@@INJURY_INPUTS@@"  # ต้องตรงกับค่าใน webui.py
+
+# ตัวเลือก "ประเภทผู้บาดเจ็บ" (value = code ของ ddlPerson_Type ใน EMCS)
+INJ_PERSON_TYPE_OPTIONS = [
+    {"value": "01", "label": "ผู้ขับขี่ - รถประกัน"},
+    {"value": "03", "label": "ผู้โดยสาร - รถประกัน"},
+    {"value": "05", "label": "บุคคลภายนอกรถ"},
+]
+
+
+def wait_for_injury_inputs(persons):
+    """ให้ผู้ใช้กรอก 'เลขทะเบียน' + เลือก 'ประเภทผู้บาดเจ็บ' ของผู้บาดเจ็บแต่ละคน
+    บนหน้าเว็บ — EMCS บังคับเลขทะเบียนผู้บาดเจ็บก่อนเข้าหน้าค่าใช้จ่าย แต่ ISURVEY ว่าง
+
+    persons = [{name, person_type_value(default จาก ISURVEY), car_regno}, ...]
+    - หน้าเว็บ (webui): marker → ฟอร์มต่อคน (dropdown ประเภท default + ช่องเลขทะเบียน)
+      → ส่ง {"persons":[{person_type, car_regno}, ...]} กลับเข้า stdin
+    - console / EOF / ไม่ใช่ webui: คืน None = ใช้ค่า ISURVEY เดิม (เลขทะเบียนว่าง →
+      billing gate เด้ง ให้กรอกเองบน EMCS ภายหลัง)
+    คืน list ต่อคน [{person_type, car_regno}] หรือ None
+    """
+    if not _WEBUI:
+        return None
+    log_plain("")
+    log(f"⏸️  กรอกเลขทะเบียน + เลือกประเภทผู้บาดเจ็บ {len(persons)} คน บนหน้าเว็บ "
+        "(EMCS บังคับก่อนเข้าหน้าค่าใช้จ่าย)")
+    print(INJURY_INPUTS_MARKER + json.dumps(
+        {"persons": persons, "person_type_options": INJ_PERSON_TYPE_OPTIONS},
+        ensure_ascii=False), flush=True)
+    try:
+        line = sys.stdin.readline()
+    except Exception:
+        line = ""
+    if line == "":
+        log("     (ไม่มีการตอบกลับ — ใช้ค่า ISURVEY เดิม; เลขทะเบียนว่างต้องกรอกเองบน EMCS)")
+        return None
+    try:
+        data = json.loads(line)
+        result = data.get("persons") if isinstance(data, dict) else data
+    except Exception:
+        result = None
+    if not isinstance(result, list):
+        log("     (อ่านค่าไม่ได้ — ใช้ค่า ISURVEY เดิม)")
+        return None
+    log(f"     ▶️ ได้ข้อมูลผู้บาดเจ็บ {len(result)} คนจากผู้ใช้")
+    return result
+
+
 # ---------------------------------------------------------------- dropdown
 
 def _current_select_text(driver, select_id) -> str:
