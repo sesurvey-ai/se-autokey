@@ -97,6 +97,12 @@ def district_index(district_id: str, province_id: str):
     return int(district_id[-2:])
 
 
+def _plate(s: str) -> str:
+    """ลบช่องว่างในเลขทะเบียน — EMCS ไม่รับช่องว่าง (server reject เงียบๆ)
+    เช่น ISURVEY ให้ '9กฆ 5003' → EMCS ต้องเป็น '9กฆ5003' (verify จริง 2026-06-18)"""
+    return "".join((s or "").split())
+
+
 def resolve_loss_type(data, requested: str) -> str:
     """เลือกค่า 'ลักษณะความเสียหาย' (ddlLoss_ID) เมื่อ requested='auto'
 
@@ -202,7 +208,7 @@ def fill_third_parties(driver, data: ClaimData):
         set_text(driver, p + "txtOpo_Type", tp.get("opo_type", ""))
 
         # รถ
-        set_text(driver, p + "txtCar_RegNo", tp.get("plate_no", ""))
+        set_text(driver, p + "txtCar_RegNo", _plate(tp.get("plate_no", "")))
         # ประเภทรถคู่กรณี (* บังคับ) — จาก Tab 4 (veh_type อ่านได้ เช่น 'เก๋งเอเซีย')
         # ต้องเลือกก่อน "ยี่ห้อ" (ddlCmfg) ถึงจะมีตัวเลือก (dropdown ผูกกัน)
         if tp.get("veh_type", "").strip():
@@ -265,12 +271,31 @@ def fill_third_parties(driver, data: ClaimData):
         set_text(driver, p + "wuCale_Dri_DrvDate_Start_txtCalendar",
                  iso_to_thai_date(tp.get("lic_issue_date", "")))
 
-        # ประกันของคู่กรณี
-        fuzzy_select(driver, p + "ddlHave_Insurance", tp.get("insurer", ""),
-                     label=f"บริษัทประกันคู่กรณี {n + 1}")
-        set_text(driver, p + "txtPolicyNo", tp.get("policy_no", ""))
-        set_text(driver, p + "txtPolicy_Type", tp.get("insure_type", ""))  # ประกันประเภท
-        set_text(driver, p + "txtClaimNo", tp.get("claim_no", ""))
+        # ประกันของคู่กรณี — ถ้าไม่มีข้อมูลประกันเลย (เช่น มอไซค์ไม่มีประกัน) →
+        # เลือก 'ไม่มีบริษัทประกันภัย' (EMCS จะปลด required กรมธรรม์/เลขเคลมคู่กรณี
+        # ไม่งั้น validation ฟ้อง 'มีประกันภัยที่/กรมธรรม์/เคลมที่' บันทึกไม่ผ่าน)
+        insurer = (tp.get("insurer", "") or "").strip()
+        policy_no = (tp.get("policy_no", "") or "").strip()
+        claim_no = (tp.get("claim_no", "") or "").strip()
+        insure_type = (tp.get("insure_type", "") or "").strip()
+        if not (insurer or policy_no or claim_no or insure_type):
+            try:
+                Select(driver.find_element(By.ID, p + "ddlHave_Insurance")
+                       ).select_by_visible_text("ไม่มีบริษัทประกันภัย")
+                log(f"   ✓ คู่กรณี {n + 1}: ไม่มีบริษัทประกันภัย (ISURVEY ไม่มีข้อมูลประกัน)")
+            except Exception:
+                log(f"   ⚠️ เลือก 'ไม่มีบริษัทประกันภัย' คู่กรณี {n + 1} ไม่ได้")
+            # ไอโออิบังคับ กรมธรรม์/ประเภทกรมธรรม์/เคลมที่ ของคู่กรณีเสมอ (validForm
+            # ไม่ข้ามแม้เลือก 'ไม่มีบริษัทประกันภัย' — case นั้นเป็นของบริษัทอื่น) → ใส่ '-'
+            set_text(driver, p + "txtPolicyNo", "-")
+            set_text(driver, p + "txtPolicy_Type", "-")
+            set_text(driver, p + "txtClaimNo", "-")
+        else:
+            fuzzy_select(driver, p + "ddlHave_Insurance", insurer,
+                         label=f"บริษัทประกันคู่กรณี {n + 1}")
+            set_text(driver, p + "txtPolicyNo", policy_no)
+            set_text(driver, p + "txtPolicy_Type", insure_type)  # ประกันประเภท
+            set_text(driver, p + "txtClaimNo", claim_no)
 
         # ความเสียหาย + KFK
         cost = tp.get("cost_damage", "").strip()
@@ -461,7 +486,7 @@ def fill_injuries(driver, data: ClaimData):
         set_text(driver, p + "txtInj_Age", inj.get("age", ""))
         set_text(driver, p + "txtCitizen_ID", inj.get("citizen_id", ""))
         set_text(driver, p + "txtInj_Job", inj.get("job", ""))
-        set_text(driver, p + "txtCar_RegNo", inj.get("car_regno", ""))
+        set_text(driver, p + "txtCar_RegNo", _plate(inj.get("car_regno", "")))
         set_text(driver, p + "txtInj_Address", inj.get("address", ""))
         set_text(driver, p + "txtInj_Tel_No", inj.get("tel_no", ""))
         set_text(driver, p + "txtInj_Hos_Name", inj.get("hospital", ""))
@@ -784,7 +809,7 @@ def fill_policy(driver, data: ClaimData):
 def fill_car(driver, data: ClaimData):
     log("EMCS: กรอกรายละเอียดรถยนต์")
     wait_visible(driver, By.ID, "txtCar_RegNo")
-    set_text(driver, "txtCar_RegNo", data.insure_plate)
+    set_text(driver, "txtCar_RegNo", _plate(data.insure_plate))
     set_text(driver, "txtCModel2", data.insure_model)
     set_text(driver, "txtChassisNo", data.insure_chassis)
     set_text(driver, "txtEngineNo", data.insure_engine)
@@ -1794,10 +1819,13 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
 
     esurvey = save_main_form(driver, data)
     # เคลมสด: ส่วนคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน ปลดล็อกหลังบันทึกหน้าหลักเท่านั้น
+    # ลำดับสำคัญ: คู่กรณี + ความเสียหาย ทำบนแท็บ "ข้อมูลทั่วไป" ให้จบก่อน แล้วค่อย
+    # ผู้บาดเจ็บ/ทรัพย์สิน (กดเมนู imbInjure_Person/imbAsset นำทางไปแท็บอื่น —
+    # ถ้าทำก่อน fill_damage_list จะหา btnPopUp_DamList บนแท็บหลักไม่เจอ → timeout)
     fill_third_parties(driver, data)
+    fill_damage_list(driver, data, main_window)
     fill_injuries(driver, data)
     fill_assets(driver, data)
-    fill_damage_list(driver, data, main_window)
 
     if images_folder is not None:
         upload_images(driver, images_folder, image_type=image_type,

@@ -360,6 +360,12 @@ check("แยกชื่อ 'นางสาว' ไม่โดน 'นาง'
 check("แยกชื่อไม่มีคำนำหน้า",
       emcs.split_thai_name("สมชาย ใจดี") == ("", "สมชาย", "ใจดี"))
 
+# _plate: ลบช่องว่างในทะเบียน (EMCS reject ทะเบียนมีช่องว่าง)
+check("_plate ลบช่องว่างทะเบียน",
+      emcs._plate("9กฆ 5003") == "9กฆ5003"
+      and emcs._plate(" กท 1234 ") == "กท1234"
+      and emcs._plate("") == "" and emcs._plate(None) == "")
+
 # _derive_insured_title: ใช้คำนำหน้าจริงเมื่อชื่อตรง / ไม่ตรง = '' (ไม่เดาจากเพศ)
 _t_match = claim_data.ClaimData(
     insure_name="นายสมชาย ใจดี", driver_name="สมชาย", driver_surname="ใจดี")

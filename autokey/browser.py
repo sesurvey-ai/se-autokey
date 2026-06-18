@@ -212,7 +212,9 @@ def set_text(driver, elem_id, value):
     try:
         el.send_keys(value)
         return
-    except ElementNotInteractableException:
+    except (ElementNotInteractableException, StaleElementReferenceException):
+        # stale = postback re-render ช่องก่อนหน้า / interactable = ถูก popup บัง
+        # → ไหลไปหา element ใหม่ใน ESC-retry + JS fallback ข้างล่าง
         pass
     # อาจมี datepicker/popup ของช่องก่อนหน้าบังอยู่ — ปิดด้วย ESC แล้วลองใหม่
     try:
