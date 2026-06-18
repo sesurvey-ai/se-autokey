@@ -612,19 +612,14 @@ def fill_severity(driver, severity: str):
 
 def _derive_insured_title(data: ClaimData) -> tuple:
     """หาคำนำหน้าผู้ขับขี่รถประกัน (EMCS บังคับ แต่ ISURVEY ไม่มีให้ตรง)
-    1) ถ้าชื่อผู้เอาประกันมีคำนำหน้า และชื่อตรงกับผู้ขับขี่ → ใช้เลย (แม่น)
-    2) ไม่งั้นเดาจากเพศ: M→นาย, W/F→นางสาว (ต้องตรวจด้วยตา)
+    - ถ้าชื่อผู้เอาประกันมีคำนำหน้า และชื่อตรงกับผู้ขับขี่ → ใช้เลย (แม่น)
+    - ไม่ตรง → '' : ไม่มีข้อมูลคำนำหน้าที่เชื่อถือได้ (เพศบอกได้แค่ ชาย/หญิง แต่
+      แยก นาย vs นาง/นางสาว ไม่ได้) → ให้ผู้ใช้เลือกเอง (fill_driver หยุดรอ)
     คืน (title, แหล่งที่มา)"""
     driver_full = f"{data.driver_name} {data.driver_surname}".strip()
     title, first, last = split_thai_name(data.insure_name)
     if title and f"{first} {last}".strip() == driver_full:
         return title, "จากชื่อผู้เอาประกัน"
-
-    g = (data.driver_gender or "").strip().upper()
-    if g == "M":
-        return "นาย", "เดาจากเพศ"
-    if g in ("W", "F"):
-        return "นางสาว", "เดาจากเพศ (นาง/นางสาว ตรวจด้วยตาด้วย)"
     return "", ""
 
 
@@ -691,9 +686,10 @@ def fill_driver(driver, data: ClaimData):
         fuzzy_select(driver, "ddlDri_Title_ID", title,
                      label=f"คำนำหน้าผู้ขับขี่ ({source})")
     else:
-        log("   ⚠️ หาคำนำหน้าผู้ขับขี่ไม่ได้")
-        wait_for_manual_fill("คำนำหน้าผู้ขับขี่",
-                             "ไม่มีข้อมูลให้เดา — เป็น field บังคับ ต้องเลือกเอง")
+        log("   ⚠️ หาคำนำหน้าผู้ขับขี่ที่เชื่อถือได้ไม่ได้ (ชื่อไม่ตรงผู้เอาประกัน)")
+        wait_for_manual_fill(
+            "คำนำหน้าผู้ขับขี่",
+            "ISURVEY ไม่มีคำนำหน้า + แยก นาย/นาง/นางสาว จากเพศไม่ได้ — เลือกเอง")
 
     set_text(driver, "txtDri_Name01", data.driver_name)
     set_text(driver, "txtDri_LastName01", data.driver_surname)

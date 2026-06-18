@@ -291,6 +291,21 @@ check("แยกชื่อ 'นางสาว' ไม่โดน 'นาง'
 check("แยกชื่อไม่มีคำนำหน้า",
       emcs.split_thai_name("สมชาย ใจดี") == ("", "สมชาย", "ใจดี"))
 
+# _derive_insured_title: ใช้คำนำหน้าจริงเมื่อชื่อตรง / ไม่ตรง = '' (ไม่เดาจากเพศ)
+_t_match = claim_data.ClaimData(
+    insure_name="นายสมชาย ใจดี", driver_name="สมชาย", driver_surname="ใจดี")
+check("คำนำหน้า: ชื่อตรงผู้เอาประกัน → ใช้คำนำหน้าจริง",
+      emcs._derive_insured_title(_t_match)[0] == "นาย")
+_t_f = claim_data.ClaimData(
+    insure_name="บจก. อินฟินิตี้", driver_name="ธัญญา",
+    driver_surname="ปัญกิม", driver_gender="F")
+check("คำนำหน้า: หญิง ชื่อไม่ตรง → '' (ไม่เดานางสาว) → หยุดรอคน",
+      emcs._derive_insured_title(_t_f)[0] == "")
+_t_m = claim_data.ClaimData(
+    insure_name="บจก. เอ", driver_name="ก", driver_surname="ข", driver_gender="M")
+check("คำนำหน้า: ชาย ชื่อไม่ตรง → '' (ไม่เดานาย) → หยุดรอคน",
+      emcs._derive_insured_title(_t_m)[0] == "")
+
 check("วันที่ XML ค.ศ. → พ.ศ.",
       browser.iso_to_thai_date("2023-05-23 00:00:00") == "23/05/2566")
 check("วันที่ XML พ.ศ. คงเดิม",
