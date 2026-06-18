@@ -19,17 +19,23 @@ IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp")
 
 def archive_old_images(folder: Path):
     """ย้ายรูปเก่าจากรอบก่อนไปไว้ใน _old/<timestamp>/ กันรูปข้ามเคลมปนกัน
-    (ย้ายแทนการลบ เพื่อความปลอดภัย)"""
+    (ย้ายแทนการลบ เพื่อความปลอดภัย) — รวมโฟลเดอร์รูปคู่กรณี tp_veh/ ด้วย
+    (ไม่งั้นรอบถัดไปจะโหลดทับเป็น _2/_3 สะสม แล้วอัปโหลดซ้ำ)"""
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     files = [f for f in folder.iterdir() if f.is_file()]
-    if not files:
+    tp = folder / "tp_veh"
+    has_tp = tp.is_dir() and any(tp.iterdir())
+    if not files and not has_tp:
         return
     dest = folder / "_old" / datetime.now().strftime("%Y%m%d_%H%M%S")
     dest.mkdir(parents=True, exist_ok=True)
     for f in files:
         shutil.move(str(f), str(dest / f.name))
-    log(f"ย้ายรูปเก่า {len(files)} ไฟล์ไปที่ {dest}")
+    if has_tp:
+        shutil.move(str(tp), str(dest / "tp_veh"))
+    log(f"ย้ายรูปเก่า {len(files)} ไฟล์"
+        + (" + tp_veh/" if has_tp else "") + f" ไปที่ {dest}")
 
 
 def list_images(folder: Path) -> list:

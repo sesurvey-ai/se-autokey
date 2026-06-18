@@ -136,6 +136,130 @@ if tp_zips:
                   len(images.list_images(tmp))
                   == sum(v for k, v in counts.items() if k != "TP_VEH"))
 
+# ---- 8.5 archive ย้าย tp_veh/ ด้วย (กันรูปคู่กรณีสะสมเป็น _2/_3) ----
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    (tmp / "a.jpg").write_bytes(b"x")
+    (tmp / "tp_veh").mkdir()
+    (tmp / "tp_veh" / "opo1.jpg").write_bytes(b"o")
+    images.archive_old_images(tmp)
+    check("archive: ย้าย tp_veh/ เข้า _old ด้วย",
+          (list((tmp / "_old").rglob("tp_veh/opo1.jpg")) != [])
+          and not (tmp / "tp_veh").exists())
+
+# ---- 8.6 รูปรถคู่กรณี: dedup เนื้อหา + แบ่งชุดตามคัน (rename=False = ไม่แตะดิสก์) ----
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    tp = tmp / "tp_veh"
+    tp.mkdir()
+    # 3 ไฟล์ แต่ a กับ a_2 เนื้อหาเดียวกัน (จำลองการโหลดทับเป็น _2)
+    (tp / "a.jpg").write_bytes(b"AAA")
+    (tp / "a_2.jpg").write_bytes(b"AAA")
+    (tp / "b.jpg").write_bytes(b"BBB")
+    deduped = emcs._dedup_images([tp / "a.jpg", tp / "a_2.jpg", tp / "b.jpg"])
+    check("dedup รูปซ้ำตามเนื้อหา (3→2, เก็บตัวชื่อสั้นก่อน)",
+          [p.name for p in deduped] == ["a.jpg", "b.jpg"], str(deduped))
+
+    b1 = emcs._opponent_image_batches(tmp, 1, rename=False)
+    check("opo batches: 1 คัน = 1 ชุด 'คันที่1' รูป dedup",
+          len(b1) == 1 and b1[0][0] == "รูปรถคู่กรณี คันที่1"
+          and len(b1[0][1]) == 2, str(b1))
+    b0 = emcs._opponent_image_batches(tmp, 0, rename=False)
+    check("opo batches: นับไม่ได้ก็ยังอัปเป็นคันที่1",
+          len(b0) == 1 and b0[0][0] == "รูปรถคู่กรณี คันที่1", str(b0))
+
+# 2 คัน แยกตามชื่อโฟลเดอร์คัน (prefix ก่อน '_') → คันที่1/คันที่2
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    tp = tmp / "tp_veh"
+    tp.mkdir()
+    (tp / "car1_x.jpg").write_bytes(b"1X")
+    (tp / "car1_y.jpg").write_bytes(b"1Y")
+    (tp / "car2_z.jpg").write_bytes(b"2Z")
+    b2 = emcs._opponent_image_batches(tmp, 2, rename=False)
+    labels = [lbl for lbl, _ in b2]
+    check("opo batches: 2 คันแยกตามโฟลเดอร์ → คันที่1/คันที่2",
+          labels == ["รูปรถคู่กรณี คันที่1", "รูปรถคู่กรณี คันที่2"]
+          and len(b2[0][1]) == 2 and len(b2[1][1]) == 1, str(b2))
+
+# ไม่มีโฟลเดอร์ tp_veh = ไม่มีชุดคู่กรณี
+with tempfile.TemporaryDirectory() as tmp:
+    check("opo batches: ไม่มี tp_veh = []",
+          emcs._opponent_image_batches(pathlib.Path(tmp), 1) == [])
+
+# ---- 8.6.1 rename รูปคู่กรณี → 'รูปรถคู่กรณีคันที่N_ลำดับ.jpg' (แตะดิสก์จริง) ----
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    tp = tmp / "tp_veh"
+    tp.mkdir()
+    (tp / "1781_aaa.jpg").write_bytes(b"P1")
+    (tp / "1781_aaa_2.jpg").write_bytes(b"P1")        # ซ้ำเนื้อหา → ย้าย _dup
+    (tp / "1781_bbb.jpg").write_bytes(b"P2")
+    (tp / "undef_ccc.jpg").write_bytes(b"P3")
+    b = emcs._opponent_image_batches(tmp, 1)           # rename=True (default)
+    names = sorted(p.name for p in b[0][1])
+    check("rename: 1 คัน → 'รูปรถคู่กรณีคันที่1_N.jpg' ไล่ลำดับ",
+          names == ["รูปรถคู่กรณีคันที่1_1.jpg", "รูปรถคู่กรณีคันที่1_2.jpg",
+                    "รูปรถคู่กรณีคันที่1_3.jpg"], str(names))
+    check("rename: ไฟล์ชื่อใหม่อยู่บนดิสก์จริง",
+          all((tp / n).exists() for n in names))
+    check("rename: รูปซ้ำถูกย้ายเข้า _dup/ (ไม่อยู่ในชุดอัป)",
+          (tp / "_dup").is_dir() and len(list((tp / "_dup").glob("*.jpg"))) == 1)
+    check("rename: list_images เห็นเฉพาะรูปสะอาด 3 รูป (ไม่นับ _dup)",
+          images.list_images(tp) == names)
+    # idempotent: รันซ้ำได้ชื่อเดิม ไม่ขยับ/ไม่เพิ่มไฟล์
+    b2 = emcs._opponent_image_batches(tmp, 1)
+    check("rename: รันซ้ำ idempotent (ชื่อเดิม 3 รูป)",
+          sorted(p.name for p in b2[0][1]) == names
+          and images.list_images(tp) == names, str(b2))
+
+# 2 คัน: rename เป็นคันที่1_*/คันที่2_* แยกกัน
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    tp = tmp / "tp_veh"
+    tp.mkdir()
+    (tp / "carA_1.jpg").write_bytes(b"A1")
+    (tp / "carA_2.jpg").write_bytes(b"A2")
+    (tp / "carB_1.jpg").write_bytes(b"B1")
+    b = emcs._opponent_image_batches(tmp, 2)
+    got = {lbl: sorted(p.name for p in ps) for lbl, ps in b}
+    check("rename: 2 คัน → คันที่1_1/_2 + คันที่2_1",
+          got == {"รูปรถคู่กรณี คันที่1":
+                  ["รูปรถคู่กรณีคันที่1_1.jpg", "รูปรถคู่กรณีคันที่1_2.jpg"],
+                  "รูปรถคู่กรณี คันที่2": ["รูปรถคู่กรณีคันที่2_1.jpg"]}, str(got))
+
+# _rename_opponent_files: สลับชื่อชนกันได้ (two-phase) ไม่ทำไฟล์หาย
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    # ชื่อปลายทางของไฟล์หนึ่งไปตรงกับชื่อต้นทางของอีกไฟล์
+    (tmp / "รูปรถคู่กรณีคันที่1_2.jpg").write_bytes(b"X")   # ควรกลายเป็น _1 หรือ _2
+    (tmp / "zzz.jpg").write_bytes(b"Y")
+    src = [tmp / "รูปรถคู่กรณีคันที่1_2.jpg", tmp / "zzz.jpg"]
+    out = emcs._rename_opponent_files(src, 1)
+    check("rename two-phase: ไม่มีไฟล์หาย (2 ไฟล์)",
+          len(out) == 2 and all(p.exists() for p in out)
+          and sorted(p.name for p in out) ==
+          ["รูปรถคู่กรณีคันที่1_1.jpg", "รูปรถคู่กรณีคันที่1_2.jpg"], str(out))
+
+# ---- 8.7 _pick_draft_report: เลือกเรื่อง draft ที่จะเติมรูป ----
+_DRAFT = "S111111111 ... 2026013047934 ... รายงานสร้างใหม่ ... SEABI-1"
+_SENT = "S222222222 ... 2026013047934 ... ประกันตรวจสอบรายงาน ... SEABI-2"
+check("pick: ระบุ esurvey → ใช้ตามนั้น",
+      emcs._pick_draft_report(
+          [{"esurvey": "S1", "row": _DRAFT}], "S9") == "S9")
+check("pick: draft เดียว → เลือก draft",
+      emcs._pick_draft_report(
+          [{"esurvey": "S1", "row": _SENT}, {"esurvey": "S2", "row": _DRAFT}])
+      == "S2")
+check("pick: ไม่มี draft + เรื่องเดียว → ใช้เรื่องนั้น",
+      emcs._pick_draft_report([{"esurvey": "S1", "row": _SENT}]) == "S1")
+try:
+    emcs._pick_draft_report(
+        [{"esurvey": "S1", "row": _SENT}, {"esurvey": "S2", "row": _SENT}])
+    check("pick: ไม่มี draft + หลายเรื่อง → error", False)
+except RuntimeError:
+    check("pick: ไม่มี draft + หลายเรื่อง → error", True)
+
 # ---- 10. parse SURV_REPORT XML ----
 from autokey import surv_xml  # noqa: E402
 

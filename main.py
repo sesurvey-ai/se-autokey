@@ -99,6 +99,16 @@ def parse_args():
     p.add_argument("--compare", action="store_true",
                    help="อ่านทั้งสองทาง (scrape + API) แล้วเทียบ field ทีละตัว "
                         "ไม่กรอก EMCS — ใช้ตรวจว่า API ให้ผลตรงกับ scrape")
+    p.add_argument("--images-only", action="store_true",
+                   help="เติมรูปเข้า 'เรื่องเดิม' (draft) ที่มีอยู่แล้ว ไม่สร้างเรื่องใหม่/"
+                        "ไม่แตะข้อมูลอื่น — ปกติอัปเฉพาะรูปรถคู่กรณี (tp_veh/) "
+                        "ใช้ตอนกรอกเรื่อง+อัปรูปรถประกันไปแล้ว เหลือเติมรูปคู่กรณี")
+    p.add_argument("--esurvey", default="",
+                   help="ใช้กับ --images-only: ระบุเลข e-Survey (Sxxx) เจาะจงเรื่องที่จะเติมรูป "
+                        "(ไม่ระบุ = เลือกเรื่อง draft อัตโนมัติ)")
+    p.add_argument("--include-main-images", action="store_true",
+                   help="ใช้กับ --images-only: อัปรูปรถประกัน (โฟลเดอร์หลัก) ด้วย "
+                        "(ปกติอัปเฉพาะรูปรถคู่กรณี กันอัปซ้ำที่อัปไปแล้ว)")
     p.add_argument("--report-isurvey", action="store_true",
                    help="แจ้ง ISURVEY ว่าเคลม 'ส่งงานแล้ว' — ตรวจ EMCS ว่ากดส่งงานใหม่จริง "
                         "ก่อน (gate) ถ้ายังไม่ส่งจะไม่ยิง (ไม่อ่าน/ไม่กรอกฝั่งหน้า)")
@@ -322,6 +332,51 @@ def run_api_readonly(cfg, args):
         banner(f"อ่านผ่าน API สำเร็จ {ok}/{len(targets)} เคลม")
 
 
+def run_images_only(cfg, args):
+    """เติมรูปเข้า 'เรื่องเดิม' (draft) ที่มีอยู่แล้วใน EMCS — ไม่สร้างเรื่องใหม่
+    ไม่แตะข้อมูลอื่น (ใช้ตอนกรอกเรื่อง+อัปรูปรถประกันไปแล้ว เหลือเติมรูปรถคู่กรณี)
+
+    ได้ data จาก --data-json (ใช้รูปที่โหลดไว้แล้ว) หรือ --claim (อ่านสด+โหลดรูปก่อน)
+    ปกติอัปเฉพาะรูปรถคู่กรณี (tp_veh/) — เพิ่ม --include-main-images ถ้าจะอัปรูปหลักด้วย"""
+    per_run_dl = cfg.download_dir / "_dl" / str(os.getpid())
+    driver = make_driver(detach=True, download_dir=per_run_dl)
+    try:
+        if args.data_json:
+            banner(f"โหลดข้อมูลจากไฟล์ {args.data_json}")
+            data = ClaimData.load(args.data_json)
+            if data.xml_file and Path(data.xml_file).exists():
+                enrich_claim_from_xml(data, data.xml_file)
+        else:
+            targets = build_targets(args)
+            if len(targets) != 1:
+                raise SystemExit("โหมด --images-only ทำได้ทีละเคลม "
+                                 "(ระบุ --claim หรือ --data-json อันเดียว)")
+            claim, invoice = targets[0]
+            data = read_one_claim(driver, cfg, claim, invoice, args)
+            driver.switch_to.new_window("tab")   # เปิด tab ใหม่สำหรับ EMCS
+
+        log_plain(data.summary())
+        n_opo = len(data.third_parties or [])
+        if n_opo == 0 and not args.include_main_images:
+            log("⚠️ เคลมนี้ไม่มีคู่กรณี (third_parties ว่าง) — ไม่มีรูปรถคู่กรณีให้เติม "
+                "(ถ้าจะอัปรูปรถประกันด้วย ใส่ --include-main-images)")
+        images_folder = resolve_images_dir(cfg, data.claim_value, for_read=False)
+
+        esurvey = emcs.add_images_only(
+            driver, cfg, data, images_folder,
+            image_type=args.image_type,
+            include_main=args.include_main_images,
+            esurvey=args.esurvey)
+        save_debug_snapshot(driver, cfg.runs_dir / "logs",
+                            tag=f"images_only_{data.claim_value}")
+        banner(f"เติมรูปเข้าเรื่อง {esurvey} เสร็จ — ตรวจบน EMCS แล้วกด 'ส่งงาน' "
+               "เองเมื่อพร้อม (browser เปิดค้างให้)")
+    except Exception:
+        save_debug_snapshot(driver, cfg.runs_dir / "logs",
+                            tag="error_images_only")
+        raise
+
+
 def run_report_isurvey(cfg, args):
     """แจ้ง ISURVEY ว่าเคลม 'ส่งงานแล้ว' — gate ด้วยสถานะ EMCS ก่อนเสมอ
     (ถ้ายังไม่กดส่งงานใหม่ใน EMCS จะข้าม ไม่ยิง)"""
@@ -438,6 +493,10 @@ def main():
     # --compare: อ่านสองทางเทียบกัน (เปิด browser ฝั่ง scrape เท่านั้น) แล้วจบ
     if args.compare:
         run_compare(cfg, args)
+        return
+    # --images-only: เติมรูปเข้า draft เดิม (ไม่สร้างเรื่องใหม่/ไม่แตะข้อมูลอื่น) แล้วจบ
+    if args.images_only:
+        run_images_only(cfg, args)
         return
     # read-only (ไม่ใช่ --scrape): อ่านผ่าน API ล้วน ไม่เปิด browser เลย แล้วจบ
     if args.read_only and not args.scrape and not args.data_json:

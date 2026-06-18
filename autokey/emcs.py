@@ -3,6 +3,7 @@
 โมเดลความปลอดภัย: "บันทึก" ทุกหน้า = draft แก้ไขได้ สคริปต์กดให้ครบ
 จุด commit จริงคือปุ่ม 'ส่งงานใหม่' หน้าค่าใช้จ่าย — ไม่กดให้เด็ดขาด
 """
+import hashlib
 import re
 import time
 from pathlib import Path
@@ -954,31 +955,120 @@ def fill_damage_list(driver, data: ClaimData, main_window: str):
 
 # ------------------------------------------------------------------ รูปภาพ
 
-def upload_images(driver, folder, image_type: str = "รูปรถประกัน", only=None):
-    """เข้าหน้ารูปประกอบ เลือกประเภทรูป เพิ่มรูปทุกไฟล์ แล้วกดอัปโหลด
+def _dedup_images(paths):
+    """กรองรูปซ้ำตามเนื้อหา (กันไฟล์ _2/_3 ที่เกิดจากการโหลดทับรอบก่อน)
+    เก็บไฟล์แรกที่เจอของแต่ละเนื้อหา (list_images เรียง natural → ตัวชื่อสั้นมาก่อน)"""
+    seen, out = set(), []
+    for p in paths:
+        try:
+            h = hashlib.md5(p.read_bytes()).hexdigest()
+        except OSError:
+            continue
+        if h in seen:
+            continue
+        seen.add(h)
+        out.append(p)
+    return out
+
+
+def _rename_opponent_files(paths, car: int):
+    """เปลี่ยนชื่อไฟล์รูปคู่กรณี (list[Path] ในโฟลเดอร์เดียวกัน เรียงแล้ว) เป็น
+    'รูปรถคู่กรณีคันที่<car>_<ลำดับ>.jpg' — แพทเทิร์นเดียวกับรูปรถประกัน
+    (คอลัมน์รายการใน EMCS = ชื่อไฟล์นี้). two-phase กันชนชื่อระหว่างสลับ
+    idempotent: ถ้าชื่อตรงเป้าอยู่แล้วไม่ขยับ. คืน list[Path] ชื่อใหม่"""
+    if not paths:
+        return []
+    folder = paths[0].parent
+    targets = [f"รูปรถคู่กรณีคันที่{car}_{i}{p.suffix.lower()}"
+               for i, p in enumerate(paths, start=1)]
+    if all(p.name == t for p, t in zip(paths, targets)):
+        return list(paths)                       # ชื่อถูกหมดแล้ว — ไม่แตะ
+    # phase 1: ทุกไฟล์ → ชื่อชั่วคราว (กันชนกับชื่อเป้าที่ไฟล์อื่นถืออยู่)
+    temps = []
+    for i, p in enumerate(paths):
+        tmp = folder / f"__tpren_{i}{p.suffix.lower()}"
+        p.rename(tmp)
+        temps.append(tmp)
+    # phase 2: ชั่วคราว → ชื่อเป้า (สำรองไฟล์เก่าที่บังเอิญชื่อชนไว้ก่อน)
+    out = []
+    for tmp, t in zip(temps, targets):
+        dst = folder / t
+        if dst.exists():
+            dst.rename(folder / f"__bak_{t}")
+        tmp.rename(dst)
+        out.append(dst)
+    return out
+
+
+def _opponent_image_batches(folder, n_opponents: int, rename: bool = True):
+    """สร้างชุดอัปโหลดรูปรถคู่กรณีจากโฟลเดอร์ tp_veh/ (รูปที่โหลดมาจาก Tab 4)
+    คืน list ของ (ประเภทรูป, [Path,...]) — ประเภท = 'รูปรถคู่กรณี คันที่N'
+
+    - dedup รูปซ้ำตามเนื้อหาก่อนเสมอ (ย้ายตัวซ้ำเข้า tp_veh/_dup/ กันรก)
+    - คู่กรณี 1 คัน (หรือนับจำนวนไม่ได้): รูปทั้งหมด → 'รูปรถคู่กรณี คันที่1'
+    - หลายคัน: แยกตามโฟลเดอร์คัน (zip ใส่ prefix '<โฟลเดอร์คัน>_' หน้าชื่อไฟล์)
+      ถ้าได้กลุ่ม = จำนวนคันพอดี → map คันที่ 1..N; ไม่งั้นรวมเป็นคันที่1 + เตือน
+    - rename=True: เปลี่ยนชื่อไฟล์เป็น 'รูปรถคู่กรณีคันที่N_ลำดับ.jpg' บนดิสก์
+      ก่อนอัป (ให้ชื่อในตาราง EMCS สะอาดเหมือนรูปรถประกัน)"""
+    tp = Path(folder) / "tp_veh"
+    if not tp.is_dir():
+        return []
+    all_names = list_images(tp)
+    files = _dedup_images([tp / name for name in all_names])
+    if not files:
+        return []
+
+    # ย้ายรูปซ้ำ (ที่ dedup คัดออก) ไป _dup/ กันรกในโฟลเดอร์ (ไม่ลบทิ้ง)
+    if rename:
+        keep = {p.name for p in files}
+        dropped = [tp / name for name in all_names if name not in keep]
+        if dropped:
+            dup_dir = tp / "_dup"
+            dup_dir.mkdir(exist_ok=True)
+            for d in dropped:
+                dst = dup_dir / d.name
+                k = 2
+                while dst.exists():
+                    dst = dup_dir / f"{d.stem}_{k}{d.suffix}"
+                    k += 1
+                d.rename(dst)
+            log(f"   ย้ายรูปคู่กรณีซ้ำ {len(dropped)} ไฟล์ → tp_veh/_dup/")
+
+    n = max(1, int(n_opponents or 0))
+    if n == 1:
+        groups = {1: files}
+    else:
+        # หลายคัน — แยกตามชื่อโฟลเดอร์คัน (ส่วนหน้าก่อน '_' แรก) เรียงคงที่
+        raw = {}
+        for p in files:
+            raw.setdefault(p.name.split("_", 1)[0], []).append(p)
+        if len(raw) == n:
+            groups = {i: raw[k] for i, k in enumerate(sorted(raw), start=1)}
+        else:
+            log(f"   ⚠️ มีคู่กรณี {n} คัน แต่แยกรูปตามคันอัตโนมัติไม่ชัด "
+                f"({len(raw)} กลุ่มจากชื่อไฟล์) → รวมเป็น 'คันที่1' ทั้งหมด "
+                "ตรวจ/ย้ายรูปคันที่ 2+ เองบนหน้าเว็บ")
+            groups = {1: files}
+
+    batches = []
+    for car in sorted(groups):
+        paths = groups[car]               # เรียง natural อยู่แล้วจาก list_images
+        if rename:
+            paths = _rename_opponent_files(paths, car)
+        batches.append((f"รูปรถคู่กรณี คันที่{car}", paths))
+    return batches
+
+
+def _upload_one_type(driver, paths, image_type: str):
+    """นำทางเข้าหน้ารูปประกอบ → เลือกประเภท image_type → อัปโหลดทุกไฟล์ใน paths
+    (list[Path]) → ปิดกล่องผล. เรียกซ้ำได้หลายประเภท (นำทางใหม่ทุกครั้งกัน stale)
 
     หน้าอัปโหลดเป็น UI แบบ HTML5: เลือกประเภทก่อน (input file ถูก disable
     จนกว่าจะเลือก) แล้วส่งทุกไฟล์เข้า input ตัวเดียว (multiple) รวดเดียว
-    — ถ้าไม่เจอ UI ใหม่จะ fallback ไปแบบเก่า (ทีละไฟล์ + ประเภทต่อแถว)
-
-    only: list ชื่อไฟล์ที่จะอัปโหลด (None = ให้ผู้ใช้เลือกบนหน้าเว็บ /
-    console = ทุกไฟล์); ส่ง list ว่าง = ไม่อัปโหลดเลย"""
-    files = list_images(folder)
-    if not files:
-        log("EMCS: ไม่มีรูปให้อัปโหลด — ข้าม")
+    — ถ้าไม่เจอ UI ใหม่จะ fallback ไปแบบเก่า (ทีละไฟล์ + ประเภทต่อแถว)"""
+    if not paths:
         return
-
-    # ให้ผู้ใช้เลือกรูปที่จะอัปโหลด (หน้าเว็บ); console/ไม่ตอบ = ทุกรูปตามเดิม
-    if only is None:
-        only = wait_for_image_select(folder, files)
-    if only is not None:
-        chosen = set(only)
-        files = [f for f in files if f in chosen]
-        if not files:
-            log("EMCS: ผู้ใช้ไม่ได้เลือกรูปใดเลย — ข้ามการอัปโหลดรูป")
-            return
-
-    log(f"EMCS: อัปโหลดรูป {len(files)} ไฟล์ (ประเภท '{image_type}')")
+    log(f"EMCS: อัปโหลดรูป {len(paths)} ไฟล์ (ประเภท '{image_type}')")
     click_retry(driver, By.ID, "wuMenuPage1_imbImage")
 
     try:
@@ -995,8 +1085,8 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
             lambda d: d.find_element(By.ID, "selectedFile").is_enabled()
         )
         # 2) ส่งทุกไฟล์ในครั้งเดียว (input รับ multiple, คั่นด้วย \n)
-        paths = "\n".join(str(Path(folder) / name) for name in files)
-        driver.find_element(By.ID, "selectedFile").send_keys(paths)
+        driver.find_element(By.ID, "selectedFile").send_keys(
+            "\n".join(str(p) for p in paths))
         WebDriverWait(driver, 30).until(
             lambda d: "0 Files" not in d.find_element(
                 By.ID, "lblFiles_Upload_Html5").get_attribute("value")
@@ -1009,19 +1099,20 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
     else:
         # ----- UI เก่า: ส่งทีละไฟล์ + เลือกประเภทรูปต่อแถว -----
         wait_present(driver, By.XPATH, "//input[@type='file']", 15)
-        for name in files:
+        for p in paths:
             time.sleep(0.5)
-            driver.find_element(By.XPATH, "//input[@type='file']").send_keys(
-                str(Path(folder) / name)
-            )
-            log(f"   + {name}")
+            driver.find_element(By.XPATH, "//input[@type='file']").send_keys(str(p))
+            log(f"   + {p.name}")
         rows = driver.find_element(By.ID, "fileList").find_elements(
             By.XPATH, ".//table/tbody/tr"
         )
         for c in range(1, len(rows)):
-            Select(
-                driver.find_element(By.ID, f"ddlImageType{c}")
-            ).select_by_visible_text(image_type)
+            try:
+                Select(driver.find_element(By.ID, f"ddlImageType{c}")
+                       ).select_by_visible_text(image_type)
+            except Exception:
+                fuzzy_select(driver, f"ddlImageType{c}", image_type,
+                             label=f"ประเภทรูปแถว {c}")
         log(f"   ✓ ตั้งประเภทรูป '{image_type}' ครบ {len(rows) - 1} แถว")
         driver.find_element(By.ID, "btnUpload").click()
 
@@ -1031,7 +1122,110 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
     except TimeoutException:
         log("   ⚠️ ไม่เห็นกล่องแจ้งผลอัปโหลด — ตรวจผลบนหน้าจอด้วย")
     time.sleep(2)  # ปิดกล่องแล้วหน้า refresh — พักให้นิ่งก่อนไปหน้าถัดไป
+
+
+def upload_images(driver, folder, image_type: str = "รูปรถประกัน", only=None,
+                  n_opponents: int = 0):
+    """อัปโหลดรูปทั้งหมด: รูปรถประกัน (โฟลเดอร์หลัก) + รูปรถคู่กรณี (tp_veh/)
+
+    - รูปรถประกัน: เลือกประเภท image_type ('รูปรถประกัน') — only คุมว่าจะอัปรูปไหน
+      (None = ให้ผู้ใช้เลือกบนหน้าเว็บ / console = ทุกไฟล์; list ว่าง = ไม่อัป)
+    - รูปรถคู่กรณี: ทุกไฟล์ใน tp_veh/ (โหลดจาก Tab 4) → 'รูปรถคู่กรณี คันที่N'
+      ตามจำนวนคู่กรณี n_opponents (1 คัน = คันที่1 ทั้งหมด — ดู _opponent_image_batches)"""
+    folder = Path(folder)
+    files = list_images(folder)
+    opp_batches = _opponent_image_batches(folder, n_opponents)
+
+    if not files and not opp_batches:
+        log("EMCS: ไม่มีรูปให้อัปโหลด — ข้าม")
+        return
+
+    # ----- รูปรถประกัน (โฟลเดอร์หลัก) -----
+    if files:
+        # ให้ผู้ใช้เลือกรูปที่จะอัปโหลด (หน้าเว็บ); console/ไม่ตอบ = ทุกรูปตามเดิม
+        if only is None:
+            only = wait_for_image_select(folder, files)
+        if only is not None:
+            chosen = set(only)
+            files = [f for f in files if f in chosen]
+        if files:
+            _upload_one_type(driver, [folder / name for name in files], image_type)
+        elif only is not None:
+            log("EMCS: ผู้ใช้ไม่ได้เลือกรูปรถประกัน — ข้ามส่วนรูปรถประกัน")
+
+    # ----- รูปรถคู่กรณี (tp_veh/) — อัปครบเสมอ แยกตามคัน -----
+    for label, batch in opp_batches:
+        _upload_one_type(driver, batch, label)
+
     log("EMCS: อัปโหลดรูปเสร็จ")
+
+
+def _pick_draft_report(reports, esurvey: str = "") -> str:
+    """เลือกเรื่อง (เลข e-Survey) ที่จะเติมรูป จากผลค้น find_existing_reports
+    - ระบุ esurvey มา → ใช้ตามนั้น (เตือนถ้าไม่อยู่ในผลค้น แต่ยังลองตามที่ระบุ)
+    - ไม่ระบุ → เลือกเรื่องที่เป็น draft ('รายงานสร้างใหม่' ในข้อความแถว):
+      draft เดียว = ใช้เลย / หลาย draft = ตัวแรก + เตือน /
+      ไม่มี draft ชัดเจน = เรื่องเดียวใช้เลย, หลายเรื่อง = ต้องระบุ --esurvey"""
+    esurvey = (esurvey or "").strip()
+    if esurvey:
+        if not any(r.get("esurvey") == esurvey for r in reports):
+            log(f"   ⚠️ ระบุ {esurvey} แต่ไม่พบในผลค้น — ลองใช้ตามที่ระบุ")
+        return esurvey
+
+    def _is_draft(r):
+        return any(s in (r.get("row") or "") for s in DRAFT_STATUSES)
+
+    drafts = [r for r in reports if _is_draft(r)]
+    if len(drafts) == 1:
+        return drafts[0]["esurvey"]
+    lines = "\n".join(f"   - {r['esurvey']}  {r['row'][:90]}"
+                      for r in (drafts or reports))
+    if len(drafts) > 1:
+        log(f"   ⚠️ มี draft {len(drafts)} เรื่อง — เลือกเรื่องแรก "
+            f"({drafts[0]['esurvey']}); ระบุ --esurvey ถ้าต้องการเจาะจง\n{lines}")
+        return drafts[0]["esurvey"]
+    if len(reports) == 1:
+        return reports[0]["esurvey"]
+    raise RuntimeError(
+        "เลือกเรื่อง draft ที่จะเติมรูปไม่ได้ (สถานะไม่ชี้ชัด/หลายเรื่อง) — "
+        f"ระบุเลขด้วย --esurvey จากรายการนี้:\n{lines}")
+
+
+def open_report_images(driver, claim: str, esurvey: str):
+    """ค้นเลขเคลม (ให้ลิงก์ e-Survey โผล่บนหน้า MainPage) → คลิกลิงก์เปิดเรื่อง →
+    รอเมนู 'รูปประกอบ' (wuMenuPage1_imbImage) พร้อม (upload_images จะกดเมนูเอง)"""
+    find_existing_reports(driver, claim)
+    wait_clickable(
+        driver, By.XPATH, f"//a[normalize-space(text())='{esurvey}']", 20
+    ).click()
+    wait_present(driver, By.ID, "wuMenuPage1_imbImage", 20)
+
+
+def add_images_only(driver, cfg, data: ClaimData, images_folder,
+                    image_type: str = "รูปรถประกัน", include_main: bool = False,
+                    esurvey: str = "") -> str:
+    """เติมรูปเข้า 'เรื่องเดิม' (draft) ที่มีอยู่แล้ว โดยไม่สร้างเรื่องใหม่/ไม่แตะ
+    ข้อมูลทั่วไป/คู่กรณี/ความเสียหาย/ค่าใช้จ่าย — ใช้ตอนกรอกเรื่อง+อัปรูปรถประกัน
+    ไปแล้ว เหลือเติมรูปรถคู่กรณี
+
+    - login EMCS → ค้นเรื่องเดิมของเคลม → เลือก draft → เปิด → หน้ารูป → อัปโหลด
+    - include_main=False (ปกติ): อัปเฉพาะรูปรถคู่กรณี (tp_veh/) ส่ง only=[] ข้าม
+      รูปรถประกัน (กันอัปซ้ำที่อัปไปแล้ว) / True: อัปรูปรถประกันด้วย (มีให้เลือกตามปกติ)
+    คืนเลข e-Survey ของเรื่องที่เติมรูป"""
+    login(driver, cfg)
+    reports = find_existing_reports(driver, data.claim_value)
+    if not reports:
+        raise RuntimeError(
+            f"ไม่พบเรื่องเดิมของเคลม {data.claim_value} ใน EMCS — ยังไม่มี draft "
+            "ให้เติมรูป (สร้างเรื่องก่อนด้วย flow ปกติ)")
+    target = _pick_draft_report(reports, esurvey)
+    log(f"EMCS: เปิดเรื่องเดิม {target} เพื่อเติมรูป "
+        f"({'รูปรถประกัน+คู่กรณี' if include_main else 'เฉพาะรูปรถคู่กรณี'})")
+    open_report_images(driver, data.claim_value, target)
+    upload_images(driver, images_folder, image_type=image_type,
+                  only=(None if include_main else []),
+                  n_opponents=len(data.third_parties or []))
+    return target
 
 
 # ------------------------------------------------------------------ ค่าใช้จ่าย
@@ -1446,7 +1640,8 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
     fill_damage_list(driver, data, main_window)
 
     if images_folder is not None:
-        upload_images(driver, images_folder, image_type=image_type)
+        upload_images(driver, images_folder, image_type=image_type,
+                      n_opponents=len(data.third_parties or []))
 
     fill_billing(driver, data, save_price=save_price)
     return esurvey
