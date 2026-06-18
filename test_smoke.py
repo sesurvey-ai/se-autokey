@@ -310,12 +310,14 @@ _tp_they_wrong = claim_data.ClaimData(
     third_parties=[{"plate_no": "x"}])
 _tp_both = claim_data.ClaimData(
     acc_result="รถประกันเป็นฝ่ายถูกและผิด", third_parties=[{"plate_no": "x"}])
-check("loss auto: เคลมแห้ง", emcs.resolve_loss_type(_dry, "auto") == "เคลมแห้ง")
-check("loss auto: ประกันผิด+คู่กรณี → ชนคู่กรณีเสียหาย",
-      emcs.resolve_loss_type(_tp_we_wrong, "auto") == "ชนคู่กรณีเสียหาย")
-check("loss auto: คู่กรณีผิด → ถูกคู่กรณีชน",
-      emcs.resolve_loss_type(_tp_they_wrong, "auto") == "ถูกคู่กรณีชน")
-check("loss auto: ก้ำกึ่ง → ว่าง (คนเลือกเอง)",
+check("loss auto: เคลมแห้ง (ไม่มีคู่กรณี)",
+      emcs.resolve_loss_type(_dry, "auto") == "เคลมแห้ง")
+# เคลมสด (มีคู่กรณี): ISURVEY ไม่มีข้อมูลลักษณะความเสียหาย → '' เสมอ (หยุดรอคนเลือก)
+check("loss auto: มีคู่กรณี+ประกันผิด → '' (คนเลือกเอง)",
+      emcs.resolve_loss_type(_tp_we_wrong, "auto") == "")
+check("loss auto: มีคู่กรณี+คู่กรณีผิด → '' (คนเลือกเอง)",
+      emcs.resolve_loss_type(_tp_they_wrong, "auto") == "")
+check("loss auto: มีคู่กรณี+ก้ำกึ่ง → '' (คนเลือกเอง)",
       emcs.resolve_loss_type(_tp_both, "auto") == "")
 check("loss ระบุเองไม่ถูกทับ",
       emcs.resolve_loss_type(_tp_both, "เคลมแห้ง") == "เคลมแห้ง")
