@@ -368,7 +368,9 @@ def fill_opponent_damage(driver, prefix, damages, main_window):
         return
     log(f"   กรอกความเสียหายคู่กรณี {len(items)} รายการ (popup free-text)")
     handles_before = set(driver.window_handles)
-    wait_clickable(driver, By.ID, prefix + "btnPopUp_DamList").click()
+    # หลังบันทึกคู่กรณี (postback หนัก) หน้า re-render — ปุ่ม popup อาจ stale/ช้า
+    # → click_retry + timeout ยาว (เดิม wait_clickable 10 วิ timeout บน draft ที่ช้า)
+    click_retry(driver, By.ID, prefix + "btnPopUp_DamList", timeout=25)
     try:
         WebDriverWait(driver, 15).until(
             lambda d: len(d.window_handles) > len(handles_before))
