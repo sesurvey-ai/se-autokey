@@ -86,11 +86,25 @@ def parse_surv_report(path) -> dict:
             "owner_phone": _text(a, "TEL_NO"),
         })
 
-    # โครงสร้าง injury ยังไม่เคยเห็นตัวอย่างจริง — เก็บทุก tag แบบ generic
-    for inj in root.iter("TXN_SURV_INJURY"):
-        out["injuries"].append(
-            {c.tag.lower(): (c.text or "").strip() for c in inj}
-        )
+    # ผู้บาดเจ็บ: tag จริงคือ TXN_SURV_INJ (ยืนยันจากเคลม 2026013144960 — 2 คน)
+    # PERSON_TYPE: DV=ผู้ขับขี่รถประกัน, ON=คู่กรณี/บุคคลอื่น
+    for inj in root.iter("TXN_SURV_INJ"):
+        out["injuries"].append({
+            "seq": _text(inj, "INJ_SEQ"),
+            "name": _text(inj, "NAME"),
+            "age": _text(inj, "AGE"),
+            "citizen_id": _text(inj, "CITIZEN_ID"),
+            "job": _text(inj, "JOB"),
+            "car_regno": _text(inj, "CAR_REGNO"),
+            "address": _text(inj, "ADDRESS"),
+            "tel_no": _text(inj, "TEL_NO"),
+            "hospital": _text(inj, "HOS_NAME"),
+            "cost": _text(inj, "COST"),
+            "injure": _text(inj, "INJURE"),
+            "gender": _text(inj, "GENDER"),
+            "person_type": _text(inj, "PERSON_TYPE"),
+            "wounded_type": _text(inj, "WOUNDED_TYPE"),
+        })
 
     # ค่าสำรวจ (ฝั่ง "เสนอ" ของบริษัทสำรวจ) — ใช้กรอกตารางราคาหน้า Debit Note
     bill_el = root.find(".//TXN_SURV_BILL")

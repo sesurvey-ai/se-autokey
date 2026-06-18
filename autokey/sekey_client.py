@@ -120,3 +120,52 @@ def save_record(cfg, claim_no: str, survey_no: str, keyer: str = "",
                 "record_id": rid, "upserted": upserted, "sent": sent, "payload": payload}
     except Exception as e:
         return {"ok": False, "status": 0, "text": f"{type(e).__name__}: {e}", **fail}
+
+
+def derive_base_type(survey_no) -> str:
+    """default ประเภทงานจากเลขเซอร์เวย์ (เหมือน se-key extension):
+    ขึ้นต้น 'SESV' → 'SESV', อื่น ๆ → 'งานต้น'
+    (งานต้น vs งานตาม จริง ๆ แยกด้วย ddlAdd_No บนหน้า eClaim3 ซึ่ง webui มองไม่เห็น
+    → ปล่อยให้ผู้ใช้เลือกเองในแผง โดย default เป็น 'งานต้น')"""
+    return "SESV" if str(survey_no or "").strip().upper().startswith("SESV") else "งานต้น"
+
+
+def build_payloads(claim_no, survey_no, keyer="", base_type="งานต้น",
+                   batch=False, mix_values=None) -> list:
+    """สร้างรายการ row สำหรับบันทึก se-key — ลอกตรรกะ payload จาก extension (content.js):
+      - ไม่ batch         → 1 row (work_type=base_type, invoice_mix='')
+      - งานรวม (batch)    → primary(work_type=base_type, mix='')
+                            + followup ต่อ 1 invoice (work_type='งานรวม', mix=survey_no)
+      - SESV (ล็อก batch) → primary(work_type='SESV', mix=mixValues[0])  ← SEABI ตัวแรก
+                            + followup จาก mixValues[1:] (work_type='งานรวม', mix=survey_no)
+    คืน list ของ dict {claim_no, survey_no, keyer, work_type, invoice_mix}"""
+    keyer = keyer or keyer_for(claim_no)
+    survey_no = str(survey_no or "").strip()
+    mix = [str(m).strip() for m in (mix_values or []) if str(m).strip()]
+    is_sesv = (base_type == "SESV")
+    if is_sesv:
+        batch = True   # SESV เคลมเงินเองไม่ได้ ต้องอิง SEABI invoice เสมอ
+    out = []
+    if batch:
+        primary_mix = (mix[0] if mix else "") if is_sesv else ""
+        followups = mix[1:] if is_sesv else mix
+        out.append({"claim_no": claim_no, "survey_no": survey_no, "keyer": keyer,
+                    "work_type": base_type, "invoice_mix": primary_mix})
+        for v in followups:
+            out.append({"claim_no": claim_no, "survey_no": v, "keyer": keyer,
+                        "work_type": "งานรวม", "invoice_mix": survey_no})
+    else:
+        out.append({"claim_no": claim_no, "survey_no": survey_no, "keyer": keyer,
+                    "work_type": base_type, "invoice_mix": ""})
+    return out
+
+
+def save_many(cfg, payloads, mark_sent=True, dry_run=False) -> list:
+    """บันทึกหลาย row (จาก build_payloads) ลง se-key — คืน list ผลของ save_record แต่ละตัว"""
+    results = []
+    for p in payloads:
+        results.append(save_record(
+            cfg, p["claim_no"], p["survey_no"], keyer=p.get("keyer", ""),
+            work_type=p.get("work_type", DEFAULT_WORK_TYPE),
+            invoice_mix=p.get("invoice_mix", ""), mark_sent=mark_sent, dry_run=dry_run))
+    return results

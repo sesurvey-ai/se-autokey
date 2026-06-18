@@ -1,4 +1,5 @@
 """ฝั่งอ่านข้อมูล: login ISURVEY → เปิดเคลม → อ่าน Tab 1-8 → โหลดรูป"""
+import re
 import time
 
 from selenium.common.exceptions import (
@@ -329,7 +330,9 @@ def read_tab2_accident(driver, data: ClaimData, download_dir=None):
 def read_tab3_insurance(driver, data: ClaimData, download_dir=None):
     log("ISURVEY: อ่าน Tab 3 Insurance info")
     _click_tab(driver, 3)
-    wait_value_not_empty(driver, "tab3_oth_comp_no-inputEl")
+    # รอจนแท็บโหลดข้อมูล — ใช้ทะเบียนรถประกัน (มีทุกเคลม) เป็นตัวจับ
+    # (เดิมใช้ tab3_oth_comp_no = เลขที่ พรบ. ซึ่งบางเคลมว่างจริง → ค้างครบ 60 วิแล้ว fail)
+    wait_value_not_empty(driver, "tab3_plate_no-inputEl")
     data.insure_plate = get_value(driver, "tab3_plate_no-inputEl")
     data.prb_number = get_value(driver, "tab3_oth_comp_no-inputEl")
     data.prb_car_type = get_value(driver, "tab3_vehTID-inputEl")
@@ -550,6 +553,112 @@ def read_tab6_asset(driver, data: ClaimData):
     data.assets = _read_record_tab(
         driver, 6, "property_prop_name-inputEl", ASSET_FIELDS, "ทรัพย์สิน"
     )
+
+
+# ----------------------------------------- คู่กรณี: เติมจากหน้าจอ Tab 4 (combo)
+# Tab 4/5/6 ต้องเลือก record จาก dropdown (ExtJS combo) ก่อนข้อมูลถึงโหลด —
+# combo เป็น auto-id (combo-NNNN), store โหลดแบบ lazy (ต้อง expand ก่อน)
+
+def _find_record_combo(driver):
+    """หา component id ของ combo เลือก record (combo-NNNN) ที่มองเห็นบนแท็บปัจจุบัน
+    (ไม่ใช่ search_*/othercar_*/injury_*/property_* ซึ่งเป็น field) — None ถ้าไม่เจอ"""
+    return driver.execute_script(r"""
+      for(const e of document.querySelectorAll("input[role=combobox]")){
+        if(e.offsetParent!==null && /^combo-\d+-inputEl$/.test(e.id))
+          return e.id.replace('-inputEl','');
+      }
+      return null;""")
+
+
+def _combo_records(driver, cid):
+    """expand combo (ให้ remote store โหลด) → คืน [{ikey, disp}, ...]"""
+    driver.execute_script(
+        "const c=Ext.getCmp(arguments[0]); if(c&&c.expand) c.expand();", cid)
+    time.sleep(2.5)
+    recs = driver.execute_script(r"""
+      const cmp=Ext.getCmp(arguments[0]);
+      if(!cmp||!cmp.getStore) return [];
+      const vf=cmp.valueField, df=cmp.displayField;
+      const out=cmp.getStore().getRange().map(r=>({ikey:r.get(vf), disp:r.get(df)}));
+      if(cmp.collapse) cmp.collapse();
+      return out;""", cid)
+    return recs or []
+
+
+def _combo_select(driver, cid, ikey):
+    """เลือก record ตาม ikey (setValue + fire 'select' ให้ฟอร์มโหลด)"""
+    driver.execute_script(r"""
+      const cmp=Ext.getCmp(arguments[0]); if(!cmp) return;
+      const want=String(arguments[1]), vf=cmp.valueField;
+      let rec=null;
+      cmp.getStore().each(r=>{ if(String(r.get(vf))===want) rec=r; });
+      if(rec){ cmp.setValue(rec.get(vf)); cmp.fireEvent('select', cmp, rec); }
+    """, cid, ikey)
+
+
+def _read_opo_damage_grid(driver):
+    """อ่านตารางความเสียหายคู่กรณี (othercar-damage_grid) →
+    [{part, type, level, labour, parts, memo}] (คอลัมน์ตามหน้าจอ)"""
+    rows = driver.execute_script(r"""
+      const body=document.getElementById('othercar-damage_grid-body');
+      if(!body) return [];
+      const out=[];
+      body.querySelectorAll('table').forEach(t=>{
+        const c=[...t.querySelectorAll('td')].map(td=>(td.innerText||'').trim());
+        if(c.some(x=>x)) out.push(c);
+      });
+      return out;""")
+    out = []
+    for c in (rows or []):
+        c = (list(c) + [""] * 6)[:6]
+        out.append({"part": c[0], "type": c[1], "level": c[2],
+                    "labour": c[3], "parts": c[4], "memo": c[5]})
+    return out
+
+
+def enrich_third_parties_from_tab4(driver, data: ClaimData):
+    """เติมข้อมูลคู่กรณีที่ XML ไม่มี จากหน้าจอ Tab 4 (เลือกทีละคันจาก dropdown):
+    ประเภทรถ (veh_type อ่านได้, ไม่ใช่ code) / ประกันประเภท (insure_type) /
+    กรมธรรม์ (policy_no) / ตารางความเสียหายรายชิ้น (damages) — จับคู่ด้วยทะเบียน"""
+    if not data.third_parties:
+        return
+    log("ISURVEY: เติมคู่กรณีจาก Tab 4 (ประเภทรถ/ประกัน/ความเสียหาย)")
+    _click_tab(driver, 4)
+    time.sleep(1)
+    cid = _find_record_combo(driver)
+    if not cid:
+        log("   ⚠️ ไม่เจอ dropdown เลือกคู่กรณีบน Tab 4 — ข้าม (ใช้ข้อมูล XML เท่าที่มี)")
+        return
+    recs = _combo_records(driver, cid)
+    log(f"   Tab 4 มีคู่กรณีใน dropdown {len(recs)} คัน")
+
+    def _norm(s):
+        return re.sub(r"\s+", "", str(s or "")).strip()
+
+    by_plate = {}
+    for r in recs:
+        _combo_select(driver, cid, r["ikey"])
+        time.sleep(2)
+        by_plate[_norm(r["disp"])] = {
+            "veh_type": get_value(driver, "othercar_vehTID-inputEl"),
+            "insure_type": get_value(driver, "othercar_oth_insure_typeID-inputEl"),
+            "policy_no": get_value(driver, "othercar_oth_policy_no-inputEl"),
+            "damages": _read_opo_damage_grid(driver),
+        }
+
+    for tp in data.third_parties:
+        extra = by_plate.get(_norm(tp.get("plate_no", "")))
+        if not extra:
+            continue
+        if extra["veh_type"]:
+            tp["veh_type"] = extra["veh_type"]
+        if extra["insure_type"]:
+            tp["insure_type"] = extra["insure_type"]
+        if extra["policy_no"]:
+            tp["policy_no"] = extra["policy_no"]
+        tp["damages"] = extra["damages"]
+        log(f"   ✓ {tp.get('plate_no')}: ประเภทรถ={extra['veh_type']!r} "
+            f"ประกันประเภท={extra['insure_type']!r} ความเสียหาย {len(extra['damages'])} รายการ")
 
 
 def read_tab7_policy(driver, data: ClaimData):

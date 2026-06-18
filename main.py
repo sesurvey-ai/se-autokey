@@ -83,6 +83,9 @@ def parse_args():
     p.add_argument("--force-new", action="store_true",
                    help="สร้างเรื่องใหม่แม้เคลมนี้จะมีเรื่องใน EMCS อยู่แล้ว "
                         "(ปกติระบบจะหยุดกันเปิดเรื่องซ้ำ)")
+    p.add_argument("--no-save-price", action="store_true",
+                   help="กรอกหน้าค่าใช้จ่ายให้ครบแต่ไม่กดปุ่ม 'บันทึกราคา' "
+                        "(ตรวจตารางราคาแล้วกด 'บันทึกราคา' + 'ส่งงานใหม่' เองบนหน้าจอ)")
     p.add_argument("--allow-fresh", action="store_true",
                    help="อนุญาตกรอกเคลมสด/มีคู่กรณี (นโยบายปัจจุบัน: "
                         "เคลมแห้งเท่านั้น — เคลมสดพักไว้)")
@@ -183,6 +186,16 @@ def read_one_claim(driver, cfg, claim: str, invoice: str, args):
     if not xml_ok:
         log("   ไม่มี XML — อ่านคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินจากหน้าจอแทน")
         isurvey.read_record_tabs(driver, data)
+
+    # คู่กรณี: เติมข้อมูลที่ XML ไม่มี (ประเภทรถ/ประกันประเภท/ความเสียหายรายชิ้น)
+    # จากหน้าจอ Tab 4 — เลือกทีละคันจาก dropdown (XML ให้แค่ basics + code)
+    if data.third_parties:
+        try:
+            isurvey.go_to_tab(driver, 1)  # กลับ Tab 1 ก่อน กัน state ค้าง
+            isurvey.enrich_third_parties_from_tab4(driver, data)
+            data.save(cfg.runs_dir / f"{data.claim_value or claim}.json")
+        except Exception as e:
+            log(f"   ⚠️ เติมคู่กรณีจาก Tab 4 ไม่สำเร็จ ({type(e).__name__}: {e})")
 
     # จัดชื่อรูป: ใบรับงาน → 1.jpg, ที่เหลือ → รูปรถประกันN.jpg
     # (ถ้า zip บอกว่าไม่มีเอกสาร REPORTS เลย ก็ไม่มีใบรับงานให้หา — ข้าม)
@@ -370,7 +383,8 @@ def _sekey_dup_skip(cfg, data) -> str:
 def _offer_submit(driver, cfg, data):
     """A1: หลังกรอกครบ (live session, ปุ่ม 'ส่งงานใหม่' พร้อม) — รอผู้ใช้ตรวจ draft
     แล้วสั่งส่ง → กด 'ส่งงานใหม่' ให้ + แจ้ง ISURVEY. ไม่สั่ง (EOF/ปิด) = เก็บเป็น draft"""
-    if not wait_for_submit(data.claim_value):
+    sel = wait_for_submit(data.claim_value, survey_no=data.invoice_value)
+    if not sel:
         log("เก็บเป็น draft — ยังไม่ส่งงาน (browser เปิดค้าง ตรวจ/กดส่งเองได้)")
         return
     ok, msg = emcs.submit_report(driver, cfg, data.claim_value)
@@ -380,19 +394,28 @@ def _offer_submit(driver, cfg, data):
     log(f"✅ {msg}")
     keyer = isurvey_report.keyer_for(data.claim_value)
     when = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    res = isurvey_report.report_sent(cfg, data.claim_value, data.invoice_value,
+    # SESV เคลมเงินบน iSurvey ด้วยเลข SESV ไม่ได้ → แจ้งด้วย SEABI invoice ตัวแรก (mix[0])
+    report_invoice = (sel["mix"][0] if (sel["base_type"] == "SESV" and sel["mix"])
+                      else data.invoice_value)
+    res = isurvey_report.report_sent(cfg, data.claim_value, report_invoice,
                                      keyer=keyer, when=when)
     log((f"✅ แจ้ง ISURVEY สำเร็จ (คนคีย์ {keyer})" if res["ok"]
          else "❌ แจ้ง ISURVEY ไม่สำเร็จ") + f" — {res['text'][:140]}")
 
-    # บันทึกงานที่เสร็จลงฐานข้อมูลกลาง se-key (mark "ส่งแล้ว" ถ้าแจ้ง ISURVEY สำเร็จ)
+    # บันทึกงานที่เสร็จลงฐานข้อมูลกลาง se-key — ตามประเภทงานที่ผู้ใช้เลือก
+    # (งานรวม/SESV = หลาย row); mark "ส่งแล้ว" ถ้าแจ้ง ISURVEY สำเร็จ
     if sekey_client.enabled(cfg):
-        sk = sekey_client.save_record(
-            cfg, data.claim_value, data.invoice_value,
-            keyer=keyer, mark_sent=res["ok"])
-        log((f"✅ บันทึกลง se-key DB (id {sk.get('record_id')}, "
-             f"{'ส่งแล้ว' if sk.get('sent') else 'รอส่ง'})") if sk["ok"]
-            else f"❌ บันทึกลง se-key DB ไม่สำเร็จ — {sk['text'][:140]}")
+        payloads = sekey_client.build_payloads(
+            data.claim_value, data.invoice_value, keyer=keyer,
+            base_type=sel["base_type"], batch=sel["batch"], mix_values=sel["mix"])
+        results = sekey_client.save_many(cfg, payloads, mark_sent=res["ok"])
+        ok_n = sum(1 for r in results if r["ok"])
+        wt = sel["base_type"] + (" +งานรวม" if sel["batch"] else "")
+        if ok_n == len(results):
+            log(f"✅ บันทึกลง se-key DB {ok_n} row (work_type: {wt})")
+        else:
+            bad = next((r["text"] for r in results if not r["ok"]), "")
+            log(f"⚠️ บันทึก se-key DB {ok_n}/{len(results)} row (work_type: {wt}) — {bad[:120]}")
 
 
 def main():
@@ -626,6 +649,7 @@ def main():
             image_type=args.image_type,
             severity=args.severity,
             force_new=args.force_new,
+            save_price=not args.no_save_price,
         )
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs",

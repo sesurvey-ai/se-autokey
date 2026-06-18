@@ -94,6 +94,12 @@ def _build_cmd(params: dict):
     if params.get("skipimages"):
         cmd += ["--skip-images"]
 
+    # โหมดเคลมสด/นัดหมาย/ติดตาม: ปลดด่านเคลมแห้ง (--allow-fresh) + อ่านด้วย scrape
+    # (--scrape) เพื่อดึงคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินจาก XML — API อ่าน tab-4/5/6 ไม่ได้
+    # (ผู้บาดเจ็บ/ทรัพย์สินยังต้องกรอกเองบน EMCS — ฟังก์ชันกรอกยังไม่รองรับ)
+    if params.get("claimmode") == "fresh":
+        cmd += ["--allow-fresh", "--scrape"]
+
     # ไม่มี console ให้กด Enter — ต้องข้ามการหยุดถามเสมอ
     # (ปลอดภัย: การกรอก EMCS เป็นแค่บันทึก draft สคริปต์ไม่กด "ส่งงานใหม่")
     cmd += ["-y"]
@@ -229,11 +235,12 @@ def stop_run(run_id: int):
     return True
 
 
-def continue_run(run_id: int, selected=None):
-    """ผู้ใช้สั่งให้ main.py ของงานนี้ทำงานต่อ (ปลด input()/readline ที่ค้างอยู่)
+def continue_run(run_id: int, payload=None):
+    """ผู้ใช้สั่งให้ main.py ของงานนี้ทำงานต่อ (ปลด readline ที่ค้างอยู่)
 
-    selected=None → ส่ง newline ธรรมดา (จุดหยุดกรอกข้อมูล/ส่งงาน)
-    selected=list → ส่ง JSON {"selected":[...]} (จุดหยุดเลือกรูปอัปโหลด)"""
+    payload=None → ส่ง newline ธรรมดา (จุดหยุดกรอกข้อมูล)
+    payload=dict → ส่ง JSON เข้า stdin: เลือกรูป {"selected":[...]} /
+                   ส่งงาน {"submit":true,"base_type":..,"batch":..,"mix":[..]}"""
     with _lock:
         r = _runs.get(run_id)
         if r is None or r["status"] != "waiting":
@@ -242,16 +249,18 @@ def continue_run(run_id: int, selected=None):
         r["pause"] = None
         proc = r["proc"]
     try:
-        if selected is not None:
-            proc.stdin.write(json.dumps({"selected": selected},
-                                        ensure_ascii=False) + "\n")
-        else:
-            proc.stdin.write("\n")
+        proc.stdin.write((json.dumps(payload, ensure_ascii=False)
+                          if payload is not None else "") + "\n")
         proc.stdin.flush()
     except Exception:
         pass
-    msg = ("[webui] ▶️ ผู้ใช้กดดำเนินการต่อ" if selected is None
-           else f"[webui] ⬆️ เลือกอัปโหลด {len(selected)} รูป")
+    if isinstance(payload, dict) and "selected" in payload:
+        msg = f"[webui] ⬆️ เลือกอัปโหลด {len(payload['selected'])} รูป"
+    elif isinstance(payload, dict) and payload.get("submit"):
+        wt = (payload.get("base_type") or "") + (" +งานรวม" if payload.get("batch") else "")
+        msg = f"[webui] ✅ สั่งส่งงาน (ประเภทงาน: {wt})"
+    else:
+        msg = "[webui] ▶️ ผู้ใช้กดดำเนินการต่อ"
     with _lock:
         r = _runs.get(run_id)
         if r is not None:
@@ -386,7 +395,7 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/continue":
             p = self._read_json()
             self._send(200,
-                       {"continued": continue_run(self._id(p), p.get("selected"))})
+                       {"continued": continue_run(self._id(p), p.get("payload"))})
         elif u.path == "/forget":
             self._send(200, {"forgot": forget_run(self._id(self._read_json()))})
         else:
@@ -515,6 +524,22 @@ PAGE = r"""<!doctype html>
   .gal-item input:checked~img{outline:2px solid var(--ok);outline-offset:-2px}
   .gal-name{display:block;font-size:10px;color:#475569;padding:3px 5px;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* แผงเลือกประเภทงานตอนส่งงาน (ลอกจาก se-key extension) */
+  .pause-worktype{margin-top:10px;padding:10px 12px;background:#fff;
+    border:1px solid #fde68a;border-radius:10px}
+  .wt-radios{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px}
+  .wt-radios label,.wt-batch-lbl{display:flex;align-items:center;gap:6px;
+    font-size:13.5px;color:#334155;cursor:pointer}
+  .wt-radios input,.wt-batch-lbl input{width:16px;height:16px;accent-color:var(--brand)}
+  .wt-batch-lbl{font-weight:600}
+  .wt-batch-lbl input:disabled{cursor:not-allowed}
+  .wt-mix{margin-top:8px;padding-top:8px;border-top:1px dashed #fde68a}
+  .wt-mix-cap{font-size:12px;color:#92400e;font-weight:600;margin-bottom:6px}
+  .wt-mix-list{display:flex;flex-direction:column;gap:6px;margin-bottom:6px}
+  .wt-mix-input{width:100%;border:1px solid var(--line);border-radius:8px;
+    padding:7px 10px;font-size:13px;font-family:inherit}
+  .wt-mix-add{background:#fde68a;color:#92400e;padding:5px 12px;font-size:12.5px;
+    border-radius:8px;box-shadow:none}
   [hidden]{display:none !important}
   .log{margin:0;padding:12px 16px;height:260px;overflow:auto;
     font-family:"Cascadia Mono","Consolas",monospace;font-size:13px;
@@ -555,6 +580,20 @@ PAGE = r"""<!doctype html>
           <option value="เบา">เบา</option>
           <option value="หนัก">หนัก</option>
         </select>
+      </div>
+    </div>
+
+    <div style="margin-top:12px">
+      <label class="fld" for="claimmode">ประเภทเคลมที่จะกรอก</label>
+      <select id="claimmode">
+        <option value="dry">เคลมแห้งเท่านั้น (ปลอดภัย — ค่าเริ่มต้น)</option>
+        <option value="fresh">รวมเคลมสด / นัดหมาย / ติดตาม</option>
+      </select>
+      <div id="cmnote" hidden style="margin-top:8px;padding:8px 10px;background:#fff7ed;
+           border:1px solid #fdba74;border-radius:8px;font-size:12.5px;color:#9a3412;line-height:1.55">
+        ⚠️ <b>โหมดเคลมสด</b>: อ่านด้วย scrape (ช้ากว่า API) เพื่อดึงคู่กรณีจาก XML — ระบบกรอก
+        <b>หน้าหลัก + คู่กรณี + ราคา</b> ให้ แต่ <b>ผู้บาดเจ็บ และ ทรัพย์สิน ต้องกรอกเอง</b>
+        บน EMCS ก่อนส่ง (ตรวจให้ครบ)
       </div>
     </div>
 
@@ -682,6 +721,24 @@ function buildGallery(c, r){
   c.galSig = imgsSig(imgs);
   updateGalCount(c);
 }
+function selectedBase(c){
+  for (const rd of c.wtRadios) if (rd.checked) return rd.value;
+  return "งานต้น";
+}
+function applyWtState(c){
+  const sesv = (selectedBase(c) === "SESV");
+  if (sesv) c.wtBatch.checked = true;      // SESV ล็อกคู่ "งานรวม" เสมอ
+  c.wtBatch.disabled = sesv;
+  c.wtBatch.title = sesv ? "SESV ต้องใช้คู่กับงานรวมเสมอ" : "";
+  c.wtMix.hidden = !c.wtBatch.checked;
+}
+function buildWorkType(c, r){
+  const base = (r.pause && r.pause.base_type) || "งานต้น";
+  c.wtRadios.forEach(rd => { rd.name = "wt-base-" + r.id; rd.checked = (rd.value === base); });
+  c.wtMixList.innerHTML =
+    '<input type="text" class="wt-mix-input" placeholder="SEABI-... (เลข invoice)">';
+  applyWtState(c);
+}
 function makeCard(r){
   const root = document.createElement("div");
   root.className = "run-card"; root.dataset.id = r.id;
@@ -699,6 +756,19 @@ function makeCard(r){
     +     '<div class="pause-title"></div>'
     +     '<div class="pause-reason" hidden></div>'
     +     '<div class="pause-hint"></div>'
+    +     '<div class="pause-worktype" hidden>'
+    +       '<div class="wt-radios">'
+    +         '<label><input type="radio" class="wt-base" value="งานต้น"> งานต้น</label>'
+    +         '<label><input type="radio" class="wt-base" value="งานตาม"> งานตาม</label>'
+    +         '<label><input type="radio" class="wt-base" value="SESV"> SESV</label>'
+    +       '</div>'
+    +       '<label class="wt-batch-lbl"><input type="checkbox" class="wt-batch"> งานรวม (หลาย invoice)</label>'
+    +       '<div class="wt-mix" hidden>'
+    +         '<div class="wt-mix-cap">เลข invoice (SEABI) ของงานรวม:</div>'
+    +         '<div class="wt-mix-list"></div>'
+    +         '<button type="button" class="wt-mix-add">+ เพิ่มเลข invoice</button>'
+    +       '</div>'
+    +     '</div>'
     +     '<div class="pause-gallery">'
     +       '<div class="gal-bar"><span class="gal-count"></span>'
     +         '<button type="button" class="gal-all">เลือกทั้งหมด</button>'
@@ -723,6 +793,10 @@ function makeCard(r){
     galCount: root.querySelector(".gal-count"),
     galAll: root.querySelector(".gal-all"), galNone: root.querySelector(".gal-none"),
     galSig: null,
+    wtWrap: root.querySelector(".pause-worktype"),
+    wtRadios: root.querySelectorAll(".wt-base"), wtBatch: root.querySelector(".wt-batch"),
+    wtMix: root.querySelector(".wt-mix"), wtMixList: root.querySelector(".wt-mix-list"),
+    wtMixAdd: root.querySelector(".wt-mix-add"), wtSig: null,
   };
   c.stopBtn.addEventListener("click", async () => {
     if (!confirm("ต้องการหยุดงาน " + (r.title || ("#"+r.id)) + " ?")) return;
@@ -735,18 +809,28 @@ function makeCard(r){
   });
   c.contBtn.addEventListener("click", async () => {
     const kind = c.contBtn.dataset.kind;
-    if (kind === "submit" &&
-        !confirm("ตรวจ draft เรียบร้อยแล้วใช่ไหม?\n\nระบบจะกด 'ส่งงานใหม่' ใน EMCS ให้ "
-                 + "(ส่งงานจริง) แล้วแจ้ง ISURVEY — ย้อนกลับไม่ได้")) return;
     const body = {id:r.id};
     if (kind === "images"){
-      body.selected = [...c.galEl.querySelectorAll("input:checked")]
-        .map(x => x.dataset.name);
+      body.payload = {selected: [...c.galEl.querySelectorAll("input[data-name]:checked")]
+        .map(x => x.dataset.name)};
+    } else if (kind === "submit"){
+      const base = selectedBase(c);
+      const batch = c.wtBatch.checked;
+      const mix = [...c.wtMixList.querySelectorAll(".wt-mix-input")]
+        .map(x => x.value.trim()).filter(Boolean);
+      if ((batch || base === "SESV") && mix.length === 0){
+        alert("งานรวม/SESV ต้องกรอกเลข invoice (SEABI) อย่างน้อย 1 เลข"); return;
+      }
+      if (!confirm("ตรวจ draft + ประเภทงานเรียบร้อยแล้วใช่ไหม?\n\nระบบจะกดส่งงานใน EMCS "
+                   + "(ส่งงานใหม่ หรือ ส่งผลงานต่อเนื่อง ตามสถานะเรื่อง — ส่งงานจริง) "
+                   + "+ แจ้ง ISURVEY + บันทึก se-key — ย้อนกลับไม่ได้")) return;
+      body.payload = {submit:true, base_type:base, batch:batch, mix:mix};
     }
     c.contBtn.disabled = true;
     try{ await postJSON("/continue", body); }catch(e){}
     c.pauseEl.hidden = true;
     c.galWrap.style.display = "none"; c.galSig = null;
+    c.wtWrap.hidden = true; c.wtSig = null;
   });
   c.galAll.addEventListener("click", () => setAllChecks(c, true));
   c.galNone.addEventListener("click", () => setAllChecks(c, false));
@@ -757,6 +841,13 @@ function makeCard(r){
         .forEach(x => x.checked = t.checked);
     }
     updateGalCount(c);
+  });
+  c.wtRadios.forEach(rd => rd.addEventListener("change", () => applyWtState(c)));
+  c.wtBatch.addEventListener("change", () => { c.wtMix.hidden = !c.wtBatch.checked; });
+  c.wtMixAdd.addEventListener("click", () => {
+    const i = document.createElement("input");
+    i.type = "text"; i.className = "wt-mix-input"; i.placeholder = "SEABI-...";
+    c.wtMixList.appendChild(i); i.focus();
   });
   runsEl.prepend(root);   // งานใหม่อยู่บนสุด
   cards[r.id] = c;
@@ -791,18 +882,23 @@ function renderRun(r){
       const sig = imgsSig(r.pause.images || []);
       if (c.galSig !== sig) buildGallery(c, r);
       c.galWrap.style.display = "block";
+      c.wtWrap.hidden = true;
       c.contBtn.className = "continue submitbtn";
       updateGalCount(c);
     } else if (k === "submit"){
       c.galWrap.style.display = "none"; c.galSig = null;
-      c.ptitle.textContent = "✅ พร้อมส่งงาน — ตรวจ draft ให้เรียบร้อยก่อน";
-      c.phint.innerHTML = "ตรวจความถูกต้องในหน้าต่าง EMCS (Chrome) <b>ของงานนี้</b> "
-        + "(ถ้าความเสียหาย >8 รายการ เติมให้ครบก่อน) แล้วกดปุ่ม — ระบบจะกด "
-        + "'ส่งงานใหม่' ให้ + แจ้ง ISURVEY";
+      const wsig = (r.pause.claim || "") + ":" + (r.pause.base_type || "");
+      if (c.wtSig !== wsig){ buildWorkType(c, r); c.wtSig = wsig; }
+      c.wtWrap.hidden = false;
+      c.ptitle.textContent = "✅ พร้อมส่งงาน — ตรวจ draft + เลือกประเภทงาน";
+      c.phint.innerHTML = "ตรวจในหน้าต่าง EMCS (Chrome) <b>ของงานนี้</b> "
+        + "(ถ้าความเสียหาย >8 รายการ เติมให้ครบก่อน) + เลือกประเภทงานด้านล่าง แล้วกดปุ่ม "
+        + "— ระบบจะกด 'ส่งงานใหม่' + แจ้ง ISURVEY + บันทึก se-key";
       c.contBtn.textContent = "✅ ส่งงาน + แจ้ง ISURVEY";
       c.contBtn.className = "continue submitbtn";
     } else {
       c.galWrap.style.display = "none"; c.galSig = null;
+      c.wtWrap.hidden = true; c.wtSig = null;
       c.ptitle.textContent = "ต้องกรอกข้อมูลเอง: " + (r.pause.label || "ข้อมูลที่ขาด");
       c.phint.innerHTML = "ข้อมูลจาก ISURVEY ไม่ครบหรือกรอกอัตโนมัติไม่ได้ — "
         + "กรอก/เลือกช่องนี้ในหน้าต่าง EMCS (Chrome) <b>ของงานนี้</b> ให้เรียบร้อย แล้วกดปุ่ม";
@@ -814,6 +910,7 @@ function renderRun(r){
   } else {
     c.pauseEl.hidden = true;
     c.galWrap.style.display = "none"; c.galSig = null;
+    c.wtWrap.hidden = true; c.wtSig = null;
   }
   updateEmpty();
 }
@@ -836,6 +933,7 @@ runBtn.addEventListener("click", async () => {
     claims,
     invoice: $("#invoice").value.trim(),
     severity: $("#severity").value,
+    claimmode: $("#claimmode").value,
     readonly: $("#readonly").checked,
     skipimages: $("#skipimages").checked,
   };
@@ -844,6 +942,9 @@ runBtn.addEventListener("click", async () => {
     if (!ok){ alert(data.error || "เริ่มงานไม่สำเร็จ"); runBtn.disabled=false; return; }
     poll();   // ดึงงานใหม่มาแสดงทันที
   }catch(e){ alert("ติดต่อเซิร์ฟเวอร์ไม่ได้: " + e); runBtn.disabled=false; }
+});
+$("#claimmode").addEventListener("change", e => {
+  $("#cmnote").hidden = (e.target.value !== "fresh");
 });
 setInterval(poll, 1200);
 poll();

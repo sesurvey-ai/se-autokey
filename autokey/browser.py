@@ -203,6 +203,12 @@ def set_text(driver, elem_id, value):
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
     except Exception:
         pass
+    # เคลียร์ก่อนเสมอ — "set" = แทนที่ ไม่ใช่ต่อท้าย (กันค่าซ้ำเมื่อช่องมีค่าเดิม
+    # เช่น กรอกซ้ำบน draft หรือ postback re-render ของบล็อกคู่กรณี)
+    try:
+        el.clear()
+    except Exception:
+        pass
     try:
         el.send_keys(value)
         return
@@ -213,7 +219,12 @@ def set_text(driver, elem_id, value):
         from selenium.webdriver.common.action_chains import ActionChains
         from selenium.webdriver.common.keys import Keys
         ActionChains(driver).send_keys(Keys.ESCAPE).perform()
-        driver.find_element(By.ID, elem_id).send_keys(value)
+        el2 = driver.find_element(By.ID, elem_id)
+        try:
+            el2.clear()
+        except Exception:
+            pass
+        el2.send_keys(value)
         return
     except Exception:
         pass
@@ -337,31 +348,45 @@ def wait_for_manual_fill(field_label, reason="", select_id=None):
 SUBMIT_MARKER = "@@READY_SUBMIT@@"  # ต้องตรงกับค่าใน webui.py
 
 
-def wait_for_submit(claim, reason=""):
-    """หลังกรอกครบ (live session) — รอผู้ใช้ตรวจ draft แล้วสั่ง "ส่งงาน + แจ้ง ISURVEY"
+def wait_for_submit(claim, survey_no="", reason=""):
+    """หลังกรอกครบ (live session) — รอผู้ใช้ตรวจ draft + เลือกประเภทงาน แล้วสั่งส่ง
     กลไกเดียวกับ wait_for_manual_fill (marker + รอ stdin /continue):
-    - หน้าเว็บ: ส่ง SUBMIT_MARKER → เว็บโชว์ปุ่ม "✅ ส่งงาน + แจ้ง ISURVEY"
-    - console: กด Enter
-    - ไม่มีคนเฝ้า (EOF): คืน False → เก็บเป็น draft ไม่ส่ง (พฤติกรรมเดิม)
-    คืน True ถ้าสั่งส่ง / False ถ้าไม่ (เก็บ draft)"""
+    - หน้าเว็บ: ส่ง SUBMIT_MARKER (พร้อม base_type default) → เว็บโชว์แผงเลือกประเภทงาน
+      + ปุ่ม "✅ ส่งงาน + แจ้ง ISURVEY" → ส่ง {base_type, batch, mix} กลับเข้า stdin
+    - console: กด Enter = ส่งด้วย default (งานต้น / SESV ถ้าเลขขึ้นต้น SESV)
+    - ไม่มีคนเฝ้า (EOF): คืน None → เก็บเป็น draft ไม่ส่ง (พฤติกรรมเดิม)
+    คืน dict {base_type, batch, mix} ถ้าสั่งส่ง / None ถ้าไม่ส่ง (เก็บ draft)"""
+    default_base = ("SESV" if str(survey_no or "").strip().upper().startswith("SESV")
+                    else "งานต้น")
     log_plain("")
     log(f"⏸️  กรอกครบแล้ว (เคลม {claim}) — ตรวจ draft ให้เรียบร้อย แล้วสั่งส่งงาน")
     log("     → ตรวจความถูกต้องในหน้าต่าง EMCS (Chrome) ก่อน แล้ว"
-        + ("กดปุ่ม '✅ ส่งงาน + แจ้ง ISURVEY' บนหน้าเว็บ"
+        + ("เลือกประเภทงาน + กดปุ่ม '✅ ส่งงาน + แจ้ง ISURVEY' บนหน้าเว็บ"
            if _WEBUI else "กด Enter ที่หน้าต่างนี้")
-        + " (ระบบจะกด 'ส่งงานใหม่' ให้ + แจ้ง ISURVEY)")
+        + " (ระบบจะกด 'ส่งงานใหม่' ให้ + แจ้ง ISURVEY + บันทึก se-key)")
     if _WEBUI:
-        print(SUBMIT_MARKER + json.dumps({"claim": claim, "reason": reason},
-              ensure_ascii=False), flush=True)
+        print(SUBMIT_MARKER + json.dumps(
+            {"claim": claim, "survey_no": survey_no, "base_type": default_base,
+             "reason": reason}, ensure_ascii=False), flush=True)
     try:
         line = sys.stdin.readline()
     except Exception:
         line = ""
     if line == "":
         log("     (ไม่มีการตอบกลับ — เก็บเป็น draft ไม่ส่งงาน ตรวจ/กดส่งเองภายหลังได้)")
-        return False
-    log(f"     ▶️ สั่งส่งงาน (เคลม {claim})")
-    return True
+        return None
+    sel = {"base_type": default_base, "batch": False, "mix": []}
+    try:                                   # console กด Enter เปล่า → ใช้ default
+        d = json.loads(line)
+        if isinstance(d, dict):
+            sel["base_type"] = d.get("base_type") or default_base
+            sel["batch"] = bool(d.get("batch"))
+            sel["mix"] = [str(m).strip() for m in (d.get("mix") or []) if str(m).strip()]
+    except Exception:
+        pass
+    log(f"     ▶️ สั่งส่งงาน (เคลม {claim}, ประเภทงาน {sel['base_type']}"
+        + (" +งานรวม" if sel["batch"] else "") + ")")
+    return sel
 
 
 SELECT_IMAGES_MARKER = "@@SELECT_IMAGES@@"  # ต้องตรงกับค่าใน webui.py

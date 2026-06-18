@@ -336,5 +336,112 @@ with tempfile.TemporaryDirectory() as _d2:
     check("image_categories: ไม่มี manifest → OTHERS ทั้งหมด",
           browser._image_categories(pathlib.Path(_d2), ["1.jpg"])["1.jpg"] == "OTHERS")
 
+# ---- 19. sekey_client: derive_base_type + build_payloads (ลอกจาก extension) ----
+check("derive_base_type: SEABI → งานต้น", _sk.derive_base_type("SEABI-1") == "งานต้น")
+check("derive_base_type: SESV → SESV", _sk.derive_base_type("SESV-12345678") == "SESV")
+_p = _sk.build_payloads("C1", "SEABI-1", keyer="k", base_type="งานต้น")
+check("build_payloads: งานต้น = 1 row (mix ว่าง)",
+      len(_p) == 1 and _p[0]["work_type"] == "งานต้น" and _p[0]["invoice_mix"] == "")
+check("build_payloads: งานตาม = 1 row",
+      _sk.build_payloads("C1", "SEABI-1", base_type="งานตาม")[0]["work_type"] == "งานตาม")
+_p = _sk.build_payloads("C1", "SEABI-1", base_type="งานต้น", batch=True,
+                        mix_values=["SEABI-2", "SEABI-3"])
+check("build_payloads: งานรวม = 1 primary + 2 followup",
+      len(_p) == 3 and _p[0]["work_type"] == "งานต้น" and _p[0]["invoice_mix"] == ""
+      and _p[1]["work_type"] == "งานรวม" and _p[1]["survey_no"] == "SEABI-2"
+      and _p[1]["invoice_mix"] == "SEABI-1" and _p[2]["survey_no"] == "SEABI-3")
+_p = _sk.build_payloads("C1", "SESV-1", base_type="SESV", batch=False,
+                        mix_values=["SEABI-A", "SEABI-B"])
+check("build_payloads: SESV primary ผูก mix[0] (SEABI)",
+      _p[0]["work_type"] == "SESV" and _p[0]["survey_no"] == "SESV-1"
+      and _p[0]["invoice_mix"] == "SEABI-A")
+check("build_payloads: SESV ล็อก batch + followup = mix[1:]",
+      len(_p) == 2 and _p[1]["work_type"] == "งานรวม"
+      and _p[1]["survey_no"] == "SEABI-B" and _p[1]["invoice_mix"] == "SESV-1")
+
+# ---- 20. surv_xml: parse ผู้บาดเจ็บ (TXN_SURV_INJ) + คู่กรณี + ทรัพย์สิน ----
+_xml = """<TXN_SURV_REPORT>
+ <TXN_SURV_CAR><TYPE>0</TYPE><CAR_REGNO>กข1234</CAR_REGNO></TXN_SURV_CAR>
+ <TXN_SURV_CAR><TYPE>1</TYPE><CAR_REGNO>1กฐ9717</CAR_REGNO><CMFG>HONDA</CMFG><OPO_NAME>นาย อัมพร ปีจอ</OPO_NAME></TXN_SURV_CAR>
+ <TXN_SURV_INJ><INJ_SEQ>1</INJ_SEQ><NAME>นางสาว วณิศราภรณ์</NAME><AGE>29</AGE><HOS_NAME>รพ.บ้านบึง</HOS_NAME><INJURE>เจ็บหน้าอก</INJURE><GENDER>F</GENDER><PERSON_TYPE>DV</PERSON_TYPE></TXN_SURV_INJ>
+ <TXN_SURV_INJ><INJ_SEQ>2</INJ_SEQ><NAME>นาย อัมพร ปีจอ</NAME><AGE>55</AGE><INJURE>เข่าถลอก</INJURE><GENDER>M</GENDER><PERSON_TYPE>ON</PERSON_TYPE></TXN_SURV_INJ>
+ <TXN_SURV_ASSET><ASSET_SEQ>1</ASSET_SEQ><ASSET_DESC>ผลไม้</ASSET_DESC><COST_DAMAGE>2000</COST_DAMAGE></TXN_SURV_ASSET>
+</TXN_SURV_REPORT>"""
+with tempfile.TemporaryDirectory() as _xd:
+    _xp = pathlib.Path(_xd) / "SURV_REPORT_test.txt"
+    _xp.write_text(_xml, encoding="utf-8")
+    _parsed = surv_xml.parse_surv_report(_xp)
+    check("surv_xml: ผู้บาดเจ็บ TXN_SURV_INJ → 2 คน (เคยพลาดเพราะหา TXN_SURV_INJURY)",
+          len(_parsed["injuries"]) == 2)
+    _i0 = _parsed["injuries"][0] if _parsed["injuries"] else {}
+    check("surv_xml: ฟิลด์ผู้บาดเจ็บครบ (name/hospital/injure/person_type)",
+          _i0.get("name") == "นางสาว วณิศราภรณ์" and _i0.get("hospital") == "รพ.บ้านบึง"
+          and _i0.get("injure") == "เจ็บหน้าอก" and _i0.get("person_type") == "DV")
+    check("surv_xml: คู่กรณี (CAR TYPE!=0) = 1", len(_parsed["third_parties"]) == 1)
+    check("surv_xml: ทรัพย์สิน = 1", len(_parsed["assets"]) == 1)
+
+# ---- 21. emcs.continuation_esurvey: ตรวจงานต่อเนื่อง (มีเรื่องเดิม + invoice ใหม่) ----
+_exist = [{"esurvey": "S68426056403",
+           "row": "S68426056403 SEABI-172260500053 2026013041465 ..."}]
+check("continuation: มีเรื่องเดิม + invoice ใหม่ → คืน e-Survey เดิม",
+      emcs.continuation_esurvey(_exist, "SEABI-372260600032") == "S68426056403")
+check("continuation: invoice อยู่ในเรื่องเดิมแล้ว → None (ซ้ำจริง ไม่ใช่ต่อเนื่อง)",
+      emcs.continuation_esurvey(_exist, "SEABI-172260500053") is None)
+check("continuation: ไม่มีเรื่องเดิม → None (สร้างใหม่ได้)",
+      emcs.continuation_esurvey([], "SEABI-372260600032") is None)
+check("continuation: ไม่มี invoice → None",
+      emcs.continuation_esurvey(_exist, "") is None)
+
+# ---- 22. emcs._find_submit_button: รองรับทั้งส่งงานใหม่ + ส่งผลงานต่อเนื่อง ----
+class _FakeEl:
+    def __init__(self, disp=True, en=True):
+        self._d, self._e = disp, en
+
+    def is_displayed(self):
+        return self._d
+
+    def is_enabled(self):
+        return self._e
+
+
+class _FakeDriver:
+    """find_element คืน element เฉพาะ id ที่กำหนด; นอกนั้น raise (เลียนแบบ NoSuchElement)"""
+    def __init__(self, present):
+        self.present = present
+
+    def find_element(self, by, value):
+        if value in self.present:
+            return self.present[value]
+        raise Exception("no such element")
+
+    def find_elements(self, by, value):
+        return []
+
+
+_btn, _lab = emcs._find_submit_button(_FakeDriver({"wuFlow1_cmdSendNew": _FakeEl()}))
+check("find_submit: เจอ cmdSendNew → 'ส่งงานใหม่'",
+      _btn is not None and _lab == "ส่งงานใหม่")
+_btn, _lab = emcs._find_submit_button(_FakeDriver({"wuFlow1_cmdSendFollow": _FakeEl()}))
+check("find_submit: เจอแต่ cmdSendFollow → 'ส่งผลงานต่อเนื่อง'",
+      _btn is not None and _lab == "ส่งผลงานต่อเนื่อง")
+_btn, _lab = emcs._find_submit_button(_FakeDriver({
+    "wuFlow1_cmdSendNew": _FakeEl(), "wuFlow1_cmdSendFollow": _FakeEl()}))
+check("find_submit: มีทั้งคู่ → เลือก 'ส่งงานใหม่' ก่อน (ลำดับแรก)",
+      _lab == "ส่งงานใหม่")
+_btn, _lab = emcs._find_submit_button(_FakeDriver({}))
+check("find_submit: ไม่มีปุ่ม → (None,'')", _btn is None and _lab == "")
+
+# ---- 23. webui._build_cmd: โหมดเคลม (dry = เคลมแห้ง / fresh = เคลมสด) ----
+import webui as _webui  # noqa: E402
+_cmd, _e = _webui._build_cmd({"claims": "2026013041465", "claimmode": "dry"})
+check("build_cmd dry: ไม่มี --allow-fresh/--scrape",
+      _e is None and "--allow-fresh" not in _cmd and "--scrape" not in _cmd)
+_cmd, _e = _webui._build_cmd({"claims": "2026013041465", "claimmode": "fresh"})
+check("build_cmd fresh: มี --allow-fresh + --scrape",
+      _e is None and "--allow-fresh" in _cmd and "--scrape" in _cmd)
+_cmd, _e = _webui._build_cmd({"claims": "2026013041465"})
+check("build_cmd ไม่ระบุโหมด: = เคลมแห้ง (ไม่ allow-fresh)",
+      _e is None and "--allow-fresh" not in _cmd)
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

@@ -184,8 +184,10 @@ class ClaimData:
         if self.injuries:
             lines.append(f"ผู้บาดเจ็บ      : {len(self.injuries)} ราย")
             for i, inj in enumerate(self.injuries, 1):
+                hos = inj.get("hospital", "")
                 lines.append(f"   {i}. {inj.get('name', '')} "
-                             f"({inj.get('injury_type', '')})")
+                             f"({inj.get('injure', '')})"
+                             + (f" — {hos}" if hos else ""))
         if self.assets:
             lines.append(f"ทรัพย์สินเสียหาย : {len(self.assets)} รายการ")
             for i, a in enumerate(self.assets, 1):

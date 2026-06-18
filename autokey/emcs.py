@@ -105,6 +105,23 @@ def resolve_loss_type(data, requested: str) -> str:
     return ""
 
 
+def _is_displayed(driver, elem_id) -> bool:
+    """element โผล่/มองเห็นจริงไหม (บาง layout คู่กรณีซ่อนช่องบางตัวไว้)"""
+    try:
+        return driver.find_element(By.ID, elem_id).is_displayed()
+    except Exception:
+        return False
+
+
+def _select_has_options(driver, select_id) -> bool:
+    """dropdown มีตัวเลือกจริง (>1 = มีนอกจาก '-- ระบุ --') — ใช้เช็ค dropdown ที่
+    ผูกกับตัวอื่น เช่น 'ยี่ห้อ' ที่ว่างจนกว่าจะเลือก 'ประเภทรถ' ก่อน"""
+    try:
+        return len(Select(driver.find_element(By.ID, select_id)).options) > 1
+    except Exception:
+        return False
+
+
 def _select_index(driver, select_id, index: int, label: str = "", timeout=10):
     """เลือก option ตามลำดับ — ใช้กับ dropdown จังหวัด/อำเภอของ EMCS ที่
     เรียงตรงกับรหัสของ ISURVEY (index 0 คือ '-- ระบุ --')
@@ -117,7 +134,11 @@ def _select_index(driver, select_id, index: int, label: str = "", timeout=10):
         WebDriverWait(driver, timeout).until(
             lambda d: len(Select(d.find_element(By.ID, select_id)).options) > index
         )
-        sel = Select(driver.find_element(By.ID, select_id))
+        # scroll เข้า view ก่อนเลือก — บล็อกคู่กรณีอยู่ล่างหน้า ถ้าไม่ scroll
+        # จะเจอ ElementNotInteractableException (โดยเฉพาะจังหวัด/อำเภอผู้ขับขี่)
+        el = driver.find_element(By.ID, select_id)
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+        sel = Select(el)
         text = sel.options[index].text
         sel.select_by_index(index)
         log(f"   ✓ {name}: ลำดับ {index} → '{text}' (ตรวจสอบด้วยตาด้วย)")
@@ -137,6 +158,7 @@ def fill_third_parties(driver, data: ClaimData):
     tps = data.third_parties
     if not tps:
         return
+    main_window = driver.current_window_handle
 
     log(f"EMCS: กรอกรถคู่กรณี {len(tps)} คัน")
     if len(tps) > MAX_OPPONENTS:
@@ -173,8 +195,20 @@ def fill_third_parties(driver, data: ClaimData):
 
         # รถ
         set_text(driver, p + "txtCar_RegNo", tp.get("plate_no", ""))
-        fuzzy_select(driver, p + "ddlCmfg", tp.get("car_brand", ""),
-                     label=f"ยี่ห้อรถคู่กรณี {n + 1}")
+        # ประเภทรถคู่กรณี (* บังคับ) — จาก Tab 4 (veh_type อ่านได้ เช่น 'เก๋งเอเซีย')
+        # ต้องเลือกก่อน "ยี่ห้อ" (ddlCmfg) ถึงจะมีตัวเลือก (dropdown ผูกกัน)
+        if tp.get("veh_type", "").strip():
+            fuzzy_select(driver, p + "ddlCType", tp["veh_type"], presleep=0.5,
+                         label=f"ประเภทรถคู่กรณี {n + 1}")
+            time.sleep(2)   # รอ postback โหลดตัวเลือกยี่ห้อ + ให้ค่าประเภทรถนิ่ง
+        else:
+            log(f"   - ไม่มีประเภทรถคู่กรณี {n + 1} จาก ISURVEY — เลือกเองตอนตรวจ")
+        # ยี่ห้อ — มีตัวเลือกหลังเลือกประเภทรถ; ถ้ายังว่าง (ไม่มี veh_type) ข้าม
+        if _select_has_options(driver, p + "ddlCmfg"):
+            fuzzy_select(driver, p + "ddlCmfg", tp.get("car_brand", ""),
+                         label=f"ยี่ห้อรถคู่กรณี {n + 1}", timeout=5)
+        else:
+            log(f"   - ข้ามยี่ห้อรถคู่กรณี {n + 1} (เลือกประเภทรถก่อน ตัวเลือกยี่ห้อถึงจะขึ้น)")
         set_text(driver, p + "txtCModel", tp.get("car_model", ""))
         set_text(driver, p + "txtChassisNo", tp.get("chassis_no", ""))
         _select_index(driver, p + "ddlCar_Province",
@@ -182,13 +216,11 @@ def fill_third_parties(driver, data: ClaimData):
                       if tp.get("plate_province_id", "").strip().isdigit() else None,
                       label=f"จังหวัดรถคู่กรณี {n + 1}")
 
-        # ผู้ขับขี่
-        title, first, last = split_thai_name(tp.get("drv_name", ""))
-        if title:
-            fuzzy_select(driver, p + "ddlDri_Title_ID", title,
-                         label=f"คำนำหน้าผู้ขับขี่คู่กรณี {n + 1}")
-        set_text(driver, p + "txtDri_Name01", first)
-        set_text(driver, p + "txtDri_LastName01", last)
+        # ผู้ขับขี่ — ฟอร์มคู่กรณีใช้ช่อง "ชื่อ" เดี่ยวที่มองเห็น = txtDri_Name
+        # (ไม่ใช่ txtDri_Name01 ซึ่งเป็น layout สำรองที่ซ่อนไว้ — เดิมเซ็ตผิดช่อง
+        # ทำให้ validation ฟ้อง 'ชื่อผู้ขับขี่รถคู่กรณี')
+        drv_full = (tp.get("drv_name", "") or owner).strip()
+        set_text(driver, p + "txtDri_Name", drv_full)
 
         gender = tp.get("gender", "").strip().upper()
         if gender in ("M", "F", "W"):
@@ -203,15 +235,21 @@ def fill_third_parties(driver, data: ClaimData):
                  iso_to_thai_date(tp.get("birthdate", "")))
         set_text(driver, p + "txtDri_Adrress", tp.get("address", ""))
 
+        # จังหวัด/อำเภอ ผู้ขับขี่คู่กรณี — บาง layout ซ่อนช่องนี้ (ใช้ "ที่อยู่ปัจจุบัน"
+        # เดี่ยวพอ) → เลือกเฉพาะเมื่อช่องโชว์จริง (กัน ElementNotInteractable + หน่วงเวลา)
         prov_id = tp.get("province_id", "").strip()
         prov_idx = int(prov_id) if prov_id.isdigit() else None
-        _select_index(driver, p + "ddlDri_ProvinceID", prov_idx,
-                      label=f"จังหวัดผู้ขับขี่คู่กรณี {n + 1}")
-        dist_idx = district_index(tp.get("district_id", ""), prov_id)
-        if prov_idx and dist_idx:
-            time.sleep(1)  # รอ postback โหลดรายการอำเภอตามจังหวัด
-            _select_index(driver, p + "ddlDri_DistrictID", dist_idx,
-                          label=f"อำเภอผู้ขับขี่คู่กรณี {n + 1}")
+        if _is_displayed(driver, p + "ddlDri_ProvinceID"):
+            _select_index(driver, p + "ddlDri_ProvinceID", prov_idx,
+                          label=f"จังหวัดผู้ขับขี่คู่กรณี {n + 1}")
+            dist_idx = district_index(tp.get("district_id", ""), prov_id)
+            if prov_idx and dist_idx:
+                time.sleep(1)  # รอ postback โหลดรายการอำเภอตามจังหวัด
+                _select_index(driver, p + "ddlDri_DistrictID", dist_idx,
+                              label=f"อำเภอผู้ขับขี่คู่กรณี {n + 1}")
+        else:
+            log(f"   - ข้ามจังหวัด/อำเภอผู้ขับขี่คู่กรณี {n + 1} "
+                "(layout นี้ใช้ช่องที่อยู่เดี่ยว)")
 
         set_text(driver, p + "txtDri_TelNo", tp.get("phone", ""))
         set_text(driver, p + "txtDri_CardID", tp.get("idcard", ""))
@@ -223,6 +261,7 @@ def fill_third_parties(driver, data: ClaimData):
         fuzzy_select(driver, p + "ddlHave_Insurance", tp.get("insurer", ""),
                      label=f"บริษัทประกันคู่กรณี {n + 1}")
         set_text(driver, p + "txtPolicyNo", tp.get("policy_no", ""))
+        set_text(driver, p + "txtPolicy_Type", tp.get("insure_type", ""))  # ประกันประเภท
         set_text(driver, p + "txtClaimNo", tp.get("claim_no", ""))
 
         # ความเสียหาย + KFK
@@ -236,11 +275,119 @@ def fill_third_parties(driver, data: ClaimData):
             except Exception:
                 log(f"   ⚠️ ติ๊ก KFK คันที่ {n + 1} ไม่ได้")
 
-    # บันทึกส่วนรถคู่กรณี (ปุ่มแยกจากบันทึกหน้าหลัก)
-    log("EMCS: กดบันทึกรถคู่กรณี")
-    wait_clickable(driver, By.ID, "btnSave_Opponent").click()
-    accept_alert(driver)
-    log("EMCS: บันทึกรถคู่กรณีแล้ว — ตรวจจังหวัด/อำเภอที่เลือกด้วยตาอีกครั้ง")
+    # บันทึกส่วนรถคู่กรณี — ตรวจ validation จริง (ฟอร์มคู่กรณีมีช่อง * เยอะที่ ISURVEY
+    # มักไม่มี เช่น ประเภทรถ/มีประกันภัยที่/อายุ) → ฟ้องช่องขาด = หยุดรอให้คนเติมแล้วลองใหม่
+    saved = _save_opponents(driver)
+
+    # ความเสียหายคู่กรณี — popup เดียวกับรถประกัน (ช่อง free-text dgvOtherDamage_List)
+    # ทำหลังบันทึกคู่กรณีสำเร็จ (เหมือน flow รถประกัน: save แล้วค่อยกรอกความเสียหาย)
+    if saved:
+        for n, tp in enumerate(tps[:MAX_OPPONENTS]):
+            if tp.get("damages"):
+                try:
+                    fill_opponent_damage(driver, OPO_PREFIX.format(n=n),
+                                         tp["damages"], main_window)
+                except Exception as e:
+                    log(f"   ⚠️ กรอกความเสียหายคู่กรณีคันที่ {n + 1} ไม่สำเร็จ "
+                        f"({type(e).__name__}) — กรอกเองภายหลัง")
+
+
+def _save_opponents(driver, max_rounds: int = 5) -> bool:
+    """กดบันทึกรถคู่กรณี (btnSave_Opponent) แล้วตรวจผลจริง
+    - ไม่มี alert / alert ไม่มีคำว่า 'กรุณา' = บันทึกสำเร็จ
+    - alert 'กรุณาใส่ข้อมูลให้ครบ...' = validation ไม่ผ่าน → หยุดรอให้คนกรอกช่องที่ฟ้อง
+      บนหน้า EMCS แล้วลองใหม่ (unattended/EOF = ข้าม ไม่แจ้งสำเร็จลวง)
+    คืน True เมื่อบันทึกสำเร็จ"""
+    for attempt in range(1, max_rounds + 1):
+        log(f"EMCS: กดบันทึกรถคู่กรณี (รอบ {attempt})")
+        wait_clickable(driver, By.ID, "btnSave_Opponent").click()
+        try:
+            alert_text = accept_alert(driver, timeout=15)
+        except TimeoutException:
+            alert_text = ""        # ไม่มี alert = ผ่าน
+        if "กรุณา" not in (alert_text or ""):
+            log("EMCS: บันทึกรถคู่กรณีสำเร็จ ✓ — ตรวจจังหวัด/อำเภอด้วยตาอีกครั้ง")
+            return True
+        missing = _parse_missing_fields(alert_text)
+        label = "ข้อมูลคู่กรณีที่ยังขาด" + (f": {missing}" if missing else "")
+        if wait_for_manual_fill(label, reason=(alert_text or "").strip()):
+            log("   ↻ ลองบันทึกคู่กรณีใหม่หลังผู้ใช้กรอกข้อมูล")
+            continue
+        log("   ⚠️ คู่กรณียังไม่ถูกบันทึก (ช่องบังคับขาด — ISURVEY ไม่มีข้อมูล) → "
+            "กรอกช่องที่ฟ้องบน EMCS แล้วกด 'บันทึกรถคู่กรณี' เอง")
+        return False
+    log("   ⚠️ บันทึกคู่กรณีไม่ผ่านหลายรอบเกินไป — ตรวจช่องสีแดงบน EMCS แล้วบันทึกเอง")
+    return False
+
+
+def fill_opponent_damage(driver, prefix, damages, main_window):
+    """กรอกความเสียหายคู่กรณีลง popup (frmDamage.aspx) — ใช้ช่อง free-text
+    dgvOtherDamage_List (โครงสร้างเดียวกับความเสียหายรถประกันใน fill_damage_list)
+    จาก tp['damages'] = [{part, level, ...}] แล้ว btnSave กลับหน้าหลัก"""
+    items = [(d.get("part", ""), d.get("level", "")) for d in (damages or [])
+             if d.get("part")]
+    if not items:
+        return
+    log(f"   กรอกความเสียหายคู่กรณี {len(items)} รายการ (popup free-text)")
+    handles_before = set(driver.window_handles)
+    wait_clickable(driver, By.ID, prefix + "btnPopUp_DamList").click()
+    try:
+        WebDriverWait(driver, 15).until(
+            lambda d: len(d.window_handles) > len(handles_before))
+        driver.switch_to.window((set(driver.window_handles) - handles_before).pop())
+        wait_visible(driver, By.ID, "btnSave", 15)
+    except TimeoutException:
+        log("   ⚠️ popup ความเสียหายคู่กรณีไม่เปิด — ข้าม (กรอกเองภายหลัง)")
+        try:
+            driver.switch_to.window(main_window)
+        except Exception:
+            pass
+        return
+
+    if len(items) > MAX_DAMAGE_ITEMS:
+        log(f"   ⚠️ ความเสียหายคู่กรณี {len(items)} เกิน {MAX_DAMAGE_ITEMS} — กรอกเท่าที่ได้")
+    for c, (name, level) in enumerate(items[:MAX_DAMAGE_ITEMS]):
+        col = "A" if c < 4 else "B"
+        row = 2 + (c % 4)
+        pp = f"dgvOtherDamage_List_ctl0{row}_wuOtherDamL{col}_"
+        try:
+            el = driver.find_element(By.ID, pp + "txtDam_Name")
+            el.clear()
+            el.send_keys(name)
+        except Exception:
+            continue
+        # ด้าน ซ้าย/ขวา จากชื่อชิ้นส่วน (เหมือน fill_damage_list)
+        if "ซ้าย" in name and "ขวา" in name:
+            side = "2"
+        elif "ขวา" in name:
+            side = "1"
+        elif "ซ้าย" in name:
+            side = "0"
+        else:
+            side = "2"
+        try:
+            driver.find_element(By.ID, pp + f"rdoDam_Left_Right_{side}").click()
+        except Exception:
+            pass
+        idx = {"A": "0", "B": "1", "C": "2", "D": "3"}.get((level or "").strip().upper())
+        if idx is not None:
+            try:
+                driver.find_element(By.ID, pp + f"rdoDam_Lavel_{idx}").click()
+            except Exception:
+                pass
+        log(f"   ✓ ความเสียหายคู่กรณี [{c + 1}] {name} | side={side} | level={level}")
+
+    try:
+        driver.find_element(By.ID, "btnSave").click()
+        accept_alert(driver)
+    except Exception:
+        pass
+    time.sleep(1)
+    try:
+        driver.switch_to.window(main_window)
+    except Exception:
+        pass
+    log("   ✓ บันทึกความเสียหายคู่กรณีแล้ว")
 
 
 def login(driver, cfg):
@@ -302,15 +449,20 @@ def find_existing_reports(driver, claim_no: str) -> list:
     return driver.execute_script(_JS_FIND_ESURVEY_ROWS, claim_no.strip())
 
 
-def guard_duplicate_report(driver, data: ClaimData, force_new: bool):
+def guard_duplicate_report(driver, data: ClaimData, force_new: bool, existing=None):
     """ด่านกันเปิดเรื่องซ้ำ: ถ้าเคลมนี้มีเรื่องใน EMCS แล้ว → หยุดทันที
-    (ข้ามด่านได้ด้วย --force-new เมื่อตั้งใจสร้างซ้ำจริงๆ)"""
-    try:
-        existing = find_existing_reports(driver, data.claim_value)
-    except Exception as e:
-        log(f"   ⚠️ ตรวจเรื่องซ้ำไม่สำเร็จ ({type(e).__name__}) — ดำเนินการต่อ "
-            "โปรดเช็คเรื่องซ้ำเองด้วย")
-        return
+    (ข้ามด่านได้ด้วย --force-new เมื่อตั้งใจสร้างซ้ำจริงๆ)
+
+    existing: ส่งผลค้นหาที่ดึงมาแล้วเข้ามาได้ (กันค้นซ้ำ) — None = ค้นเอง
+    หมายเหตุ: กรณี "มีเรื่องเดิม + invoice ใหม่ = งานต่อเนื่อง" ถูกแยกไปจัดการก่อน
+    ใน fill_one แล้ว — ด่านนี้จะ raise เฉพาะเรื่องซ้ำจริง (invoice เดิม/ไม่ระบุ)"""
+    if existing is None:
+        try:
+            existing = find_existing_reports(driver, data.claim_value)
+        except Exception as e:
+            log(f"   ⚠️ ตรวจเรื่องซ้ำไม่สำเร็จ ({type(e).__name__}) — ดำเนินการต่อ "
+                "โปรดเช็คเรื่องซ้ำเองด้วย")
+            return
 
     if not existing:
         log("EMCS: ไม่พบเรื่องเดิมของเคลมนี้ — สร้างงานใหม่ได้")
@@ -326,6 +478,23 @@ def guard_duplicate_report(driver, data: ClaimData, force_new: bool):
         )
     log(f"   ⚠️ พบเรื่องเดิม {len(existing)} เรื่อง แต่ได้รับคำสั่ง "
         f"--force-new — สร้างเรื่องใหม่ต่อ\n{lines}")
+
+
+def continuation_esurvey(existing, invoice: str):
+    """ตัดสินว่าเป็น "งานต่อเนื่อง" ไหม → คืนเลข e-Survey ที่จะทำต่อ (None = ไม่ใช่)
+
+    เกณฑ์: เคลมมีเรื่องเดิมใน EMCS แล้ว + เลข invoice (เซอร์เวย์) ใหม่นี้
+    "ยังไม่ปรากฏ" ในเรื่องเดิมใดเลย = เป็นครั้งถัดไป → ทำงานต่อเนื่องกับเรื่องเดิม
+    (ถ้า invoice มีในเรื่องเดิมแล้ว = ซ้ำของจริง → คืน None ให้ด่านบล็อก)"""
+    invoice = (invoice or "").strip()
+    if not existing or not invoice:
+        return None
+    if any(invoice in (r.get("row") or "") for r in existing):
+        return None  # invoice นี้อยู่ในเรื่องเดิมแล้ว = ซ้ำ ไม่ใช่งานต่อเนื่อง
+    if len(existing) > 1:
+        log(f"   ⚠️ เจอเรื่องเดิม {len(existing)} เรื่อง — ทำงานต่อเนื่องกับเรื่องแรก "
+            f"({existing[0]['esurvey']}) โปรดตรวจให้แน่ใจว่าถูกเรื่อง")
+    return existing[0]["esurvey"]
 
 
 # ----------------------------------------------------------------- สถานะเรื่อง
@@ -976,20 +1145,47 @@ return out;
 """
 
 
-def fill_billing(driver, data: ClaimData):
+def fill_billing(driver, data: ClaimData, save_price: bool = True,
+                 navigate: bool = True):
     """หน้าค่าใช้จ่าย: เลข invoice + วันที่วางบิล(วันนี้ พ.ศ.) + สรุปความเห็น
     แล้วกด "บันทึก" (เป็น draft แก้ได้ — จุดส่งงานจริงคือปุ่ม 'ส่งงานใหม่'
-    ซึ่งสคริปต์ไม่กดให้เด็ดขาด ต้องตรวจแล้วกดเอง)"""
+    ซึ่งสคริปต์ไม่กดให้เด็ดขาด ต้องตรวจแล้วกดเอง)
+
+    save_price=False: กรอกตารางราคาให้ครบแต่ไม่กดปุ่ม 'บันทึกราคา' (btnSurveySave)
+    — ใช้ตอนทดสอบ/ตรวจค่าก่อนบันทึก (ผู้ใช้กด 'บันทึกราคา' เองบนหน้าจอ)
+    navigate=False: อยู่หน้าค่าใช้จ่ายแล้ว (เช่นหลังกด 'งานต่อเนื่อง') — ไม่ต้องกดเมนูเข้าใหม่"""
     log("EMCS: กรอกหน้าค่าใช้จ่าย")
-    click_retry(driver, By.ID, "wuMenuPage1_imbSpend")
+    if navigate:
+        click_retry(driver, By.ID, "wuMenuPage1_imbSpend")
 
     wait_visible(driver, By.ID, "txtBill_No", 15)
+    # เคลียร์ก่อนกรอก — งานต่อเนื่องช่องอาจมีค่าครั้งก่อนค้าง (set_text ต่อท้ายไม่ทับ)
+    for fid in ("txtBill_No", "wuCale_Bill_Date_txtCalendar"):
+        try:
+            driver.find_element(By.ID, fid).clear()
+        except Exception:
+            pass
     set_text(driver, "txtBill_No", data.invoice_value)
     set_text(driver, "wuCale_Bill_Date_txtCalendar", today_buddhist())
     set_text(driver, "txtAcc_result", data.accident_summary)
 
+    # readback ยืนยันค่าที่กรอก (set_text เงียบตอนสำเร็จ — log ไว้ให้ตรวจ/audit)
+    try:
+        _bn = driver.find_element(By.ID, "txtBill_No").get_attribute("value")
+        _bd = driver.find_element(
+            By.ID, "wuCale_Bill_Date_txtCalendar").get_attribute("value")
+        log(f"   ✓ เลขที่ใบแจ้งหนี้ = {_bn!r} | วันที่วางบิล = {_bd!r}")
+    except Exception:
+        pass
+
     # ตารางราคา — กรอกเฉพาะช่อง "เสนอ" จากข้อมูล XML
     fill_fee_table(driver, data.bill)
+
+    if not save_price:
+        log("EMCS: กรอกหน้าค่าใช้จ่ายครบแล้ว — ไม่กดปุ่ม 'บันทึกราคา' ตามคำสั่ง "
+            "(--no-save-price) → ตรวจตารางราคาให้ครบ แล้วกด 'บันทึกราคา' + "
+            "'ส่งงานใหม่' เองบนหน้าจอ")
+        return
 
     # ปุ่มบันทึกของหน้านี้คือ btnSurveySave ('บันทึกราคา') ซึ่งจะ enable
     # ก็ต่อเมื่อกรอกตารางราคาค่าสำรวจครบ — ถ้ายัง disabled แปลว่าต้องให้คน
@@ -1014,40 +1210,56 @@ def fill_billing(driver, data: ClaimData):
 
 
 # --------------------------------------------------------------- ส่งงาน (commit)
+# ปุ่มส่งงาน (commit) ที่อาจอยู่บนหน้าค่าใช้จ่าย — ลองหาตามลำดับ
+#   ส่งงานใหม่ = งานครั้งแรก (cmdSendNew) / ส่งผลงานต่อเนื่อง = ครั้งที่ 2,3,… (cmdSendFollow)
+_SUBMIT_BUTTONS = (
+    ("wuFlow1_cmdSendNew", "ส่งงานใหม่"),
+    ("wuFlow1_cmdSendFollow", "ส่งผลงานต่อเนื่อง"),
+)
+
+
 def _find_submit_button(driver):
-    """หาปุ่ม 'ส่งงานใหม่' (commit) — id หลัก wuFlow1_cmdSendNew, fallback หาโดย text
-    ปุ่มนี้มีเฉพาะสถานะ 'รายงานสร้างใหม่' (draft) ในโหมดแก้ — สถานะอื่นจะไม่เจอ"""
-    try:
-        return driver.find_element(By.ID, "wuFlow1_cmdSendNew")
-    except Exception:
-        pass
+    """หาปุ่มส่งงาน (commit) ที่มีบนหน้า — รองรับทั้ง 'ส่งงานใหม่' (cmdSendNew) และ
+    'ส่งผลงานต่อเนื่อง' (cmdSendFollow). ปุ่มมีเฉพาะ draft โหมดแก้ = เป็น gate ในตัว
+    คืน (element, ชื่อปุ่ม) หรือ (None, '') ถ้าไม่เจอ"""
+    for eid, label in _SUBMIT_BUTTONS:
+        try:
+            el = driver.find_element(By.ID, eid)
+            if el.is_displayed():
+                return el, label
+        except Exception:
+            pass
+    # fallback: หาโดยข้อความปุ่ม
+    labels = {lab for _, lab in _SUBMIT_BUTTONS}
     try:
         for el in driver.find_elements(
                 By.CSS_SELECTOR, "input[type=submit],input[type=button],button"):
-            if (el.get_attribute("value") or el.text or "").strip() == "ส่งงานใหม่":
-                return el
+            txt = (el.get_attribute("value") or el.text or "").strip()
+            if txt in labels and el.is_displayed():
+                return el, txt
     except Exception:
         pass
-    return None
+    return None, ""
 
 
 def submit_report(driver, cfg, claim):
-    """commit งาน: กดปุ่ม 'ส่งงานใหม่' (ต้องอยู่หน้าค่าใช้จ่ายโหมดแก้ของ draft —
-    live session ที่เพิ่งกรอกเสร็จ) แล้ว verify ว่าสถานะเปลี่ยนเป็น 'ส่งงานแล้ว' จริง
+    """commit งาน: กดปุ่มส่งงานที่มีบนหน้าค่าใช้จ่าย (โหมดแก้ของ draft — live session
+    ที่เพิ่งกรอกเสร็จ) — รองรับทั้ง 'ส่งงานใหม่' (งานใหม่) และ 'ส่งผลงานต่อเนื่อง'
+    (งานต่อเนื่อง ครั้งที่ 2,3,…) — แล้ว verify ว่าสถานะเปลี่ยนเป็น 'ส่งงานแล้ว' จริง
 
     คืน (ok: bool, msg: str). จะกดเฉพาะเมื่อ "เจอปุ่ม" (= เป็น draft) เท่านั้น —
     เป็น gate ในตัว (สถานะอื่นไม่มีปุ่มนี้)"""
-    btn = _find_submit_button(driver)
+    btn, label = _find_submit_button(driver)
     if btn is None:
-        return False, ("ไม่เจอปุ่ม 'ส่งงานใหม่' — งานนี้อาจไม่ใช่ draft "
-                       "หรือไม่ได้อยู่หน้าค่าใช้จ่ายโหมดแก้")
+        return False, ("ไม่เจอปุ่มส่งงาน (ส่งงานใหม่/ส่งผลงานต่อเนื่อง) — งานนี้อาจไม่ใช่ "
+                       "draft หรือไม่ได้อยู่หน้าค่าใช้จ่ายโหมดแก้")
     try:
         if not btn.is_enabled():
-            return False, "ปุ่ม 'ส่งงานใหม่' ยัง disabled (ข้อมูล/ราคายังไม่ครบ?)"
+            return False, f"ปุ่ม '{label}' ยัง disabled (ข้อมูล/ราคายังไม่ครบ?)"
     except Exception:
         pass
 
-    log("EMCS: กดปุ่ม 'ส่งงานใหม่' (commit งาน)")
+    log(f"EMCS: กดปุ่ม '{label}' (commit งาน)")
     try:
         btn.click()
     except Exception as e:
@@ -1092,18 +1304,128 @@ def submit_report(driver, cfg, claim):
                    "อาจไม่สำเร็จ ตรวจเอง")
 
 
+# --------------------------------------------------------------- งานต่อเนื่อง
+def _addno_count(driver) -> int:
+    """จำนวน 'ครั้งที่' (options ของ ddlAdd_No) — ใช้เช็คว่ากด 'งานต่อเนื่อง' สำเร็จ
+    (ครั้งที่เพิ่มขึ้น) — 0 ถ้าไม่เจอ dropdown"""
+    try:
+        return len(Select(driver.find_element(By.ID, "ddlAdd_No")).options)
+    except Exception:
+        return 0
+
+
+def _open_report_billing(driver, claim: str, esurvey: str):
+    """ค้นเลขเคลม (ให้ลิงก์โผล่บนหน้า MainPage) → คลิกลิงก์ e-Survey เปิดเรื่อง →
+    เข้าหน้าค่าใช้จ่าย (frmBilling.aspx) → รอช่องเลขที่ใบแจ้งหนี้โผล่"""
+    find_existing_reports(driver, claim)          # ค้นเพื่อให้ลิงก์ e-Survey โผล่
+    wait_clickable(
+        driver, By.XPATH, f"//a[normalize-space(text())='{esurvey}']", 20
+    ).click()
+    click_retry(driver, By.ID, "wuMenuPage1_imbSpend")
+    wait_visible(driver, By.ID, "txtBill_No", 20)
+
+
+def start_continuation(driver, claim: str, esurvey: str):
+    """เปิดเรื่องเดิม → หน้าค่าใช้จ่าย → ทำให้ "ครั้งงานต่อเนื่อง (draft)" พร้อมกรอก
+
+    พฤติกรรม EMCS (พิสูจน์จาก probe): กด 'งานต่อเนื่อง' (cmdFollow) จะ "สร้างครั้งใหม่
+    แล้วเด้งกลับหน้ารายการ" → ต้องเปิดเรื่องซ้ำ ครั้งใหม่จะถูกเลือกอัตโนมัติ + ช่องปลดล็อก
+    ตัวชี้วัด: txtBill_No แก้ไขได้ = อยู่ครั้ง draft (กรอกได้เลย) / ถูกล็อก = ครั้งล่าสุด
+    ส่งแล้ว (ต้องกด 'งานต่อเนื่อง' สร้างครั้งใหม่)
+    - แก้ไขได้อยู่แล้ว → กรอกต่อเลย (ไม่กด 'งานต่อเนื่อง' ซ้ำ กันสร้างครั้งเกิน)
+    - ถูกล็อก → กด 'งานต่อเนื่อง' + ยืนยัน → เปิดเรื่องซ้ำ → ครั้งใหม่พร้อมกรอก"""
+    log(f"EMCS: เปิดเรื่องเดิม {esurvey} เพื่อทำงานต่อเนื่อง")
+    _open_report_billing(driver, claim, esurvey)
+
+    if driver.find_element(By.ID, "txtBill_No").is_enabled():
+        log(f"EMCS: มีครั้งงานต่อเนื่อง (draft) ค้างอยู่ → ครั้งที่ "
+            f"{_addno_count(driver)} แก้ไขได้ กรอกต่อได้เลย (ไม่กด 'งานต่อเนื่อง' ซ้ำ)")
+        return
+
+    # ครั้งล่าสุดถูกล็อก (ส่งแล้ว) → สร้างครั้งใหม่ด้วยปุ่ม 'งานต่อเนื่อง'
+    try:
+        follow = wait_clickable(driver, By.ID, "wuFlow1_cmdFollow", 15)
+    except TimeoutException as e:
+        raise RuntimeError(
+            "ช่องค่าใช้จ่ายถูกล็อก และไม่เจอปุ่ม 'งานต่อเนื่อง' — "
+            "ตรวจสถานะเรื่องบน EMCS"
+        ) from e
+    before = _addno_count(driver)
+    log(f"EMCS: กด 'งานต่อเนื่อง' (ครั้งที่ปัจจุบัน = {before})")
+    follow.click()
+    time.sleep(1)
+    try:
+        accept_alert(driver, timeout=10)   # 'คุณยืนยันที่จะเพิ่มงานต่อเนื่อง...'
+    except TimeoutException:
+        for sel in (".swal-button--confirm", ".swal-button", ".swal2-confirm",
+                    "#btnConfirm", ".confirm"):
+            try:
+                for e in driver.find_elements(By.CSS_SELECTOR, sel):
+                    if e.is_displayed():
+                        e.click()
+                        time.sleep(1)
+                        break
+            except Exception:
+                pass
+
+    # EMCS เด้งกลับหน้ารายการ → เปิดเรื่องซ้ำ ครั้งใหม่จะถูกเลือก + ช่องปลดล็อก
+    time.sleep(2)
+    _open_report_billing(driver, claim, esurvey)
+    try:
+        WebDriverWait(driver, 20).until(
+            lambda d: _addno_count(d) > before
+            and d.find_element(By.ID, "txtBill_No").is_enabled()
+        )
+    except TimeoutException as e:
+        raise RuntimeError(
+            "สร้างงานต่อเนื่องแล้วแต่เปิดครั้งใหม่ไม่เจอ/ช่องไม่ปลดล็อก — ตรวจบน EMCS"
+        ) from e
+    log(f"EMCS: เพิ่มงานต่อเนื่องแล้ว → ครั้งที่ {_addno_count(driver)} (พร้อมกรอก)")
+
+
+def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
+                      save_price: bool = True) -> str:
+    """งานต่อเนื่อง (ครั้งถัดไปของเคลมเดิม): เปิดเรื่องเดิม → 'งานต่อเนื่อง' →
+    กรอกหน้าค่าใช้จ่าย (invoice ใหม่ + ตารางราคา) เท่านั้น — ไม่แตะหน้าหลัก/คู่กรณี
+    (ข้อมูลพวกนั้นอยู่ครั้งที่ 1 แล้ว)
+
+    save_price=False: ไม่กด 'บันทึกราคา'. ปุ่มส่งจริงคือ 'ส่งผลงานต่อเนื่อง'
+    (wuFlow1_cmdSendFollow) — สคริปต์ไม่กดให้เด็ดขาด (เหมือนปุ่ม 'ส่งงานใหม่')
+    คืนเลข e-Survey เดิม (งานต่อเนื่องใช้เรื่อง/เลขเดิม ไม่สร้างใหม่)"""
+    start_continuation(driver, data.claim_value, esurvey)
+    fill_billing(driver, data, save_price=save_price, navigate=False)
+    return esurvey
+
+
 # ------------------------------------------------------------------ flow รวม
 
 def fill_one(driver, cfg, data: ClaimData, images_folder=None,
              loss_type: str = "auto", image_type: str = "รูปรถประกัน",
-             severity: str = "เบา", force_new: bool = False) -> str:
+             severity: str = "เบา", force_new: bool = False,
+             save_price: bool = True) -> str:
     """กรอกเคลมเดียวจนจบ (driver ต้องอยู่หน้ารายการงาน EMCS แล้ว)
     คืนเลข e-Survey ของเรื่องที่สร้าง
 
     การ "บันทึก" ทุกหน้าเป็นแค่ draft แก้ไขได้ — สคริปต์กดบันทึกให้ครบ
     จุดส่งงานจริงคือปุ่ม 'ส่งงานใหม่' หน้าค่าใช้จ่าย ซึ่งสคริปต์
-    **ไม่กดให้เด็ดขาด** / มีด่านกันเปิดเรื่องซ้ำ (ข้ามด้วย force_new)"""
-    guard_duplicate_report(driver, data, force_new)
+    **ไม่กดให้เด็ดขาด** / มีด่านกันเปิดเรื่องซ้ำ (ข้ามด้วย force_new)
+
+    ถ้าเคลมมีเรื่องเดิมใน EMCS แล้ว + invoice ใหม่ (ยังไม่อยู่ในเรื่องเดิม) →
+    เข้าโหมด "งานต่อเนื่อง" อัตโนมัติ (เปิดเรื่องเดิม กรอกครั้งถัดไปหน้าค่าใช้จ่าย)"""
+    # งานต่อเนื่อง: มีเรื่องเดิม + invoice ใหม่ → ทำครั้งถัดไป (ไม่สร้างเรื่องใหม่)
+    if not force_new:
+        try:
+            existing = find_existing_reports(driver, data.claim_value)
+        except Exception as e:
+            log(f"   ⚠️ ตรวจเรื่องเดิมไม่สำเร็จ ({type(e).__name__}) — ทำต่อแบบสร้างใหม่")
+            existing = []
+        cont = continuation_esurvey(existing, data.invoice_value)
+        if cont:
+            log(f"EMCS: เคลมนี้มีเรื่องเดิม + invoice ใหม่ → โหมดงานต่อเนื่อง (ต่อจาก {cont})")
+            return fill_continuation(driver, cfg, data, cont, save_price=save_price)
+        guard_duplicate_report(driver, data, force_new, existing=existing)
+    else:
+        guard_duplicate_report(driver, data, force_new)
     new_report(driver)
 
     main_window = driver.current_window_handle
@@ -1126,15 +1448,17 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
     if images_folder is not None:
         upload_images(driver, images_folder, image_type=image_type)
 
-    fill_billing(driver, data)
+    fill_billing(driver, data, save_price=save_price)
     return esurvey
 
 
 def run_fill(driver, cfg, data: ClaimData, images_folder=None,
              loss_type: str = "auto", image_type: str = "รูปรถประกัน",
-             severity: str = "เบา", force_new: bool = False) -> str:
+             severity: str = "เบา", force_new: bool = False,
+             save_price: bool = True) -> str:
     """login แล้วกรอกเคลมเดียว (flow เดิมสำหรับรันทีละเคลม)"""
     login(driver, cfg)
     return fill_one(driver, cfg, data, images_folder=images_folder,
                     loss_type=loss_type, image_type=image_type,
-                    severity=severity, force_new=force_new)
+                    severity=severity, force_new=force_new,
+                    save_price=save_price)
