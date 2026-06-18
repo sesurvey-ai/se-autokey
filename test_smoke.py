@@ -121,7 +121,7 @@ if sample_zip.exists():
 else:
     print("[SKIP] ไม่มีไฟล์ zip ตัวอย่าง")
 
-# zip ที่มีรูปรถคู่กรณี (ได้จากการรันจริง) — TP_VEH ต้องแยกโฟลเดอร์
+# zip ที่มีรูปบุคคลที่สาม (ได้จากการรันจริง) — TP_* ต้องแยกโฟลเดอร์ tp_<xxx>/
 tp_zips = list(pathlib.Path("downloaded_images").glob("*/_zip/export_*.zip"))
 if tp_zips:
     with tempfile.TemporaryDirectory() as tmp:
@@ -132,20 +132,49 @@ if tp_zips:
             check("รูปรถคู่กรณีแยกไว้ใน tp_veh/",
                   len(tp_files) == counts["TP_VEH"],
                   f"{len(tp_files)} vs {counts}")
-            check("list_images ไม่นับรูปคู่กรณี",
+            # โฟลเดอร์หลัก = ทุกหมวดที่ไม่ใช่ TP_* (รูปบุคคลที่สามแยกออกหมด)
+            check("list_images นับเฉพาะรูปโฟลเดอร์หลัก (ไม่นับ tp_*)",
                   len(images.list_images(tmp))
-                  == sum(v for k, v in counts.items() if k != "TP_VEH"))
+                  == sum(v for k, v in counts.items() if not k.startswith("TP_")))
 
-# ---- 8.5 archive ย้าย tp_veh/ ด้วย (กันรูปคู่กรณีสะสมเป็น _2/_3) ----
+# ---- 8.5 archive ย้าย tp_*/ ทุกตัว (tp_veh/tp_person/tp_prop) เข้า _old ----
 with tempfile.TemporaryDirectory() as tmp:
     tmp = pathlib.Path(tmp)
     (tmp / "a.jpg").write_bytes(b"x")
-    (tmp / "tp_veh").mkdir()
-    (tmp / "tp_veh" / "opo1.jpg").write_bytes(b"o")
+    for sub, fn in [("tp_veh", "opo1.jpg"), ("tp_person", "inj1.jpg"),
+                    ("tp_prop", "asset1.jpg")]:
+        (tmp / sub).mkdir()
+        (tmp / sub / fn).write_bytes(b"o")
     images.archive_old_images(tmp)
-    check("archive: ย้าย tp_veh/ เข้า _old ด้วย",
-          (list((tmp / "_old").rglob("tp_veh/opo1.jpg")) != [])
-          and not (tmp / "tp_veh").exists())
+    check("archive: ย้าย tp_veh/tp_person/tp_prop เข้า _old ครบ",
+          all(list((tmp / "_old").rglob(f"{s}/*.jpg")) != []
+              and not (tmp / s).exists()
+              for s in ("tp_veh", "tp_person", "tp_prop")))
+
+# ---- 8.5.1 extract_zip_images: แยก TP_VEH/TP_PERSON/TP_PROP ใต้ tp_<xxx>/ ----
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    zpath = tmp / "syn.zip"
+    import zipfile as _zf
+    with _zf.ZipFile(zpath, "w") as z:
+        z.writestr("PICTURES/INS/a.jpg", b"INS")
+        z.writestr("PICTURES/TP_VEH/1781/v1.jpg", b"V1")
+        z.writestr("PICTURES/TP_PERSON/1782/p1.jpg", b"P1")
+        z.writestr("PICTURES/TP_PERSON/1782/p2.jpg", b"P2")
+        z.writestr("PICTURES/TP_PROP/1783/r1.jpg", b"R1")
+    out = tmp / "ext"
+    counts = images.extract_zip_images(zpath, out)
+    check("zip: นับหมวด TP_PERSON/TP_PROP ได้",
+          counts.get("TP_PERSON") == 2 and counts.get("TP_PROP") == 1
+          and counts.get("TP_VEH") == 1, str(counts))
+    check("zip: TP_PERSON → tp_person/ (มี id ย่อยนำหน้า)",
+          [p.name for p in (out / "tp_person").glob("*.jpg")]
+          == ["1782_p1.jpg", "1782_p2.jpg"])
+    check("zip: TP_PROP → tp_prop/ , TP_VEH → tp_veh/",
+          (out / "tp_prop" / "1783_r1.jpg").exists()
+          and (out / "tp_veh" / "1781_v1.jpg").exists())
+    check("zip: รูปบุคคลที่สามไม่ปนโฟลเดอร์หลัก (เหลือแค่ INS)",
+          images.list_images(out) == ["a.jpg"])
 
 # ---- 8.6 รูปรถคู่กรณี: dedup เนื้อหา + แบ่งชุดตามคัน (rename=False = ไม่แตะดิสก์) ----
 with tempfile.TemporaryDirectory() as tmp:

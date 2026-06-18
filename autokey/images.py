@@ -19,23 +19,23 @@ IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp")
 
 def archive_old_images(folder: Path):
     """ย้ายรูปเก่าจากรอบก่อนไปไว้ใน _old/<timestamp>/ กันรูปข้ามเคลมปนกัน
-    (ย้ายแทนการลบ เพื่อความปลอดภัย) — รวมโฟลเดอร์รูปคู่กรณี tp_veh/ ด้วย
-    (ไม่งั้นรอบถัดไปจะโหลดทับเป็น _2/_3 สะสม แล้วอัปโหลดซ้ำ)"""
+    (ย้ายแทนการลบ เพื่อความปลอดภัย) — รวมโฟลเดอร์บุคคลที่สาม tp_*/ ทุกตัว
+    (tp_veh/tp_person/tp_prop) ด้วย ไม่งั้นรอบถัดไปโหลดทับเป็น _2/_3 สะสม"""
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     files = [f for f in folder.iterdir() if f.is_file()]
-    tp = folder / "tp_veh"
-    has_tp = tp.is_dir() and any(tp.iterdir())
-    if not files and not has_tp:
+    tp_dirs = [d for d in folder.iterdir()
+               if d.is_dir() and d.name.startswith("tp_") and any(d.iterdir())]
+    if not files and not tp_dirs:
         return
     dest = folder / "_old" / datetime.now().strftime("%Y%m%d_%H%M%S")
     dest.mkdir(parents=True, exist_ok=True)
     for f in files:
         shutil.move(str(f), str(dest / f.name))
-    if has_tp:
-        shutil.move(str(tp), str(dest / "tp_veh"))
-    log(f"ย้ายรูปเก่า {len(files)} ไฟล์"
-        + (" + tp_veh/" if has_tp else "") + f" ไปที่ {dest}")
+    for d in tp_dirs:
+        shutil.move(str(d), str(dest / d.name))
+    extra = (" + " + "/".join(d.name for d in tp_dirs) + "/") if tp_dirs else ""
+    log(f"ย้ายรูปเก่า {len(files)} ไฟล์{extra} ไปที่ {dest}")
 
 
 def list_images(folder: Path) -> list:
@@ -263,10 +263,12 @@ def extract_zip_images(zip_path: Path, folder: Path) -> dict:
     """แตกไฟล์รูปจาก zip โดยใช้หมวดในตัว zip (PICTURES/<หมวด>/...)
 
     - INS / REPORTS / OTHERS → ลงโฟลเดอร์หลักแบบแบน (ชุดที่จะอัปโหลด EMCS)
-    - TP_VEH (รูปรถคู่กรณี) → แยกไว้ใต้ tp_veh/ ไม่ปนกับรูปรถประกัน
+    - หมวดบุคคลที่สาม TP_* → แยกใต้ tp_<xxx>/ ไม่ปนรูปรถประกัน:
+      TP_VEH→tp_veh/ (รถคู่กรณี), TP_PERSON→tp_person/ (ผู้บาดเจ็บ),
+      TP_PROP→tp_prop/ (ทรัพย์สิน) — โครงสร้าง zip: PICTURES/<CAT>/<id ย่อย>/file
     - ข้ามไฟล์ที่ไม่ใช่รูป (เช่น PDF)
 
-    คืน dict นับจำนวนต่อหมวด เช่น {'INS': 23, 'TP_VEH': 10}"""
+    คืน dict นับจำนวนต่อหมวด เช่น {'INS': 23, 'TP_VEH': 10, 'TP_PERSON': 7}"""
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     counts = {}
@@ -282,12 +284,13 @@ def extract_zip_images(zip_path: Path, folder: Path) -> dict:
             category = parts[1].upper() if len(parts) > 1 else "OTHERS"
             counts[category] = counts.get(category, 0) + 1
 
-            if category == "TP_VEH":
-                sub = folder / "tp_veh"
+            if category.startswith("TP_"):
+                # รูปบุคคลที่สาม (รถคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน) — แยกใต้ tp_<xxx>/
+                sub = folder / category.lower()   # tp_veh / tp_person / tp_prop
                 sub.mkdir(exist_ok=True)
-                # ใส่ชื่อโฟลเดอร์คันคู่กรณีนำหน้า กันชนกันเมื่อมีหลายคัน
-                car = parts[2] if len(parts) > 3 else ""
-                target = sub / (f"{car}_{name}" if car else name)
+                # ใส่ชื่อโฟลเดอร์ย่อย (คัน/คน/ชิ้น) นำหน้า กันชนกันเมื่อมีหลายราย
+                grp = parts[2] if len(parts) > 3 else ""
+                target = sub / (f"{grp}_{name}" if grp else name)
             else:
                 target = folder / name
 

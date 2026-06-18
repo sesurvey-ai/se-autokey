@@ -141,13 +141,14 @@ class ISurveyAPI:
 
     def download_images(self, case_id, dest_dir, ts=(1, 2, 3, 4, 5, 6)) -> dict:
         """โหลดรูปทุกหมวดของเคลมลง dest_dir (จัดวางแบบเดียวกับวิธี zip:
-        INS/REPORTS/OTHERS แบนในโฟลเดอร์, TP_VEH ลง tp_veh/)
+        INS/REPORTS/OTHERS แบนในโฟลเดอร์, หมวด TP_* ลง tp_<xxx>/ —
+        tp_veh/tp_person/tp_prop)
         คืน dict นับจำนวนต่อหมวด เช่น {'INS': 22, 'REPORTS': 4, 'OTHERS': 1}"""
         from pathlib import Path
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         counts, seen, failed = {}, set(), 0
-        cat_map = {}   # {ชื่อไฟล์: หมวด} เฉพาะรูปที่ลงโฟลเดอร์หลัก (ไม่รวม tp_veh)
+        cat_map = {}   # {ชื่อไฟล์: หมวด} เฉพาะรูปที่ลงโฟลเดอร์หลัก (ไม่รวม tp_*)
         for t in ts:
             for im in self.get_images_list(case_id, t):
                 name, url = im.get("name"), im.get("url")
@@ -155,7 +156,7 @@ class ISurveyAPI:
                     continue
                 seen.add(name)
                 cat = self._img_category(url)
-                target = (dest_dir / "tp_veh" / name) if cat == "TP_VEH" \
+                target = (dest_dir / cat.lower() / name) if cat.startswith("TP_") \
                     else (dest_dir / name)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 try:
@@ -163,7 +164,7 @@ class ISurveyAPI:
                     if r.status_code == 200 and r.content:
                         target.write_bytes(r.content)
                         counts[cat] = counts.get(cat, 0) + 1
-                        if cat != "TP_VEH":
+                        if not cat.startswith("TP_"):
                             cat_map[name] = cat
                     else:
                         failed += 1
