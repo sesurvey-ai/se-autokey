@@ -566,8 +566,26 @@ browser._WEBUI = False
 check("injury inputs: ไม่ใช่ webui → None (console ไม่ถาม)",
       browser.wait_for_injury_inputs(_spec) is None)
 browser._WEBUI, sys.stdin = _save_webui, _save_stdin
-check("injury options: 01/03/05 (ผู้ขับขี่/ผู้โดยสาร/บุคคลภายนอก)",
-      [o["value"] for o in browser.INJ_PERSON_TYPE_OPTIONS] == ["01", "03", "05"])
+check("injury options fallback: 01-05 (รวม 02/04 รถคู่กรณี)",
+      [o["value"] for o in browser.INJ_PERSON_TYPE_OPTIONS]
+      == ["01", "02", "03", "04", "05"])
+
+# options=... (อ่านจากหน้าจริง dynamic) override fallback ใน marker ที่ส่ง webui
+_save_webui2, _save_stdin2, _save_stdout2 = browser._WEBUI, sys.stdin, sys.stdout
+browser._WEBUI = True
+sys.stdin = _io.StringIO('{"persons":[{"person_type":"02","car_regno":""}]}\n')
+_cap = _io.StringIO()
+sys.stdout = _cap
+browser.wait_for_injury_inputs(
+    _spec, options=[{"value": "02", "label": "ผู้ขับขี่ - รถคู่กรณี"}])
+sys.stdout = _save_stdout2
+_marker_line = [ln for ln in _cap.getvalue().splitlines()
+                if ln.startswith(browser.INJURY_INPUTS_MARKER)]
+import json as _json0
+_payload = _json0.loads(_marker_line[0][len(browser.INJURY_INPUTS_MARKER):])
+check("injury options: ส่ง options จากหน้าจริงไป webui (ไม่ใช้ fallback)",
+      [o["value"] for o in _payload["person_type_options"]] == ["02"])
+browser._WEBUI, sys.stdin = _save_webui2, _save_stdin2
 
 # ---- 18. browser._image_categories: หมวดของรูปจาก manifest ----
 import json as _json

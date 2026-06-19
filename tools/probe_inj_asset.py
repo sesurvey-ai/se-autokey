@@ -118,7 +118,7 @@ def main():
         if not reports:
             log(f"❌ ไม่พบเรื่องเดิมของเคลม {claim} ใน EMCS — สร้าง draft ก่อน")
             return
-        target = emcs._pick_draft_report(reports)
+        target = sys.argv[2] if len(sys.argv) > 2 else emcs._pick_draft_report(reports)
         log(f"เปิด draft {target} ของเคลม {claim} (อ่านอย่างเดียว ไม่แก้/ไม่ส่ง)")
         wait_clickable(
             driver, By.XPATH, f"//a[normalize-space(text())='{target}']", 20

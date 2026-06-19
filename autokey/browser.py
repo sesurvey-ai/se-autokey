@@ -467,19 +467,25 @@ def wait_for_image_select(folder, files):
 
 INJURY_INPUTS_MARKER = "@@INJURY_INPUTS@@"  # ต้องตรงกับค่าใน webui.py
 
-# ตัวเลือก "ประเภทผู้บาดเจ็บ" (value = code ของ ddlPerson_Type ใน EMCS)
+# ตัวเลือก "ประเภทผู้บาดเจ็บ" (value = code ddlPerson_Type) — fallback ถ้าอ่านจาก
+# หน้าจริงไม่ได้ (จริงๆ 02/04 'รถคู่กรณี' จะมีเฉพาะตอนเคลมมีคู่กรณี = dynamic)
 INJ_PERSON_TYPE_OPTIONS = [
     {"value": "01", "label": "ผู้ขับขี่ - รถประกัน"},
+    {"value": "02", "label": "ผู้ขับขี่ - รถคู่กรณี"},
     {"value": "03", "label": "ผู้โดยสาร - รถประกัน"},
+    {"value": "04", "label": "ผู้โดยสาร - รถคู่กรณี"},
     {"value": "05", "label": "บุคคลภายนอกรถ"},
 ]
 
 
-def wait_for_injury_inputs(persons):
+def wait_for_injury_inputs(persons, options=None):
     """ให้ผู้ใช้กรอก 'เลขทะเบียน' + เลือก 'ประเภทผู้บาดเจ็บ' ของผู้บาดเจ็บแต่ละคน
     บนหน้าเว็บ — EMCS บังคับเลขทะเบียนผู้บาดเจ็บก่อนเข้าหน้าค่าใช้จ่าย แต่ ISURVEY ว่าง
 
     persons = [{name, person_type_value(default จาก ISURVEY), car_regno}, ...]
+    options = ตัวเลือกประเภทผู้บาดเจ็บ [{value,label}] ที่อ่านจาก ddlPerson_Type
+      หน้าจริง (dynamic — มี 02/04 'รถคู่กรณี' เฉพาะตอนเคลมมีคู่กรณี); None →
+      ใช้ INJ_PERSON_TYPE_OPTIONS เป็น fallback
     - หน้าเว็บ (webui): marker → ฟอร์มต่อคน (dropdown ประเภท default + ช่องเลขทะเบียน)
       → ส่ง {"persons":[{person_type, car_regno}, ...]} กลับเข้า stdin
     - console / EOF / ไม่ใช่ webui: คืน None = ใช้ค่า ISURVEY เดิม (เลขทะเบียนว่าง →
@@ -488,11 +494,12 @@ def wait_for_injury_inputs(persons):
     """
     if not _WEBUI:
         return None
+    opts = options or INJ_PERSON_TYPE_OPTIONS
     log_plain("")
     log(f"⏸️  กรอกเลขทะเบียน + เลือกประเภทผู้บาดเจ็บ {len(persons)} คน บนหน้าเว็บ "
         "(EMCS บังคับก่อนเข้าหน้าค่าใช้จ่าย)")
     print(INJURY_INPUTS_MARKER + json.dumps(
-        {"persons": persons, "person_type_options": INJ_PERSON_TYPE_OPTIONS},
+        {"persons": persons, "person_type_options": opts},
         ensure_ascii=False), flush=True)
     try:
         line = sys.stdin.readline()

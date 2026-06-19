@@ -434,6 +434,22 @@ def fill_opponent_damage(driver, prefix, damages, main_window):
     log("   ✓ บันทึกความเสียหายคู่กรณีแล้ว")
 
 
+def _read_person_type_options(driver):
+    """อ่านตัวเลือก ddlPerson_Type จากบล็อกแรกที่ render แล้ว (dynamic — 02/04
+    'รถคู่กรณี' โผล่เฉพาะตอนเคลมมีคู่กรณี) คืน [{value,label}] หรือ None ถ้าอ่านไม่ได้"""
+    try:
+        opts = driver.execute_script(
+            "var s=document.getElementById(arguments[0]);"
+            "if(!s){return null;}"
+            "return Array.prototype.map.call(s.options,function(o){"
+            "return {value:o.value, label:(o.text||'').trim()};})"
+            ".filter(function(o){return o.value && o.value!=='0';});",
+            INJ_PREFIX.format(n=0) + "ddlPerson_Type")
+        return opts or None
+    except Exception:
+        return None
+
+
 def fill_injuries(driver, data: ClaimData):
     """กรอกผู้บาดเจ็บ (Tab 5) — กดเมนู imbInjure_Person → เลือกจำนวน ddlInj_Count
     → กรอกทีละบล็อก (dtlInj_ctl00_wuInj_*) → บันทึก btnSave_InjurePerson
@@ -443,15 +459,25 @@ def fill_injuries(driver, data: ClaimData):
         return
     log(f"EMCS: กรอกผู้บาดเจ็บ {len(injs)} คน")
 
-    # ให้ผู้ใช้กรอก 'เลขทะเบียน' (ISURVEY ว่าง — EMCS บังคับก่อนเข้าหน้าค่าใช้จ่าย) +
-    # เลือก/ยืนยัน 'ประเภทผู้บาดเจ็บ' (default จาก ISURVEY) บน webui ก่อนกรอกจริง
-    spec = [{"name": inj.get("name", ""),
-             "person_type_value": PERSON_TYPE_MAP.get(
-                 (inj.get("person_type", "") or "").strip().upper(), ""),
-             "car_regno": ""}
-            for inj in injs[:MAX_INJURIES]]
-    user_inputs = wait_for_injury_inputs(spec)   # None = console/EOF → ใช้ค่า ISURVEY
+    # ชื่อผู้ขับขี่คู่กรณี — ใช้เดา default 'ผู้ขับขี่รถคู่กรณี' (02) ให้ผู้บาดเจ็บที่ชื่อตรงกัน
+    opo_drivers = [
+        ((tp.get("drv_name", "") or tp.get("opo_name", "")) or "").strip()
+        for tp in (data.third_parties or [])
+    ]
+    opo_drivers = [nm for nm in opo_drivers if nm]
 
+    # default ประเภทผู้บาดเจ็บต่อคน: ชื่อตรงผู้ขับขี่คู่กรณี (fuzzy ≥85) → 02
+    # 'ผู้ขับขี่-รถคู่กรณี', ไม่งั้น map จาก PERSON_TYPE (ISURVEY)
+    def _default_type(inj):
+        nm = (inj.get("name", "") or "").strip()
+        if nm and opo_drivers and max(
+                (fuzz.WRatio(nm, o) for o in opo_drivers), default=0) >= 85:
+            return "02"
+        return PERSON_TYPE_MAP.get(
+            (inj.get("person_type", "") or "").strip().upper(), "")
+
+    # ปลดล็อก + เลือกจำนวนก่อน เพื่อให้บล็อก render → อ่านตัวเลือก ddlPerson_Type จริง
+    # (ต้องมีบล็อกก่อนถึงจะอ่านตัวเลือก dynamic ได้) — แล้วค่อยให้ผู้ใช้ยืนยันบน webui
     click_retry(driver, By.ID, "wuMenuPage1_imbInjure_Person")
     try:
         wait_present(driver, By.ID, "ddlInj_Count", 20)
@@ -465,14 +491,22 @@ def fill_injuries(driver, data: ClaimData):
         str(min(len(injs), MAX_INJURIES)))
     time.sleep(1.5)   # JS เปิดบล็อก
 
+    # อ่านตัวเลือกจริงจากหน้า (dynamic) ส่งให้ webui; ให้ผู้ใช้กรอก 'เลขทะเบียน'
+    # (ISURVEY ว่าง — EMCS บังคับก่อนเข้าหน้าค่าใช้จ่าย) + ยืนยัน 'ประเภทผู้บาดเจ็บ'
+    options = _read_person_type_options(driver)
+    spec = [{"name": inj.get("name", ""),
+             "person_type_value": _default_type(inj),
+             "car_regno": ""}
+            for inj in injs[:MAX_INJURIES]]
+    user_inputs = wait_for_injury_inputs(spec, options=options)  # None=console/EOF
+
     for n, inj in enumerate(injs[:MAX_INJURIES]):
         p = INJ_PREFIX.format(n=n)
         ui = user_inputs[n] if (user_inputs and n < len(user_inputs)) else None
         log(f"   --- คนที่ {n + 1}: {inj.get('name', '')} ---")
 
-        # ประเภทบุคคล (* บังคับ) — ใช้ค่าที่ผู้ใช้เลือกบน webui ถ้ามี ไม่งั้น map ISURVEY
-        pt = (ui.get("person_type") if ui else None) or PERSON_TYPE_MAP.get(
-            (inj.get("person_type", "") or "").strip().upper())
+        # ประเภทบุคคล (* บังคับ) — ใช้ค่าที่ผู้ใช้เลือกบน webui ถ้ามี ไม่งั้น smart default
+        pt = (ui.get("person_type") if ui else None) or _default_type(inj)
         if pt:
             try:
                 Select(driver.find_element(By.ID, p + "ddlPerson_Type")
