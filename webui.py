@@ -96,6 +96,8 @@ def _build_cmd(params: dict):
         cmd += ["--skip-images"]
     if params.get("nosaveprice"):
         cmd += ["--no-save-price"]
+    if params.get("forcenew"):
+        cmd += ["--force-new"]
 
     # โหมดเคลมสด/นัดหมาย/ติดตาม: ปลดด่านเคลมแห้ง (--allow-fresh) + อ่านด้วย scrape
     # (--scrape) เพื่อดึงคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินจาก XML — API อ่าน tab-4/5/6 ไม่ได้
@@ -450,6 +452,8 @@ PAGE = r"""<!doctype html>
   .checks label{display:flex;align-items:center;gap:8px;font-size:14px;
     color:#334155;cursor:pointer;user-select:none}
   .checks input{width:17px;height:17px;accent-color:var(--brand)}
+  .checks label.warn{color:#b45309;font-weight:600}
+  .checks label.warn input{accent-color:#d97706}
   .actions{display:flex;align-items:center;gap:12px;margin-top:18px;flex-wrap:wrap}
   button{font-family:inherit;font-size:15px;font-weight:600;border:0;
     border-radius:10px;padding:11px 20px;cursor:pointer;transition:.15s}
@@ -614,6 +618,7 @@ PAGE = r"""<!doctype html>
       <label><input type="checkbox" id="readonly"> อ่านอย่างเดียว (ไม่กรอก EMCS)</label>
       <label><input type="checkbox" id="skipimages"> ไม่ยุ่งกับรูปภาพ</label>
       <label><input type="checkbox" id="nosaveprice"> ไม่บันทึกราคา (ทดสอบ — กรอกถึงหน้าค่าใช้จ่ายแต่ไม่กดเซฟราคา)</label>
+      <label class="warn"><input type="checkbox" id="forcenew"> ⚠️ สร้างเรื่องใหม่แม้มีเรื่องเดิม (--force-new) — draft ลบไม่ได้ ยกเลิกได้อย่างเดียว</label>
     </div>
 
     <div class="actions">
@@ -983,6 +988,11 @@ async function poll(){
 runBtn.addEventListener("click", async () => {
   const claims = $("#claims").value.trim();
   if (!claims){ $("#claims").focus(); return; }
+  if ($("#forcenew").checked &&
+      !confirm("สร้างเรื่องใหม่แม้เคลมนี้มีเรื่องเดิมใน EMCS แล้ว?\n\n"
+               + "draft ที่สร้างจะลบไม่ได้ (ยกเลิกได้อย่างเดียว) — ใช้เฉพาะตอนทดสอบ")){
+    return;
+  }
   runBtn.disabled = true;
   const body = {
     claims,
@@ -992,6 +1002,7 @@ runBtn.addEventListener("click", async () => {
     readonly: $("#readonly").checked,
     skipimages: $("#skipimages").checked,
     nosaveprice: $("#nosaveprice").checked,
+    forcenew: $("#forcenew").checked,
   };
   try{
     const {ok,data} = await postJSON("/run", body);

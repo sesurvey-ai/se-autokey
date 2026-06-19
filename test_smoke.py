@@ -741,6 +741,13 @@ check("build_cmd nosaveprice: มี --no-save-price",
 _cmd, _e = _webui._build_cmd({"claims": "2026013041465"})
 check("build_cmd default: ไม่มี --no-save-price (บันทึกราคาตามปกติ)",
       _e is None and "--no-save-price" not in _cmd)
+# forcenew → --force-new (สร้างเรื่องใหม่แม้มีเรื่องเดิม); ไม่ติ๊ก = ไม่มี (กันเปิดซ้ำ)
+_cmd, _e = _webui._build_cmd({"claims": "2026013048453", "forcenew": True})
+check("build_cmd forcenew: มี --force-new",
+      _e is None and "--force-new" in _cmd)
+_cmd, _e = _webui._build_cmd({"claims": "2026013048453"})
+check("build_cmd default: ไม่มี --force-new (ด่านกันเปิดเรื่องซ้ำทำงาน)",
+      _e is None and "--force-new" not in _cmd)
 
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
