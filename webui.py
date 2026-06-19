@@ -762,7 +762,7 @@ function buildInjuryForm(c, r){
       + '<span class="inj-name">' + (i+1) + '. ' + escHtml(p.name || "ผู้บาดเจ็บ") + '</span>'
       + '<label class="inj-f">ประเภท: <select class="inj-type">' + sel + '</select></label>'
       + '<label class="inj-f">เลขทะเบียน: <input type="text" class="inj-plate" '
-      + 'placeholder="เช่น 9กฆ5003" value="' + escAttr(p.car_regno || "") + '"></label>'
+      + 'placeholder="เว้นว่าง = เติมอัตโนมัติ" value="' + escAttr(p.car_regno || "") + '"></label>'
       + '</div>';
   });
   c.injWrap.innerHTML = html;
@@ -857,11 +857,9 @@ function makeCard(r){
                    + "+ แจ้ง ISURVEY + บันทึก se-key — ย้อนกลับไม่ได้")) return;
       body.payload = {submit:true, base_type:base, batch:batch, mix:mix};
     } else if (kind === "injury"){
+      // เลขทะเบียนไม่บังคับ — EMCS เติมจากประเภทอัตโนมัติ (รถประกัน/คู่กรณี);
+      // กรอกเองเฉพาะ 'บุคคลภายนอกรถ' หรือต้องการ override
       const rows = [...c.injWrap.querySelectorAll(".inj-row")];
-      const miss = rows.filter(row => !row.querySelector(".inj-plate").value.trim());
-      if (miss.length){
-        alert("กรุณากรอกเลขทะเบียนให้ครบทุกคน (" + miss.length + " คนยังว่าง)"); return;
-      }
       body.payload = {persons: rows.map(row => ({
         person_type: row.querySelector(".inj-type").value,
         car_regno: row.querySelector(".inj-plate").value.trim()}))};
@@ -922,9 +920,10 @@ function renderRun(r){
       c.wtWrap.hidden = true; c.wtSig = null;
       const isig = JSON.stringify((r.pause.persons || []).map(p => p.name));
       if (c.injSig !== isig){ buildInjuryForm(c, r); }
-      c.ptitle.textContent = "กรอกข้อมูลผู้บาดเจ็บ (EMCS บังคับก่อนหน้าค่าใช้จ่าย)";
-      c.phint.innerHTML = "ISURVEY ไม่มี <b>เลขทะเบียน</b> ของผู้บาดเจ็บ — กรอกเลขทะเบียน "
-        + "+ เลือกประเภทผู้บาดเจ็บแต่ละคน (ค่าตั้งต้นมาจาก ISURVEY แก้ได้) แล้วกดปุ่ม";
+      c.ptitle.textContent = "ยืนยันประเภทผู้บาดเจ็บ (EMCS เติมเลขทะเบียนจากประเภทอัตโนมัติ)";
+      c.phint.innerHTML = "เลือก <b>ประเภทผู้บาดเจ็บ</b> ให้ถูก — เลขทะเบียนเติมเอง"
+        + "อัตโนมัติ (รถประกัน/รถคู่กรณี ตามประเภท; บุคคลภายนอกรถ = ใส่ 'บุคคลภายนอก') "
+        + "<b>เลขทะเบียนเว้นว่างได้</b> กรอกเองเฉพาะตอนต้องการ override แล้วกดปุ่ม";
       c.contBtn.textContent = "✓ บันทึกข้อมูลผู้บาดเจ็บ — ดำเนินการต่อ";
       c.contBtn.className = "continue submitbtn";
     } else if (k === "images"){

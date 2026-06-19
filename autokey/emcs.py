@@ -506,11 +506,21 @@ def fill_injuries(driver, data: ClaimData):
         log(f"   --- คนที่ {n + 1}: {inj.get('name', '')} ---")
 
         # ประเภทบุคคล (* บังคับ) — ใช้ค่าที่ผู้ใช้เลือกบน webui ถ้ามี ไม่งั้น smart default
+        # การเลือกจะ trigger JS ของ EMCS ให้ "เติมเลขทะเบียนอัตโนมัติ":
+        #   01/03 (รถประกัน) → ทะเบียนรถประกัน, 02/04 (รถคู่กรณี) → ทะเบียนคู่กรณี
+        #   05 (บุคคลภายนอกรถ) → ไม่เติม (ไม่มีรถผูก)
         pt = (ui.get("person_type") if ui else None) or _default_type(inj)
         if pt:
             try:
                 Select(driver.find_element(By.ID, p + "ddlPerson_Type")
                        ).select_by_value(pt)
+                # ยิง change event ให้ชัวร์ว่า handler auto-fill ทะเบียนทำงาน (กัน
+                # กรณี select_by_value ไม่กระตุ้น onchange ของ EMCS)
+                driver.execute_script(
+                    "var el=document.getElementById(arguments[0]);"
+                    "if(el){el.dispatchEvent(new Event('change',{bubbles:true}));}",
+                    p + "ddlPerson_Type")
+                time.sleep(0.6)   # รอ JS เติมทะเบียน
                 log(f"   ✓ ประเภทบุคคล (value {pt})")
             except Exception:
                 log(f"   ⚠️ เลือกประเภทบุคคล {n + 1} ไม่ได้")
@@ -538,10 +548,30 @@ def fill_injuries(driver, data: ClaimData):
         set_text(driver, p + "txtInj_Age", inj.get("age", ""))
         set_text(driver, p + "txtCitizen_ID", inj.get("citizen_id", ""))
         set_text(driver, p + "txtInj_Job", inj.get("job", ""))
-        # เลขทะเบียน — ใช้ค่าที่ผู้ใช้กรอกบน webui ถ้ามี (ISURVEY ว่าง)
-        regno = ui.get("car_regno") if ui else None
-        set_text(driver, p + "txtCar_RegNo",
-                 _plate(regno if regno is not None else inj.get("car_regno", "")))
+        # เลขทะเบียน — EMCS เติมให้อัตโนมัติจาก ddlPerson_Type แล้ว (รถประกัน/คู่กรณี
+        # ตามประเภท) → อ่าน readback: มีค่าแล้ว "ห้ามเขียนทับด้วยค่าว่าง" (บั๊กเดิมที่ทำให้
+        # billing gate เด้ง); เติมเองเฉพาะตอนยังว่าง (เช่น บุคคลภายนอกรถ) + มีค่าจากผู้ใช้
+        auto = ""
+        try:
+            auto = (driver.find_element(By.ID, p + "txtCar_RegNo")
+                    .get_attribute("value") or "").strip()
+        except Exception:
+            pass
+        manual = (ui.get("car_regno") if ui else None) or inj.get("car_regno", "")
+        manual = _plate(manual)
+        if manual and manual != auto:
+            # ผู้ใช้กรอก/override (เช่น บุคคลภายนอกที่นั่งรถคันที่ 3 มีทะเบียนจริง)
+            set_text(driver, p + "txtCar_RegNo", manual)
+            log(f"   ✓ เลขทะเบียน (กรอก/override): {manual}")
+        elif auto:
+            log(f"   ✓ เลขทะเบียน auto-fill จากประเภทบุคคล: {auto}")
+        elif pt == "05":
+            # บุคคลภายนอกรถ — ไม่มีรถผูก ไม่ auto-fill → ใส่ 'บุคคลภายนอก' ให้ผ่าน gate
+            set_text(driver, p + "txtCar_RegNo", "บุคคลภายนอก")
+            log("   ✓ เลขทะเบียน = 'บุคคลภายนอก' (บุคคลภายนอกรถ ไม่มีรถผูก)")
+        else:
+            log(f"   ⚠️ เลขทะเบียนผู้บาดเจ็บ {n + 1} ว่าง (ไม่ auto-fill + ไม่มีค่ากรอก) "
+                "— อาจติด gate หน้าค่าใช้จ่าย ต้องกรอกเองบน EMCS")
         set_text(driver, p + "txtInj_Address", inj.get("address", ""))
         set_text(driver, p + "txtInj_Tel_No", inj.get("tel_no", ""))
         set_text(driver, p + "txtInj_Hos_Name", inj.get("hospital", ""))
