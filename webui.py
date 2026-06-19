@@ -94,6 +94,8 @@ def _build_cmd(params: dict):
         cmd += ["--read-only"]
     if params.get("skipimages"):
         cmd += ["--skip-images"]
+    if params.get("nosaveprice"):
+        cmd += ["--no-save-price"]
 
     # โหมดเคลมสด/นัดหมาย/ติดตาม: ปลดด่านเคลมแห้ง (--allow-fresh) + อ่านด้วย scrape
     # (--scrape) เพื่อดึงคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินจาก XML — API อ่าน tab-4/5/6 ไม่ได้
@@ -611,6 +613,7 @@ PAGE = r"""<!doctype html>
     <div class="checks">
       <label><input type="checkbox" id="readonly"> อ่านอย่างเดียว (ไม่กรอก EMCS)</label>
       <label><input type="checkbox" id="skipimages"> ไม่ยุ่งกับรูปภาพ</label>
+      <label><input type="checkbox" id="nosaveprice"> ไม่บันทึกราคา (ทดสอบ — กรอกถึงหน้าค่าใช้จ่ายแต่ไม่กดเซฟราคา)</label>
     </div>
 
     <div class="actions">
@@ -988,6 +991,7 @@ runBtn.addEventListener("click", async () => {
     claimmode: $("#claimmode").value,
     readonly: $("#readonly").checked,
     skipimages: $("#skipimages").checked,
+    nosaveprice: $("#nosaveprice").checked,
   };
   try{
     const {ok,data} = await postJSON("/run", body);

@@ -734,6 +734,13 @@ check("build_cmd fresh: มี --allow-fresh + --scrape",
 _cmd, _e = _webui._build_cmd({"claims": "2026013041465"})
 check("build_cmd ไม่ระบุโหมด: = เคลมแห้ง (ไม่ allow-fresh)",
       _e is None and "--allow-fresh" not in _cmd)
+# nosaveprice → --no-save-price (โหมดทดสอบ ไม่บันทึกราคา); ไม่ติ๊ก = ไม่มี
+_cmd, _e = _webui._build_cmd({"claims": "2026013041465", "nosaveprice": True})
+check("build_cmd nosaveprice: มี --no-save-price",
+      _e is None and "--no-save-price" in _cmd)
+_cmd, _e = _webui._build_cmd({"claims": "2026013041465"})
+check("build_cmd default: ไม่มี --no-save-price (บันทึกราคาตามปกติ)",
+      _e is None and "--no-save-price" not in _cmd)
 
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
