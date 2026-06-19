@@ -381,6 +381,16 @@ _t_m = claim_data.ClaimData(
 check("คำนำหน้า: ชาย ชื่อไม่ตรง → '' (ไม่เดานาย) → หยุดรอคน",
       emcs._derive_insured_title(_t_m)[0] == "")
 
+# dry_claim_block_reason: เคลมแห้งแท้ = '' / เคลมสด = เหตุผล (คุม _offer_submit ใส่คำเตือน)
+check("dry_claim: ประเภท 2 + ไม่มีคู่กรณี/บาดเจ็บ/ทรัพย์สิน → '' (เคลมแห้งแท้)",
+      claim_data.ClaimData(claim_type="2").dry_claim_block_reason() == "")
+check("dry_claim: ประเภทไม่ใช่ 2 → เหตุผล (เคลมสด → เตือน)",
+      claim_data.ClaimData(claim_type="1").dry_claim_block_reason() != "")
+check("dry_claim: มีคู่กรณี → เหตุผล (เคลมสด → เตือน)",
+      claim_data.ClaimData(claim_type="2",
+                           third_parties=[{"plate_no": "9กฆ5003"}]
+                           ).dry_claim_block_reason() != "")
+
 # gender_from_title: อนุมานเพศจากคำนำหน้า (ทิศนี้ชัดเจน 100%) — fallback ตอนเพศว่าง
 check("gender_from_title: นางสาว → W",
       emcs.gender_from_title("นางสาว วณิศราภรณ์") == "W")

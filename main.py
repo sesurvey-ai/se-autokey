@@ -437,8 +437,14 @@ def _sekey_dup_skip(cfg, data) -> str:
 
 def _offer_submit(driver, cfg, data):
     """A1: หลังกรอกครบ (live session, ปุ่ม 'ส่งงานใหม่' พร้อม) — รอผู้ใช้ตรวจ draft
-    แล้วสั่งส่ง → กด 'ส่งงานใหม่' ให้ + แจ้ง ISURVEY. ไม่สั่ง (EOF/ปิด) = เก็บเป็น draft"""
-    sel = wait_for_submit(data.claim_value, survey_no=data.invoice_value)
+    แล้วสั่งส่ง → กด 'ส่งงานใหม่' ให้ + แจ้ง ISURVEY + บันทึก se-key.
+    ไม่สั่ง (EOF/ปิด) = เก็บเป็น draft
+    เคลมสด (มีคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน) ก็เสนอส่งได้ — แต่เตือนให้ตรวจหนักกว่า"""
+    block = data.dry_claim_block_reason()
+    reason = ("" if block == "" else
+              f"⚠️ เคลมสด: {block} — ตรวจคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน + ราคา "
+              "ให้ครบถูกต้องบน EMCS ก่อนกดส่ง (ส่งแล้วแก้ไม่ได้)")
+    sel = wait_for_submit(data.claim_value, survey_no=data.invoice_value, reason=reason)
     if not sel:
         log("เก็บเป็น draft — ยังไม่ส่งงาน (browser เปิดค้าง ตรวจ/กดส่งเองได้)")
         return
@@ -721,12 +727,10 @@ def main():
 
     banner("กรอกครบทุกหน้าแล้ว (draft)"
            + (f" | e-Survey {esurvey}" if esurvey else ""))
-    # A1: เสนอกด "ส่งงาน + แจ้ง ISURVEY" — เฉพาะเคลมแห้ง (live session ปุ่มส่งงานพร้อม)
-    if data.dry_claim_block_reason() == "":
-        _offer_submit(driver, cfg, data)
-    else:
-        log("ตรวจบน browser แล้วกด 'ส่งงานใหม่' เองเมื่อพร้อม — เคลมนี้ไม่ใช่เคลมแห้ง "
-            "จึงไม่เสนอส่งอัตโนมัติ (browser เปิดค้างไว้ให้)")
+    # A1: เสนอกด "ส่งงาน + แจ้ง ISURVEY" — ทั้งเคลมแห้งและเคลมสด (live session ปุ่มพร้อม)
+    # เคลมสด: _offer_submit ใส่คำเตือนให้ตรวจคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินหนักกว่าก่อนส่ง
+    # (ยังไม่กด 'ส่งงานใหม่' เองจนกว่าผู้ใช้กดปุ่มบน webui + confirm)
+    _offer_submit(driver, cfg, data)
 
 
 if __name__ == "__main__":
