@@ -381,6 +381,28 @@ _t_m = claim_data.ClaimData(
 check("คำนำหน้า: ชาย ชื่อไม่ตรง → '' (ไม่เดานาย) → หยุดรอคน",
       emcs._derive_insured_title(_t_m)[0] == "")
 
+# gender_from_title: อนุมานเพศจากคำนำหน้า (ทิศนี้ชัดเจน 100%) — fallback ตอนเพศว่าง
+check("gender_from_title: นางสาว → W",
+      emcs.gender_from_title("นางสาว วณิศราภรณ์") == "W")
+check("gender_from_title: นาย → M",
+      emcs.gender_from_title("นาย อัมพร ปีจอ") == "M")
+check("gender_from_title: เด็กชาย/ด.ญ. → M/W",
+      emcs.gender_from_title("เด็กชาย ก") == "M"
+      and emcs.gender_from_title("ด.ญ. ข") == "W")
+check("gender_from_title: ไม่มีคำนำหน้า → '' (ให้คนเลือกเอง)",
+      emcs.gender_from_title("สมชาย ใจดี") == ""
+      and emcs.gender_from_title("") == "")
+# resolve_gender: ISURVEY/XML ก่อน (normalize F→W); ว่าง → fallback คำนำหน้า
+check("resolve_gender: explicit ชนะ (M ทับชื่อหญิง)",
+      emcs.resolve_gender("M", "นางสาว ก") == "M")
+check("resolve_gender: F → normalize เป็น W",
+      emcs.resolve_gender("F", "") == "W")
+check("resolve_gender: เพศว่าง → อนุมานจากคำนำหน้า",
+      emcs.resolve_gender("", "นาย ก") == "M"
+      and emcs.resolve_gender("  ", "นางสาว ข") == "W")
+check("resolve_gender: เพศว่าง + ชื่อไม่มีคำนำหน้า → ''",
+      emcs.resolve_gender("", "ก ข") == "")
+
 check("วันที่ XML ค.ศ. → พ.ศ.",
       browser.iso_to_thai_date("2023-05-23 00:00:00") == "23/05/2566")
 check("วันที่ XML พ.ศ. คงเดิม",

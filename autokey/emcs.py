@@ -88,6 +88,32 @@ def split_thai_name(full: str):
     return title, first, last
 
 
+# คำนำหน้า → เพศ (ทิศนี้ชัดเจน 100% ต่างจากเพศ→คำนำหน้าที่กำกวม): M=ชาย, W=หญิง
+TITLE_GENDER = {
+    "นาย": "M", "เด็กชาย": "M", "ด.ช.": "M",
+    "นาง": "W", "นางสาว": "W", "เด็กหญิง": "W", "ด.ญ.": "W",
+}
+
+
+def gender_from_title(name: str) -> str:
+    """อนุมานเพศจากคำนำหน้าในชื่อ — fallback ตอน ISURVEY/XML ไม่มีเพศ
+    เช่น 'นางสาว วณิศราภรณ์' → 'W', 'นาย อัมพร' → 'M'
+    คืน 'M' (ชาย) / 'W' (หญิง) / '' (ไม่มีคำนำหน้า/แยกไม่ได้ → ให้คนเลือกเอง)"""
+    title, _, _ = split_thai_name(name)
+    return TITLE_GENDER.get(title, "")
+
+
+def resolve_gender(explicit: str, name: str = "") -> str:
+    """เพศจาก ISURVEY/XML ก่อน (normalize F→W); ว่าง → อนุมานจากคำนำหน้าในชื่อ
+    คืน 'M' (ชาย) / 'W' (หญิง) / '' (ไม่รู้ — ให้คนเลือกเอง)"""
+    g = (explicit or "").strip().upper()
+    if g == "F":
+        g = "W"
+    if g in ("M", "W"):
+        return g
+    return gender_from_title(name)
+
+
 def district_index(district_id: str, province_id: str):
     """รหัสอำเภอของ ISURVEY = <รหัสจังหวัด><ลำดับอำเภอ 2 หลัก>
     เช่น 236 = จังหวัด 2 (กรุงเทพ) เขตลำดับ 36 (ดอนเมือง)
@@ -240,8 +266,9 @@ def fill_third_parties(driver, data: ClaimData):
         drv_full = (tp.get("drv_name", "") or owner).strip()
         set_text(driver, p + "txtDri_Name", drv_full)
 
-        gender = tp.get("gender", "").strip().upper()
-        if gender in ("M", "F", "W"):
+        # เพศ — ว่างจาก ISURVEY → อนุมานจากคำนำหน้าในชื่อผู้ขับขี่ (fallback)
+        gender = resolve_gender(tp.get("gender", ""), drv_full)
+        if gender:
             try:
                 idx = "0" if gender == "M" else "1"  # 0=ชาย 1=หญิง
                 driver.find_element(By.ID, p + f"rdoGender_{idx}").click()
@@ -537,13 +564,16 @@ def fill_injuries(driver, data: ClaimData):
             set_text(driver, p + "txtInj_Name", inj.get("name", ""))
 
         # เพศ (0=ชาย M / 1=หญิง F,W)
-        g = (inj.get("gender", "") or "").strip().upper()
-        if g in ("M", "F", "W"):
+        # เพศ — ว่างจาก ISURVEY → อนุมานจากคำนำหน้าในชื่อ (fallback)
+        g = resolve_gender(inj.get("gender", ""), inj.get("name", ""))
+        if g:
             try:
                 driver.find_element(
                     By.ID, p + f"rdoGender_{'0' if g == 'M' else '1'}").click()
             except Exception:
                 log(f"   ⚠️ เลือกเพศผู้บาดเจ็บ {n + 1} ไม่ได้")
+        else:
+            log(f"   ⚠️ ไม่ทราบเพศผู้บาดเจ็บ {n + 1} (ISURVEY ว่าง + ชื่อไม่มีคำนำหน้า)")
 
         set_text(driver, p + "txtInj_Age", inj.get("age", ""))
         set_text(driver, p + "txtCitizen_ID", inj.get("citizen_id", ""))
@@ -914,19 +944,29 @@ def fill_driver(driver, data: ClaimData):
     log("EMCS: กรอกข้อมูลผู้ขับขี่")
     wait_visible(driver, By.ID, "txtDri_Name01")
 
+    # คำนำหน้าผู้ขับขี่ (บังคับ) — หาแบบแม่น (ชื่อผู้เอาประกันตรงผู้ขับขี่)
+    title, source = _derive_insured_title(data)
+
     # เพศผู้ขับขี่ (บังคับ) — rdoGender_0=ชาย(M), rdoGender_1=หญิง(F)
+    # ว่างจาก ISURVEY → อนุมานจากคำนำหน้าที่ match ได้ (title→เพศ ชัดเจน 100%;
+    # ปลอดภัยเพราะ title ตั้งค่าเฉพาะตอนชื่อผู้เอาประกันตรงผู้ขับขี่)
     g = (data.driver_gender or "").strip().upper()
-    if g in ("M", "W", "F"):
+    src = "จากข้อมูล ISURVEY"
+    if g == "F":
+        g = "W"
+    if g not in ("M", "W"):
+        g = TITLE_GENDER.get(title, "")
+        src = f"อนุมานจากคำนำหน้า '{title}'"
+    if g in ("M", "W"):
         idx = "0" if g == "M" else "1"
         driver.find_element(By.ID, f"rdoGender_{idx}").click()
-        log(f"   ✓ เพศผู้ขับขี่ = {'ชาย' if g == 'M' else 'หญิง'} (จากข้อมูล ISURVEY)")
+        log(f"   ✓ เพศผู้ขับขี่ = {'ชาย' if g == 'M' else 'หญิง'} ({src})")
     else:
-        log("   ⚠️ ไม่ทราบเพศผู้ขับขี่ (ข้อมูล ISURVEY ไม่มี)")
+        log("   ⚠️ ไม่ทราบเพศผู้ขับขี่ (ISURVEY ว่าง + ชื่อไม่มีคำนำหน้า)")
         wait_for_manual_fill("เพศผู้ขับขี่ (ชาย/หญิง)",
-                             "ข้อมูล ISURVEY ไม่มีเพศ — เป็น field บังคับ ต้องเลือกเอง")
+                             "ISURVEY ไม่มีเพศ + แยกจากคำนำหน้าไม่ได้ — ต้องเลือกเอง")
 
     # คำนำหน้าผู้ขับขี่ (บังคับ)
-    title, source = _derive_insured_title(data)
     if title:
         fuzzy_select(driver, "ddlDri_Title_ID", title,
                      label=f"คำนำหน้าผู้ขับขี่ ({source})")
