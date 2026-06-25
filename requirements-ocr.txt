@@ -1,0 +1,9 @@
+# ตัวเลือกเสริม: ตรวจ/อ่านใบขับขี่ด้วย OCR ในเครื่อง (flag --check-license)
+# ติดตั้งบนเครื่อง dev แล้ว copy runtime\ ไปเครื่องพนักงาน (เหมือน deps อื่น)
+#
+# ลง torch แบบ CPU ก่อน (เลี่ยง CUDA ที่ใหญ่กว่ามาก) แล้วค่อยลง easyocr:
+#   runtime\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#   runtime\python.exe -m pip install easyocr
+#
+# easyocr ครั้งแรกตอนรันจะดาวน์โหลดโมเดล (~100MB) ลง ~/.EasyOCR/ อัตโนมัติ
+easyocr>=1.7

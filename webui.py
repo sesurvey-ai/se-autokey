@@ -98,6 +98,13 @@ def _build_cmd(params: dict):
         cmd += ["--no-save-price"]
     if params.get("forcenew"):
         cmd += ["--force-new"]
+    if params.get("checklicense"):
+        cmd += ["--check-license"]
+
+    # โหมดนำเข้า XML: ให้ EMCS import ฟอร์มหลักจาก SURV_REPORT XML แทนกรอกเอง
+    # (run_import_xml อ่านเคลมด้วย scrape เองเพื่อโหลด XML + คู่กรณีครบ) — ทำได้ทีละเคลม
+    if params.get("importxml"):
+        cmd += ["--import-xml"]
 
     # โหมดเคลมสด/นัดหมาย/ติดตาม: ปลดด่านเคลมแห้ง (--allow-fresh) + อ่านด้วย scrape
     # (--scrape) เพื่อดึงคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินจาก XML — API อ่าน tab-4/5/6 ไม่ได้
@@ -619,6 +626,8 @@ PAGE = r"""<!doctype html>
       <label><input type="checkbox" id="skipimages"> ไม่ยุ่งกับรูปภาพ</label>
       <label><input type="checkbox" id="nosaveprice"> ไม่บันทึกราคา (ทดสอบ — กรอกถึงหน้าค่าใช้จ่ายแต่ไม่กดเซฟราคา)</label>
       <label class="warn"><input type="checkbox" id="forcenew"> ⚠️ สร้างเรื่องใหม่แม้มีเรื่องเดิม (--force-new) — draft ลบไม่ได้ ยกเลิกได้อย่างเดียว</label>
+      <label><input type="checkbox" id="importxml"> นำเข้าด้วย XML (import) — ให้ EMCS เติมฟอร์มหลักจากไฟล์ แล้วบอทอุดช่องว่าง (ความเสียหายลงได้ 20 ช่อง เหมาะกับ >8 ชิ้น) · ทำทีละเคลม</label>
+      <label><input type="checkbox" id="checklicense"> ตรวจใบขับขี่ผู้เอาประกัน — OCR หา+อ่านรูปใบขับขี่ในชุดรูป (เลขที่/เลขบัตร/ชื่อ) แล้วเทียบกับข้อมูลเคลม · ช้าลงเล็กน้อย</label>
     </div>
 
     <div class="actions">
@@ -1003,6 +1012,8 @@ runBtn.addEventListener("click", async () => {
     skipimages: $("#skipimages").checked,
     nosaveprice: $("#nosaveprice").checked,
     forcenew: $("#forcenew").checked,
+    importxml: $("#importxml").checked,
+    checklicense: $("#checklicense").checked,
   };
   try{
     const {ok,data} = await postJSON("/run", body);

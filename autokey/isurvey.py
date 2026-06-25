@@ -204,6 +204,27 @@ def find_and_open_claim(driver, claim: str, invoice: str = "", timeout: int = 18
             + "\n→ ตรวจสอบว่าเลขเคลมถูกต้อง และลองค้นหาด้วยมือบนหน้าเว็บดูว่าขึ้นไหม"
         )
 
+    # หลายเซอร์เวย์ของเคลมเดียว + ไม่ระบุ invoice → หยุด ให้ผู้ใช้เลือกเอง
+    # (กันหยิบงานยกเลิก/ผิดแถว — เดิมหยิบแถวแรกในตารางโดยไม่ดูสถานะ)
+    if not invoice:
+        matches = []
+        for row, row_claim, row_invoice in _scan_rows(driver):
+            if row_claim != claim:
+                continue
+            try:
+                status = row.find_element(By.TAG_NAME, "tr").find_element(
+                    By.XPATH, "td[1]").text.strip()
+            except Exception:
+                status = ""
+            matches.append((row_invoice, status))
+        if len({inv for inv, _ in matches}) > 1:
+            rows = "\n".join(f"   - {inv}  [{st or '?'}]" for inv, st in matches)
+            raise RuntimeError(
+                f"เคลม {claim} มี {len(matches)} เซอร์เวย์ในระบบ — ต้องระบุ "
+                "'เลขเซอร์เวย์' (ช่องเลขเซอร์เวย์ / --invoice) เพื่อเลือกแถวที่ต้องการ:\n"
+                + rows
+                + "\n→ ใส่เลขเซอร์เวย์ของแถวที่ต้องการ (เช่น แถว 'จบงาน') แล้วรันใหม่")
+
     # เจอแถวแล้ว — พักให้ตารางนิ่งก่อน แล้วดับเบิลคลิกพร้อม "ตรวจว่าหน้า
     # รายละเอียดเปิดจริง" (คลิกตอน ExtJS เพิ่ง refresh เสร็จ event อาจหลุด
     # โดยไม่มี exception — ถ้าไม่เปิดภายใน 15 วิ จะคลิกซ้ำให้เอง)

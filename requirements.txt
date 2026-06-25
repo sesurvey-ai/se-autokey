@@ -4,3 +4,6 @@ requests>=2.31
 opencv-python>=4.8
 numpy>=1.26
 Pillow>=10.0
+
+# ตัวเลือก (เฉพาะ --check-license / ตรวจใบขับขี่ด้วย OCR) — ดู requirements-ocr.txt
+# ดึง torch มาด้วย (หนัก ~หลายร้อย MB) จึงแยกไว้ ไม่ลงในชุดหลัก

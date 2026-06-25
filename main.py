@@ -72,6 +72,10 @@ def parse_args():
                         "panel = โหลดทีละรูปจาก Tab 2/3 แบบเดิม")
     p.add_argument("--no-xml", action="store_true",
                    help="ไม่ต้องดาวน์โหลดไฟล์ XML ของเคลมเก็บไว้")
+    p.add_argument("--check-license", action="store_true",
+                   help="ตรวจหา+อ่านใบขับขี่รถผู้เอาประกันจากชุดรูป (OCR ในเครื่อง "
+                        "ด้วย easyocr) แล้วบันทึก <เคลม>_license.json + เทียบ "
+                        "เลขใบขับขี่/เลขบัตรกับข้อมูลเคลม (ปิดเป็น default)")
     p.add_argument("--loss-type", default="auto",
                    help="ลักษณะความเสียหาย (default 'auto' = เลือกตามข้อมูล: "
                         "ไม่มีคู่กรณี→เคลมแห้ง, มีคู่กรณี→ตามผลคดี / "
@@ -109,6 +113,11 @@ def parse_args():
     p.add_argument("--include-main-images", action="store_true",
                    help="ใช้กับ --images-only: อัปรูปรถประกัน (โฟลเดอร์หลัก) ด้วย "
                         "(ปกติอัปเฉพาะรูปรถคู่กรณี กันอัปซ้ำที่อัปไปแล้ว)")
+    p.add_argument("--import-xml", action="store_true",
+                   help="โหมดนำเข้า XML: ให้ EMCS import ฟอร์มหลักจาก SURV_REPORT XML "
+                        "(ปุ่ม 'นำเข้าข้อมูลแบบ XML') แทนการกรอกเอง แล้วบอทอุดช่องว่าง/แก้ "
+                        "+ ความเสียหายลงช่อง free-text 20 ช่อง (รองรับ >8 ดีกว่า) — "
+                        "ต้องอ่านเคลมแบบมี XML (ไม่ใช้ --no-xml)")
     p.add_argument("--report-isurvey", action="store_true",
                    help="แจ้ง ISURVEY ว่าเคลม 'ส่งงานแล้ว' — ตรวจ EMCS ว่ากดส่งงานใหม่จริง "
                         "ก่อน (gate) ถ้ายังไม่ส่งจะไม่ยิง (ไม่อ่าน/ไม่กรอกฝั่งหน้า)")
@@ -153,6 +162,40 @@ def resolve_images_dir(cfg, claim: str, for_read: bool) -> Path:
     if for_read or per_claim.exists():
         return per_claim
     return cfg.download_dir
+
+
+def check_license(cfg, data, img_dir, claim: str):
+    """ตรวจหา+อ่านใบขับขี่รถผู้เอาประกันจากชุดรูป (OCR ในเครื่อง)
+    บันทึกผลลง <เคลม>_license.json + log สรุป + เทียบกับข้อมูลเคลม
+    เป็นงานเสริม: ถ้า easyocr ไม่พร้อม/พลาด จะไม่ทำให้ flow หลักล้ม"""
+    import json
+    from autokey import license_ocr
+    try:
+        res = license_ocr.find_and_read_license(img_dir)
+    except Exception as e:
+        log(f"   ⚠️ ตรวจใบขับขี่ไม่สำเร็จ ({type(e).__name__}: {e})")
+        return
+    if not res.get("available"):
+        return  # ยังไม่ได้ลง easyocr — get_reader() log แจ้งแล้ว
+
+    if res.get("found"):
+        res["cross_check"] = license_ocr.cross_check(res["fields"], data)
+        f = res["fields"]
+        log("📇 ใบขับขี่ผู้เอาประกัน: "
+            f"เลขที่ {f['license_no'] or '-'} | บัตรปชช. {f['id_no'] or '-'} | "
+            f"{f['name_en'] or '-'}"
+            + (f" | หมดอายุ {f['expiry_date']}" if f['expiry_date'] else ""))
+        for c in res["cross_check"]:
+            mark = "✓ ตรง" if c["match"] else "✗ ไม่ตรง"
+            log(f"   {mark} {c['field']}: บัตร {c['ocr']} / เคลม {c['claim']}")
+    else:
+        log("📇 ไม่พบรูปใบขับขี่ในชุดรูป")
+
+    out = cfg.runs_dir / f"{data.claim_value or claim}_license.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(res, ensure_ascii=False, indent=2),
+                   encoding="utf-8")
+    log(f"   บันทึกผลตรวจใบขับขี่ → {out}")
 
 
 def read_one_claim(driver, cfg, claim: str, invoice: str, args):
@@ -216,6 +259,9 @@ def read_one_claim(driver, cfg, claim: str, invoice: str, args):
         else:
             prepare_images(img_dir, cfg.template_path, args.threshold)
 
+    if img_dir is not None and getattr(args, "check_license", False):
+        check_license(cfg, data, img_dir, claim)
+
     json_path = cfg.runs_dir / f"{data.claim_value or claim}.json"
     data.save(json_path)
     log(f"บันทึกข้อมูลที่อ่านได้ → {json_path}")
@@ -239,6 +285,9 @@ def read_one_claim_api(cfg, claim: str, invoice: str, args=None):
                 log("   เคลมนี้ไม่มีเอกสารใบรับงาน (REPORTS ว่าง) — ข้ามตั้งชื่อ 1.jpg")
             else:
                 prepare_images(img_dir, cfg.template_path, args.threshold)
+
+        if getattr(args, "check_license", False):
+            check_license(cfg, data, img_dir, claim)
 
     json_path = cfg.runs_dir / f"{data.claim_value or claim}.json"
     data.save(json_path)
@@ -377,6 +426,84 @@ def run_images_only(cfg, args):
         raise
 
 
+def run_import_xml(cfg, args):
+    """โหมดนำเข้า XML: อ่านเคลม (ต้องมี SURV_REPORT XML) → ให้ EMCS import ฟอร์มหลัก →
+    บอทอุดช่องว่าง/แก้ + กรอกความเสียหาย/คู่กรณี/ฯลฯ → เสนอส่งงาน (เหมือน flow ปกติ)
+
+    ได้ data จาก --data-json (ใช้ XML ที่โหลดไว้) หรือ --claim (อ่านแบบ scrape เพื่อโหลด
+    XML + เติมคู่กรณีให้ครบ). import มีประโยชน์เด่นกับเคลมความเสียหายเยอะ (ฟอร์ม import
+    มีช่อง free-text 20 ช่อง vs cmdNewReport 8)"""
+    import copy
+    per_run_dl = cfg.download_dir / "_dl" / str(os.getpid())
+    driver = make_driver(detach=True, download_dir=per_run_dl)
+    data = None
+    try:
+        if args.data_json:
+            banner(f"โหลดข้อมูลจากไฟล์ {args.data_json}")
+            data = ClaimData.load(args.data_json)
+            if data.xml_file and Path(data.xml_file).exists():
+                enrich_claim_from_xml(data, data.xml_file)
+        else:
+            targets = build_targets(args)
+            if len(targets) != 1:
+                raise SystemExit("โหมด --import-xml ทำได้ทีละเคลม "
+                                 "(ระบุ --claim หรือ --data-json อันเดียว)")
+            claim, invoice = targets[0]
+            # import ต้องมี XML → อ่านแบบ scrape (ดาวน์โหลด XML + เติมคู่กรณีครบ)
+            read_args = copy.copy(args)
+            read_args.scrape = True
+            banner(f"อ่านเคลม {claim} (scrape — เพื่อโหลด XML + คู่กรณีครบ)")
+            data = read_one_claim(driver, cfg, claim, invoice, read_args)
+            driver.switch_to.new_window("tab")   # เปิด tab ใหม่สำหรับ EMCS
+
+        # ต้องมีไฟล์ XML — ถ้า data ไม่ชี้ ลองหาในโฟลเดอร์ runs/xml/ ของเคลมนี้
+        if not (data.xml_file and Path(data.xml_file).exists()):
+            cands = sorted((cfg.runs_dir / "xml").glob(
+                f"{data.claim_value or ''}*SURV_REPORT*.txt"))
+            if cands:
+                data.xml_file = str(cands[-1])
+                enrich_claim_from_xml(data, data.xml_file)
+            else:
+                raise SystemExit(
+                    "โหมด --import-xml ต้องมีไฟล์ SURV_REPORT XML — "
+                    "อ่านเคลมใหม่โดยไม่ใช้ --no-xml (ฝั่งอ่านจะดาวน์โหลด XML ให้)")
+
+        log_plain(data.summary())
+        log_plain("")
+        log_plain(data.validation_report())
+
+        # ด่านกันทำซ้ำ (se-key) เหมือน flow ปกติ
+        dup = _sekey_dup_skip(cfg, data)
+        if dup:
+            banner("หยุด: เลขเซอร์เวย์นี้ทำไปแล้ว — ไม่กรอก EMCS")
+            log_plain(f"  {dup}")
+            driver.quit()
+            return
+
+        if not args.yes:
+            input("\n>> ตรวจข้อมูลด้านบน แล้วกด Enter เพื่อนำเข้า XML + กรอก EMCS "
+                  "(Ctrl+C เพื่อยกเลิก) << ")
+
+        banner("นำเข้า XML → กรอก EMCS (draft)")
+        images_folder = (None if args.skip_images else
+                         resolve_images_dir(cfg, data.claim_value, for_read=False))
+        esurvey = emcs.run_import(
+            driver, cfg, data, images_folder=images_folder,
+            loss_type=args.loss_type, image_type=args.image_type,
+            severity=args.severity, force_new=args.force_new,
+            save_price=not args.no_save_price)
+        save_debug_snapshot(driver, cfg.runs_dir / "logs",
+                            tag=f"done_import_{data.claim_value}")
+        banner("กรอกครบทุกหน้าแล้ว (draft, นำเข้า XML)"
+               + (f" | e-Survey {esurvey}" if esurvey else ""))
+        _offer_submit(driver, cfg, data)
+    except Exception:
+        save_debug_snapshot(
+            driver, cfg.runs_dir / "logs",
+            tag=f"error_import_{getattr(data, 'claim_value', '') or 'x'}")
+        raise
+
+
 def run_report_isurvey(cfg, args):
     """แจ้ง ISURVEY ว่าเคลม 'ส่งงานแล้ว' — gate ด้วยสถานะ EMCS ก่อนเสมอ
     (ถ้ายังไม่กดส่งงานใหม่ใน EMCS จะข้าม ไม่ยิง)"""
@@ -503,6 +630,10 @@ def main():
     # --images-only: เติมรูปเข้า draft เดิม (ไม่สร้างเรื่องใหม่/ไม่แตะข้อมูลอื่น) แล้วจบ
     if args.images_only:
         run_images_only(cfg, args)
+        return
+    # --import-xml: ให้ EMCS import ฟอร์มหลักจาก XML แล้วบอทอุดช่องว่าง/กรอกที่เหลือ แล้วจบ
+    if args.import_xml:
+        run_import_xml(cfg, args)
         return
     # read-only (ไม่ใช่ --scrape): อ่านผ่าน API ล้วน ไม่เปิด browser เลย แล้วจบ
     if args.read_only and not args.scrape and not args.data_json:

@@ -20,6 +20,20 @@ from .browser import log
 from .claim_data import ClaimData
 
 
+def _multi_survey_msg(claim, cases) -> str:
+    """ข้อความเตือนเมื่อเคลมมีหลายเซอร์เวย์ + ไม่ได้ระบุเลขเซอร์เวย์ — list แถวให้ผู้ใช้เลือก
+    (close_datetime มีค่า = ปิดงาน/จบงานแล้ว = แถวที่มักต้องคีย์)"""
+    rows = "\n".join(
+        f"   - {c.get('survey_no')}  ({c.get('surveyor_name', '')})"
+        + (f"  ✓ ปิดงาน {c.get('close_datetime')}" if c.get('close_datetime')
+           else "  (ยังไม่ปิดงาน)")
+        for c in cases)
+    n = len({str(c.get('survey_no')) for c in cases})
+    return (f"เคลม {claim} มี {n} เซอร์เวย์ในระบบ — ต้องระบุ 'เลขเซอร์เวย์' "
+            "(ช่องเลขเซอร์เวย์ / --invoice) เพื่อเลือกแถวที่ต้องการ:\n" + rows
+            + "\n→ ใส่เลขเซอร์เวย์ของแถวที่ต้องการ (มักเป็นแถวที่ปิดงานแล้ว) แล้วรันใหม่")
+
+
 def _ddmmyyyy(iso) -> str:
     """'2026-06-09' → '09/06/2026' (คง ค.ศ. เหมือนฝั่ง scrape); ว่าง/None → ''"""
     if not iso:
@@ -105,15 +119,20 @@ class ISurveyAPI:
     def find_case(self, claim, invoice="") -> dict:
         d = self._get("supervisor/listcases.php", claim_no=claim, claim_status="",
                       claim_date="", page=1, start=0, limit=25)
-        cases = d.get("cases", [])
-        for c in cases:
-            if str(c.get("claim_no")) == str(claim) and \
-                    (not invoice or str(c.get("survey_no")) == invoice):
-                return c
-        if cases and not invoice:
-            return cases[0]
-        raise RuntimeError(f"ISURVEY-API: ไม่พบเคลม {claim}"
-                           + (f" / {invoice}" if invoice else ""))
+        cases = [c for c in d.get("cases", [])
+                 if str(c.get("claim_no")) == str(claim)]
+        if invoice:                       # ระบุเลขเซอร์เวย์ → เลือกแถวที่ตรงเป๊ะ
+            for c in cases:
+                if str(c.get("survey_no")) == str(invoice):
+                    return c
+            raise RuntimeError(f"ISURVEY-API: ไม่พบเคลม {claim} / {invoice}")
+        if not cases:
+            raise RuntimeError(f"ISURVEY-API: ไม่พบเคลม {claim}")
+        # หลายเซอร์เวย์ + ไม่ระบุ invoice → หยุด ให้ผู้ใช้เลือกเอง (กันหยิบงานยกเลิก/
+        # งานผิดแถว เพราะเดิมหยิบแถวแรกโดยไม่ดูสถานะ)
+        if len({str(c.get("survey_no")) for c in cases}) > 1:
+            raise RuntimeError(_multi_survey_msg(claim, cases))
+        return cases[0]
 
     def get_tab(self, case_id, tab) -> dict:
         return self._get("supervisor/getcaseinfo.php", caseID=case_id,

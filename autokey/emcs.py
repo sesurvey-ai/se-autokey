@@ -70,7 +70,10 @@ MAX_ASSETS = 5
 PERSON_TYPE_MAP = {"DV": "01", "PV": "03", "ON": "05"}  # ผู้ขับขี่ / ผู้โดยสาร / บุคคลภายนอก
 
 # คำนำหน้าชื่อ (เรียงยาว→สั้น เพื่อให้ 'นางสาว' จับก่อน 'นาง')
-THAI_TITLES = ["เด็กหญิง", "เด็กชาย", "นางสาว", "ด.ญ.", "ด.ช.", "นาง", "นาย"]
+# เรียงยาว→สั้น (จับ 'นางสาว' ก่อน 'นาง'); รวมตัวย่อ น.ส./นส. ที่ ISURVEY มักติดมากับชื่อ
+# (เช่น driver_name='น.ส.ปฐมาวดี') — verify เคลม 2026013144715
+THAI_TITLES = ["เด็กหญิง", "เด็กชาย", "นางสาว", "น.ส.", "นส.",
+               "ด.ญ.", "ด.ช.", "นาง", "นาย"]
 
 
 def split_thai_name(full: str):
@@ -91,7 +94,8 @@ def split_thai_name(full: str):
 # คำนำหน้า → เพศ (ทิศนี้ชัดเจน 100% ต่างจากเพศ→คำนำหน้าที่กำกวม): M=ชาย, W=หญิง
 TITLE_GENDER = {
     "นาย": "M", "เด็กชาย": "M", "ด.ช.": "M",
-    "นาง": "W", "นางสาว": "W", "เด็กหญิง": "W", "ด.ญ.": "W",
+    "นาง": "W", "นางสาว": "W", "น.ส.": "W", "นส.": "W",
+    "เด็กหญิง": "W", "ด.ญ.": "W",
 }
 
 
@@ -849,6 +853,111 @@ def new_report(driver):
     wait_clickable(driver, By.ID, "cmdNewReport").click()
 
 
+# ------------------------------------------------------ นำเข้าข้อมูลแบบ XML
+INSURER_MAJOR_ID = "1059"   # ไอโออิกรุงเทพประกันภัย (บริษัทเดียวของโปรเจกต์)
+
+
+def _set_selectpicker(driver, select_id: str, value: str):
+    """ตั้งค่า bootstrap-selectpicker (native <select> ซ่อน tabindex=-98) ผ่าน JS:
+    set value + ยิง change + refresh ตัว selectpicker ให้ UI ตรงกับค่าจริง"""
+    driver.execute_script(
+        "var s=document.getElementById(arguments[0]);"
+        "if(!s)return;s.value=arguments[1];"
+        "s.dispatchEvent(new Event('change',{bubbles:true}));"
+        "if(window.jQuery&&jQuery.fn.selectpicker)"
+        "jQuery('#'+arguments[0]).selectpicker('refresh');",
+        select_id, value)
+
+
+def _import_branch_value(driver, timeout: int = 12) -> str:
+    """รอ option สาขา (ddlInsurerBRList) โหลด lazy หลังเลือกบริษัท → คืน value
+    (เลือก 'กรุงเทพ' ถ้ามี ไม่งั้น option แรกที่ไม่ใช่ '0')"""
+    for _ in range(timeout * 2):
+        opts = driver.execute_script(
+            "var s=document.getElementById('ddlInsurerBRList');"
+            "return s?Array.prototype.map.call(s.options,function(o){"
+            "return [o.value,(o.text||'').trim()];}):[];")
+        real = [(v, t) for v, t in opts if v and v != "0"]
+        if real:
+            return next((v for v, t in real if "กรุงเทพ" in t), real[0][0])
+        time.sleep(0.5)
+    raise RuntimeError("สาขาประกันไม่โหลด (ddlInsurerBRList ว่าง) — ตรวจหน้านำเข้า XML")
+
+
+def _close_sweetalert(driver, timeout: int = 10) -> str:
+    """ปิด SweetAlert (.swal-button) ถ้ามี — คืนข้อความ (.swal-text) ก่อนปิด"""
+    end = time.time() + timeout
+    text = ""
+    while time.time() < end:
+        try:
+            els = driver.find_elements(By.CSS_SELECTOR, ".swal-text")
+            if els and els[0].is_displayed() and els[0].text.strip():
+                text = els[0].text.strip()
+            for sb in driver.find_elements(By.CSS_SELECTOR, ".swal-button"):
+                if sb.is_displayed():
+                    sb.click()
+                    return text
+        except Exception:
+            pass
+        time.sleep(0.4)
+    return text
+
+
+def import_xml_report(driver, cfg, data: ClaimData) -> str:
+    """นำเข้า SURV_REPORT XML เข้า EMCS แทนการกรอกฟอร์มหลักเอง (ปุ่ม imbFileImport_XML)
+
+    flow (verify หน้าจริง 2026-06-24): frmMainPage → imbFileImport_XML →
+    frmFileImportXML.aspx → เลือกบริษัท (1059) + สาขา (selectpicker JS) →
+    send_keys ไฟล์เข้า inpImport (file ซ่อน — ไม่เปิด OS dialog) → JS click btnImport →
+    ปิด SweetAlert → frmSurvey.aspx (draft สร้างแล้ว เข้าโหมดแก้ btnUpdate)
+    คืนเลข e-Survey ถ้าอ่านได้จากข้อความ import (ไม่งั้น '')
+
+    import เติมฟอร์มหลัก ~90% แต่ทิ้งช่องว่าง/ทำพลาด: คำนำหน้า, แยกชื่อ-สกุล,
+    อำเภอผู้ขับขี่/เกิดเหตุ, ลักษณะความเสียหาย, รถเสียหายหนัก/เบา, ประเภทรถ (code-based),
+    คู่กรณีทุกฟิลด์ (สร้าง row เปล่า) → ผู้เรียก (fill_imported) อุด/แก้ด้วย fill_* เดิม"""
+    xml_path = Path(data.xml_file or "")
+    if not data.xml_file or not xml_path.exists():
+        raise RuntimeError(
+            f"โหมดนำเข้า XML ต้องมีไฟล์ SURV_REPORT XML แต่ไม่พบ: {data.xml_file!r} — "
+            "อ่านเคลมแบบมี XML ก่อน (อย่าใช้ --no-xml; ฝั่งอ่านต้องดาวน์โหลด XML ไว้)")
+    xml_path = xml_path.resolve()
+    log(f"EMCS: นำเข้าข้อมูลแบบ XML — {xml_path.name}")
+
+    wait_clickable(driver, By.ID, "imbFileImport_XML").click()
+    wait_present(driver, By.ID, "inpImport", 30)        # frmFileImportXML โหลดแล้ว
+    log("   เลือกบริษัทประกัน (ไอโออิกรุงเทพ) + สาขา")
+    _set_selectpicker(driver, "ddlInsurerNameMajor", INSURER_MAJOR_ID)
+    branch = _import_branch_value(driver)
+    _set_selectpicker(driver, "ddlInsurerBRList", branch)
+    time.sleep(1)
+
+    log("   ส่งไฟล์ XML → กดนำเข้าข้อมูล")
+    driver.find_element(By.ID, "inpImport").send_keys(str(xml_path))
+    time.sleep(1)
+    driver.execute_script("document.getElementById('btnImport').click();")
+    try:
+        accept_alert(driver, timeout=10)               # เผื่อมี JS confirm
+    except Exception:
+        pass
+    swal = _close_sweetalert(driver, timeout=12)
+    if swal:
+        log(f"   [import] {swal[:140]}")
+
+    # ต้องเข้าหน้าฟอร์ม (frmSurvey) จริง — ไม่งั้น import ล้มเหลว
+    try:
+        WebDriverWait(driver, 30).until(
+            lambda d: "frmSurvey.aspx" in d.current_url)
+        wait_visible(driver, By.ID, "btnUpdate", 20)
+    except TimeoutException as e:
+        raise RuntimeError(
+            "นำเข้า XML แล้วไม่เข้าหน้าฟอร์ม (frmSurvey) — "
+            f"ข้อความระบบ: {swal[:160]!r}") from e
+    m = re.search(r"S\d{9,13}", swal or "")
+    log("EMCS: นำเข้า XML สำเร็จ → ฟอร์มแก้ (frmSurvey)"
+        + (f" e-Survey {m.group(0)}" if m else ""))
+    return m.group(0) if m else ""
+
+
 # ------------------------------------------------------------------ ส่วนกรอก
 
 def fill_claim_type(driver, claim_type: str):
@@ -891,9 +1000,12 @@ def _derive_insured_title(data: ClaimData) -> tuple:
     - ไม่ตรง → '' : ไม่มีข้อมูลคำนำหน้าที่เชื่อถือได้ (เพศบอกได้แค่ ชาย/หญิง แต่
       แยก นาย vs นาง/นางสาว ไม่ได้) → ให้ผู้ใช้เลือกเอง (fill_driver หยุดรอ)
     คืน (title, แหล่งที่มา)"""
+    # ตัดคำนำหน้าที่อาจติดมากับชื่อผู้ขับ (เช่น 'น.ส.ปฐมาวดี') ก่อนเทียบ
     driver_full = f"{data.driver_name} {data.driver_surname}".strip()
+    _dt, d_first, d_last = split_thai_name(driver_full)
+    driver_clean = f"{d_first} {d_last}".strip()
     title, first, last = split_thai_name(data.insure_name)
-    if title and f"{first} {last}".strip() == driver_full:
+    if title and f"{first} {last}".strip() == driver_clean:
         return title, "จากชื่อผู้เอาประกัน"
     return "", ""
 
@@ -976,8 +1088,11 @@ def fill_driver(driver, data: ClaimData):
             "คำนำหน้าผู้ขับขี่",
             "ISURVEY ไม่มีคำนำหน้า + แยก นาย/นาง/นางสาว จากเพศไม่ได้ — เลือกเอง")
 
-    set_text(driver, "txtDri_Name01", data.driver_name)
-    set_text(driver, "txtDri_LastName01", data.driver_surname)
+    # ตัดคำนำหน้าที่ติดมากับชื่อ (เช่น 'น.ส.ปฐมาวดี'→'ปฐมาวดี') — ไม่งั้นชื่อจะมีคำนำหน้าซ้ำ
+    _t, dri_first, dri_last = split_thai_name(
+        f"{data.driver_name} {data.driver_surname}".strip())
+    set_text(driver, "txtDri_Name01", dri_first or data.driver_name)
+    set_text(driver, "txtDri_LastName01", dri_last or data.driver_surname)
     set_text(driver, "txtDri_Age", data.driver_age)
     set_text(driver, "txtDri_Address", data.driver_address)
     set_text(driver, "txtDri_TelNo", data.driver_phone)
@@ -1109,10 +1224,13 @@ def _parse_missing_fields(alert_text: str) -> str:
     return ", ".join(s.strip() for s in items if s.strip())
 
 
-def save_main_form(driver, data: ClaimData):
+def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
+                   is_new: bool = True):
     """กดบันทึกหน้าหลัก แล้ว "ตรวจว่าบันทึกสำเร็จจริง"
 
-    - บันทึกสำเร็จ → ปุ่มข้อมูลความเสียหาย (btnPopUp_DamList) ถูกปลดล็อก
+    - is_new (btnSave สร้างใหม่): สำเร็จ → ปุ่มความเสียหาย (btnPopUp_DamList) ปลดล็อก
+    - is_new=False (btnUpdate โหมดแก้ เช่นหลังนำเข้า XML): btnPopUp_DamList ปลดล็อก
+      อยู่แล้ว → ใช้สัญญาณ "alert ไม่ใช่ validation ('กรุณา')" = สำเร็จแทน
     - validation ไม่ผ่าน → alert บอกรายการที่ขาด:
         1) ลองซ่อม dropdown ที่ค่าหลุดจาก postback race อัตโนมัติก่อน (สูงสุด 2 รอบ)
         2) ถ้าซ่อมอัตโนมัติไม่ได้ (เช่น text field ว่างอย่าง 'สถานที่เกิดเหตุ')
@@ -1120,20 +1238,27 @@ def save_main_form(driver, data: ClaimData):
       (มี cap กันลูปไม่รู้จบ — ถ้าไม่มีคนตอบ/แก้ไม่ได้จะ raise)"""
     auto_heal_left = 2   # จำนวนรอบที่ยอมให้ซ่อม dropdown อัตโนมัติ
     for attempt in range(1, 8):
-        log(f"EMCS: กดบันทึกหน้าหลัก (รอบ {attempt})")
-        wait_clickable(driver, By.ID, "btnSave").click()
+        log(f"EMCS: กดบันทึกหน้าหลัก ({button_id}, รอบ {attempt})")
+        wait_clickable(driver, By.ID, button_id).click()
         alert_text = accept_alert(driver)
 
-        try:
-            WebDriverWait(driver, 25).until(
-                lambda d: d.find_element(By.ID, "btnPopUp_DamList").is_enabled()
-            )
-            log("EMCS: บันทึกหน้าหลักสำเร็จ ✓")
-            # ดึงเลข e-Survey จากข้อความยืนยัน (ใช้รายงานสรุปท้ายชุด)
-            m = re.search(r"S\d{9,13}", alert_text or "")
-            return m.group(0) if m else ""
-        except TimeoutException:
-            pass
+        if not is_new:
+            # โหมดแก้: สำเร็จเมื่อ alert ไม่ใช่ validation ('กรุณา...')
+            if "กรุณา" not in (alert_text or ""):
+                log("EMCS: บันทึกแก้ไขหน้าหลักสำเร็จ ✓")
+                m = re.search(r"S\d{9,13}", alert_text or "")
+                return m.group(0) if m else ""
+        else:
+            try:
+                WebDriverWait(driver, 25).until(
+                    lambda d: d.find_element(By.ID, "btnPopUp_DamList").is_enabled()
+                )
+                log("EMCS: บันทึกหน้าหลักสำเร็จ ✓")
+                # ดึงเลข e-Survey จากข้อความยืนยัน (ใช้รายงานสรุปท้ายชุด)
+                m = re.search(r"S\d{9,13}", alert_text or "")
+                return m.group(0) if m else ""
+            except TimeoutException:
+                pass
 
         # validation ไม่ผ่าน — ลองซ่อม dropdown ที่หลุดจาก postback ก่อน (อัตโนมัติ)
         if auto_heal_left > 0 and "กรุณา" in (alert_text or "") \
@@ -1161,11 +1286,119 @@ def save_main_form(driver, data: ClaimData):
 
 # ------------------------------------------------------------------ ความเสียหาย
 
+# ความเสียหายรถประกัน: ฟอร์มใหม่ (ปี 2569+) เพิ่ม "checklist ชิ้นส่วนสำเร็จรูป"
+# (checkbox dgvDamage_List_ctl{NN}_WuDamL{A|B}_chbDam_Name_0 — ไม่มี postback)
+# ทับช่องอิสระเดิม (dgvOtherDamage_List_..._txtDam_Name); ฟอร์มเก่าไม่มี checklist
+# → verify DOM สด 2026-06-23
+DAMAGE_CHECKLIST_THRESHOLD = 88   # fuzz.ratio ต่ำสุดที่ถือว่าตรง checkbox ชิ้นส่วน
+
+# อ่าน checklist จาก popup (ฟอร์มเก่าคืน []); กรอง se-check-mix ('งานรวม') ด้วยเงื่อนไข
+# id ต้องมี 'dgvDamage_List'
+JS_READ_DAMAGE_CHECKLIST = r"""
+return Array.prototype.slice.call(
+  document.querySelectorAll('input[type=checkbox][id$="chbDam_Name_0"]'))
+  .filter(function(cb){ return cb.id.indexOf('dgvDamage_List') >= 0; })
+  .map(function(cb){
+    var prefix = cb.id.replace('chbDam_Name_0','');
+    var td = cb.closest('td');
+    var part = (td ? (td.innerText || '') : '').replace(/\s+/g,' ').trim();
+    return {cb: cb.id, prefix: prefix, part: part,
+            has_pos: !!document.getElementById(prefix + 'rdoDam_Left_Right_0')};
+  });
+"""
+
+# decoration ที่ตัดทิ้งก่อน match (วงเล็บ/ด้าน/ตัวบน-ล่าง/ซ้าย-ขวา/ช่องว่าง) — เรียงยาวก่อน
+# ห้ามตัด 'หน้า'/'หลัง' (เป็นชิ้นคนละชิ้น เช่น กันชนหน้า≠กันชนหลัง)
+_DAMAGE_DECOR_RE = re.compile(
+    r"\([^)]*\)|ด้านบน|ด้านล่าง|ด้านซ้าย|ด้านขวา|ด้าน|ตัวบน|ตัวล่าง|ซ้าย|ขวา|\s+")
+
+
+def _norm_damage_part(name: str) -> str:
+    """ตัด decoration เหลือชื่อชิ้นส่วนหลัก เพื่อ match checklist
+    เช่น 'กันชนหน้า(ใหญ่)'→'กันชนหน้า', 'บังโคลนหน้าขวา'→'บังโคลนหน้า'"""
+    return _DAMAGE_DECOR_RE.sub("", name or "")
+
+
+def _damage_side(name: str) -> str:
+    """ซ้าย/ขวา/ทั้งคู่ จากชื่อชิ้นส่วน → index radio rdoDam_Left_Right ('0'/'1'/'2')"""
+    name = name or ""
+    if "ซ้าย" in name and "ขวา" in name:
+        return "2"
+    if "ขวา" in name:
+        return "1"
+    if "ซ้าย" in name:
+        return "0"
+    return "2"
+
+
+def _damage_rank_idx(rank: str):
+    """ระดับความเสียหาย A-D → index radio rdoDam_Lavel ('0'-'3') หรือ None"""
+    return {"A": "0", "B": "1", "C": "2", "D": "3"}.get((rank or "").strip().upper())
+
+
+def _match_damage_checklist(name, parts, used, threshold=DAMAGE_CHECKLIST_THRESHOLD):
+    """หา index ของ checklist ที่ตรงชื่อชิ้นส่วน — ยังไม่ถูกติ๊ก:
+    1) **prefix** (หลัก) — ชื่อความเสียหาย (normalize) ขึ้นต้นด้วยชื่อชิ้นส่วน checklist
+       (เลือกชิ้นที่ยาวสุด) เพราะชื่อจริง ISURVEY = 'ชิ้นส่วน+คำเสริม+อาการ'
+       เช่น 'ฝากระโปรงหน้า+คิ้ว บุบ'→ติ๊ก 'ฝากระโปรงหน้า'; แต่ 'คิ้วครอบไฟหน้า' ไม่ขึ้นต้น
+       ด้วย 'ไฟหน้า' → ไม่ติ๊ก (กัน substring/ชิ้นคนละชิ้น)
+    2) **fallback** — fuzz.ratio ≥ threshold (กันพิมพ์ผิดเล็กน้อยเมื่อชื่อ≈ชิ้นส่วน)
+    คืน (index, score) หรือ (None, 0) = ไม่ตรง → ใช้ช่องอิสระแทน"""
+    if not parts:
+        return None, 0
+    q = _norm_damage_part(name)
+    if not q:
+        return None, 0
+    best_idx, best_len = None, 0
+    for idx, part in enumerate(parts):
+        if idx in used:
+            continue
+        p = _norm_damage_part(part)
+        if p and q.startswith(p) and len(p) > best_len:
+            best_idx, best_len = idx, len(p)
+    if best_idx is not None:
+        return best_idx, 100
+    for _choice, score, idx in process.extract(
+            q, parts, scorer=fuzz.ratio, limit=5):
+        if score < threshold:
+            break
+        if idx not in used:
+            return idx, score
+    return None, 0
+
+
+# ช่องอิสระความเสียหาย: pattern dgvOtherDamage_List_ctl{NN}_wuOtherDamL{A|B}_txtDam_Name
+# cmdNewReport มี 8 (ctl02-05 × A/B) / ฟอร์ม import มี 20 (ctl02-11 × A/B) →
+# อ่าน slot จริงจาก DOM แทน hardcode (ctl0{row} เดิมพังเมื่อ row>9: ctl010)
+JS_FREE_TEXT_SLOTS = r"""
+return Array.prototype.slice.call(document.querySelectorAll(
+  'input[id^="dgvOtherDamage_List_ctl"][id$="_txtDam_Name"]'))
+  .map(function(e){ return e.id.replace("txtDam_Name",""); });
+"""
+
+
+def _free_text_slots(driver) -> list:
+    """คืน prefix ช่องอิสระความเสียหายที่มีจริงบนฟอร์ม popup — เรียงคอลัมน์ A ก่อน B
+    (บน→ล่าง) เพื่อกรอกซ้ายเต็มก่อนค่อยขวา (คงพฤติกรรมเดิม)"""
+    try:
+        slots = driver.execute_script(JS_FREE_TEXT_SLOTS) or []
+    except Exception:
+        slots = []
+
+    def _key(p):   # p = 'dgvOtherDamage_List_ctlNN_wuOtherDamLX_'
+        m = re.search(r"ctl(\d+)_wuOtherDamL([AB])_", p)
+        return (m.group(2), int(m.group(1))) if m else ("Z", 999)
+
+    return sorted(slots, key=_key)
+
+
 def fill_damage_list(driver, data: ClaimData, main_window: str):
     """เปิด popup ความเสียหาย กรอกทุกรายการ บันทึก แล้วสลับกลับหน้าหลัก
 
-    Layout ของหน้า: ตาราง 2 คอลัมน์ (A ซ้าย / B ขวา) คอลัมน์ละ 4 แถว
-    id ของช่อง: dgvOtherDamage_List_ctl0{2-5}_wuOtherDamL{A|B}_...
+    ฟอร์มใหม่ (2569+): ติ๊ก "checklist ชิ้นส่วนสำเร็จรูป" (chbDam_Name_0) ที่ชื่อตรง +
+    L/R/A + ระดับ; ชิ้นที่ไม่มีใน checklist → ช่องอิสระเดิม
+    (dgvOtherDamage_List_ctl0{2-5}_wuOtherDamL{A|B}_, สูงสุด 8). ฟอร์มเก่า (checklist
+    ว่าง) → ลงช่องอิสระทั้งหมดเหมือนเดิม
     """
     if not data.damage:
         log("EMCS: ไม่มีรายการความเสียหาย — ข้าม")
@@ -1184,36 +1417,65 @@ def fill_damage_list(driver, data: ClaimData, main_window: str):
     wait_visible(driver, By.ID, "btnSave", 15)
 
     items = list(zip(data.damage, data.type_damage, data.rank_damage))
-    if len(items) > MAX_DAMAGE_ITEMS:
-        log(f"   ⚠️ มี {len(items)} รายการ แต่หน้าเว็บรับได้ {MAX_DAMAGE_ITEMS} — "
-            f"รายการที่เหลือต้องกรอกเองภายหลัง")
 
-    for c, (name, _dtype, rank) in enumerate(items[:MAX_DAMAGE_ITEMS]):
-        col = "A" if c < 4 else "B"
-        row = 2 + (c % 4)  # ctl02..ctl05
-        prefix = f"dgvOtherDamage_List_ctl0{row}_wuOtherDamL{col}_"
+    # ฟอร์มใหม่ (2569+) มี checklist ชิ้นส่วนสำเร็จรูป — อ่านจาก DOM (ฟอร์มเก่าคืน [])
+    try:
+        checklist = driver.execute_script(JS_READ_DAMAGE_CHECKLIST) or []
+    except Exception as e:
+        log(f"   ⚠️ อ่าน checklist ไม่ได้ ({type(e).__name__}) — ลงช่องอิสระทั้งหมด")
+        checklist = []
+    parts = [c.get("part", "") for c in checklist]
+    if checklist:
+        log(f"   พบ checklist ชิ้นส่วนสำเร็จรูป {len(checklist)} รายการ (ฟอร์มใหม่)")
+
+    # match ชิ้นส่วนเข้า checklist (ติ๊ก checkbox) — ไม่ตรง → คิวช่องอิสระ
+    used, free_items = set(), []
+    for (name, _dtype, rank) in items:
+        idx, score = _match_damage_checklist(name, parts, used)
+        if idx is None:
+            free_items.append((name, rank))
+            continue
+        c = checklist[idx]
+        used.add(idx)
+        try:
+            driver.execute_script(
+                "arguments[0].click();", driver.find_element(By.ID, c["cb"]))
+            if c.get("has_pos"):
+                driver.execute_script("arguments[0].click();", driver.find_element(
+                    By.ID, c["prefix"] + "rdoDam_Left_Right_" + _damage_side(name)))
+            ri = _damage_rank_idx(rank)
+            if ri is not None:
+                driver.execute_script("arguments[0].click();", driver.find_element(
+                    By.ID, c["prefix"] + "rdoDam_Lavel_" + ri))
+            log(f"   ☑ checklist: {name} → {c['part']} (score {score:.0f}) rank={rank}")
+        except Exception as e:
+            log(f"   ⚠️ ติ๊ก checklist '{c['part']}' ไม่ได้ ({type(e).__name__}) — ช่องอิสระแทน")
+            used.discard(idx)
+            free_items.append((name, rank))
+
+    # ที่เหลือ (ไม่ match checklist) → ช่องอิสระ dgvOtherDamage_List
+    # อ่าน slot จริงจาก DOM (cmdNewReport=8 / ฟอร์ม import=20) แทน hardcode
+    slots = _free_text_slots(driver)
+    cap = len(slots) if slots else MAX_DAMAGE_ITEMS
+    if len(free_items) > cap:
+        log(f"   ⚠️ ช่องอิสระมี {len(free_items)} เกิน {cap} ช่อง — "
+            f"ที่เหลือต้องกรอกเองภายหลัง")
+    for c, (name, rank) in enumerate(free_items[:cap]):
+        if slots:
+            prefix = slots[c]
+        else:   # fallback (อ่าน slot ไม่ได้) — สูตรเดิม ctl02-05 × A/B (≤8)
+            prefix = (f"dgvOtherDamage_List_ctl0{2 + (c % 4)}_"
+                      f"wuOtherDamL{'A' if c < 4 else 'B'}_")
 
         driver.find_element(By.ID, prefix + "txtDam_Name").send_keys(name)
-
-        # ซ้าย/ขวา/ทั้งคู่ ดูจากคำในชื่อชิ้นส่วน
-        if "ซ้าย" in name and "ขวา" in name:
-            side = "2"
-        elif "ขวา" in name:
-            side = "1"
-        elif "ซ้าย" in name:
-            side = "0"
-        else:
-            side = "2"
+        side = _damage_side(name)
         driver.find_element(By.ID, prefix + f"rdoDam_Left_Right_{side}").click()
-
-        # ระดับความเสียหาย A-D
-        rank_idx = {"A": "0", "B": "1", "C": "2", "D": "3"}.get(rank.strip().upper())
-        if rank_idx is not None:
-            driver.find_element(By.ID, prefix + f"rdoDam_Lavel_{rank_idx}").click()
+        ri = _damage_rank_idx(rank)
+        if ri is not None:
+            driver.find_element(By.ID, prefix + f"rdoDam_Lavel_{ri}").click()
         else:
             log(f"   ⚠️ ระดับความเสียหาย '{rank}' ไม่รู้จัก (รายการ: {name}) — ข้าม")
-
-        log(f"   ✓ [{c + 1}] {name} | side={side} | rank={rank}")
+        log(f"   ✎ ช่องอิสระ [{c + 1}] {name} | side={side} | rank={rank}")
 
     # บันทึกหน้า popup แล้วกลับหน้าหลัก
     driver.find_element(By.ID, "btnSave").click()
@@ -1991,3 +2253,113 @@ def run_fill(driver, cfg, data: ClaimData, images_folder=None,
                     loss_type=loss_type, image_type=image_type,
                     severity=severity, force_new=force_new,
                     save_price=save_price)
+
+
+def _recascade_province(driver, province_id: str, timeout: int = 10):
+    """import เซ็ต 'จังหวัด' ไว้แต่ไม่ trigger postback ให้ dropdown 'อำเภอ' (dependent) โหลด
+    → fill_* เลือกจังหวัดเดิมซ้ำจะไม่ fire onchange (Selenium ไม่คลิก option ที่เลือกอยู่)
+    → อำเภอไม่โหลด → fuzzy_select(อำเภอ) timeout
+
+    แก้: บังคับจังหวัด → ช่องว่าง (option แรก) ผ่าน postback จริง (server เคลียร์ค่า)
+    → fill_* เลือกจังหวัดเป็น 'การเปลี่ยนจริง' (ว่าง→จังหวัด) → onchange → อำเภอโหลด
+    (เหมือน flow cmdNewReport ที่จังหวัดเริ่มจากว่าง)"""
+    try:
+        el = driver.find_element(By.ID, province_id)
+        cur = Select(el).first_selected_option.get_attribute("value")
+    except Exception:
+        return
+    if not cur or cur in ("0",):
+        return   # ว่างอยู่แล้ว — fill_* จะเลือกเองได้ cascade ปกติ
+    try:
+        Select(el).select_by_index(0)   # คลิก option ว่าง → change → postback
+        WebDriverWait(driver, timeout).until(EC.staleness_of(el))
+    except Exception:
+        pass
+    time.sleep(0.8)
+
+
+def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
+                  loss_type: str = "auto", image_type: str = "รูปรถประกัน",
+                  severity: str = "เบา", force_new: bool = False,
+                  save_price: bool = True) -> str:
+    """กรอกเคลมผ่านโหมด "นำเข้า XML": ให้ EMCS import ฟอร์มหลักจาก SURV_REPORT XML
+    แล้วบอทอุดช่องว่าง/แก้ที่ import ทำพลาด + กรอกส่วนที่ import ไม่แตะ
+
+    ต่างจาก fill_one: ใช้ import_xml_report แทน new_report + ไม่กรอก
+    ประเภทเคลม/บริษัท/กรมธรรม์ (import ตั้งให้แล้ว) + บันทึกหน้าหลักด้วย btnUpdate
+    ข้อดี: popup ความเสียหายเป็น free-text 20 ช่อง (vs cmdNewReport 8) → รองรับ >8
+    ได้ดีกว่าเมื่อชิ้นส่วน match checklist ไม่ได้ / import ลดงานกรอกฟอร์มหลักลงมาก"""
+    # งานต่อเนื่อง (มีเรื่องเดิม + invoice ใหม่) → ใช้ flow เดิม (ไม่ import — แก้ครั้งถัดไป)
+    if not force_new:
+        try:
+            existing = find_existing_reports(driver, data.claim_value)
+        except Exception as e:
+            log(f"   ⚠️ ตรวจเรื่องเดิมไม่สำเร็จ ({type(e).__name__}) — ทำต่อแบบสร้างใหม่")
+            existing = []
+        cont = continuation_esurvey(existing, data.invoice_value)
+        if cont:
+            log(f"EMCS: เคลมนี้มีเรื่องเดิม + invoice ใหม่ → โหมดงานต่อเนื่อง (ต่อจาก {cont})")
+            return fill_continuation(driver, cfg, data, cont, save_price=save_price)
+        guard_duplicate_report(driver, data, force_new, existing=existing)
+    else:
+        guard_duplicate_report(driver, data, force_new)
+
+    # นำเข้า XML → สร้าง draft + เติมฟอร์มหลัก ~90% → frmSurvey โหมดแก้
+    esurvey = import_xml_report(driver, cfg, data)
+    main_window = driver.current_window_handle
+    resolved_loss = resolve_loss_type(data, loss_type)
+
+    # อุดช่องว่าง/แก้ที่ import ทำพลาด (reuse fill_* เดิม — ค่าจาก ClaimData แหล่งเดียวกับ XML)
+    # ไม่แตะ ประเภทเคลม/บริษัท/กรมธรรม์ (import ตั้งถูกแล้ว + เลี่ยง postback layout เคลมสด)
+    fill_severity(driver, severity)
+    fill_car(driver, data)        # แก้ ddlCType (code-based) + จังหวัด/ยี่ห้อ
+    # import เซ็ตจังหวัดแต่ไม่ cascade อำเภอ → บังคับจังหวัดว่างก่อน fill (เลือกใหม่จริง)
+    _recascade_province(driver, "ddlDri_ProvinceID")
+    fill_driver(driver, data)     # แก้ คำนำหน้า + แยกชื่อ-สกุล + อำเภอผู้ขับขี่
+    _recascade_province(driver, "ddlAcc_ProvinceID")
+    fill_accident(driver, data, loss_type=resolved_loss)  # อำเภอเกิดเหตุ + ลักษณะความเสียหาย
+    fill_verdict(driver, data)
+
+    # import เติม 'เลขที่รับแจ้ง' (txtAcc_ClaimRef_No) ด้วยค่า ISURVEY ดิบที่ผิดรูปแบบ
+    # ไอโออิ (เช่น '2026097275' — ต้อง ABxxx/xxx) → validation reject; flow ปกติเว้นว่าง
+    # = ผ่าน (validFormat ข้ามค่าว่าง) → เคลียร์ให้ว่างกัน format error
+    # (เคลียร์ตรงด้วย JS — set_text ข้ามค่าว่าง ไม่ลบของเดิม)
+    driver.execute_script(
+        "var e=document.getElementById('txtAcc_ClaimRef_No');if(e)e.value='';")
+
+    saved = save_main_form(driver, data, button_id="btnUpdate", is_new=False)
+    esurvey = esurvey or saved
+    if not esurvey:
+        try:
+            esurvey = continuation_esurvey(
+                find_existing_reports(driver, data.claim_value),
+                data.invoice_value) or ""
+        except Exception:
+            esurvey = ""
+
+    # ส่วนที่ import ไม่เติม: คู่กรณี (สร้าง row เปล่า)/ผู้บาดเจ็บ/ทรัพย์สิน + ความเสียหาย
+    fill_third_parties(driver, data)
+    fill_damage_list(driver, data, main_window)
+    fill_injuries(driver, data)
+    fill_assets(driver, data)
+
+    if images_folder is not None:
+        upload_images(driver, images_folder, image_type=image_type,
+                      n_opponents=len(data.third_parties or []),
+                      n_injuries=len(data.injuries or []),
+                      n_assets=len(data.assets or []))
+
+    fill_billing(driver, data, save_price=save_price)
+    return esurvey
+
+
+def run_import(driver, cfg, data: ClaimData, images_folder=None,
+               loss_type: str = "auto", image_type: str = "รูปรถประกัน",
+               severity: str = "เบา", force_new: bool = False,
+               save_price: bool = True) -> str:
+    """login แล้วกรอกเคลมเดียวผ่านโหมดนำเข้า XML"""
+    login(driver, cfg)
+    return fill_imported(driver, cfg, data, images_folder=images_folder,
+                         loss_type=loss_type, image_type=image_type,
+                         severity=severity, force_new=force_new,
+                         save_price=save_price)

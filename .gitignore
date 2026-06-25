@@ -5,6 +5,9 @@
 __pycache__/
 *.pyc
 
+# log การรัน/ทดสอบ (เฉพาะเครื่อง)
+*.log
+
 # bundled portable runtime (rebuild with build-runtime.bat — don't commit, ~250MB)
 runtime/
 
