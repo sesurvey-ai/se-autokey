@@ -49,6 +49,11 @@ class Config:
     sekey_api_url: str = "https://key.sesurvey.cloud"
     sekey_api_key: str = ""
 
+    # ดึงงานจากระบบ se-survey (แอปสำรวจของเราเอง) — ใช้กับโหมด --sesurvey-case
+    # token = INTEGRATION_TOKEN ของ backend se-survey (ตั้งใน .env: SESURVEY_API_TOKEN)
+    sesurvey_api_url: str = "https://api.sesurvey.cloud"
+    sesurvey_api_token: str = ""
+
 
 def load_config() -> Config:
     env = _load_env_file(BASE_DIR / ".env")
@@ -64,11 +69,14 @@ def load_config() -> Config:
         isurvey_report_user=get("ISURVEY_REPORT_USER"),
         isurvey_report_pass=get("ISURVEY_REPORT_PASS"),
         sekey_api_key=get("SE_KEY_API_KEY"),
+        sesurvey_api_token=get("SESURVEY_API_TOKEN"),
     )
     if get("ISURVEY_REPORT_URL"):
         cfg.isurvey_report_url = get("ISURVEY_REPORT_URL")
     if get("SE_KEY_API_URL"):
         cfg.sekey_api_url = get("SE_KEY_API_URL")
+    if get("SESURVEY_API_URL"):
+        cfg.sesurvey_api_url = get("SESURVEY_API_URL")
 
     missing = [
         name for name, val in [

@@ -133,14 +133,30 @@ def _active_count() -> int:
 
 
 def start_run(params: dict):
-    """เริ่มงานใหม่ — คืน (run_id, error). เต็มขีดจำกัดจะคืน error"""
+    """เริ่มงานใหม่จากฟอร์มหน้าเว็บ — คืน (run_id, error). เต็มขีดจำกัดจะคืน error"""
     cmd, err = _build_cmd(params)
     if err:
         return None, err
     title = _title_from(params)
     kind = "report" if params.get("mode") == "report" else "fill"
     claims = _parse_claims(params.get("claims", ""))
+    return _spawn(cmd, title, kind, claims)
 
+
+def start_sesurvey_run(params: dict):
+    """เริ่มงานจากปุ่ม 'นำเข้า EMCS' บนหน้า inspector ของ se-survey — คืน (run_id, error)
+    ฝั่ง main.py (--sesurvey-case) ตอนนี้เป็น dry-run เสมอ: ดึง+ตรวจ XML แล้วหยุดก่อนแตะ EMCS"""
+    case_id = str(params.get("case_id", "")).strip()
+    if not case_id.isdigit():
+        return None, "case_id ไม่ถูกต้อง"
+    claim_no = str(params.get("claim_no", "")).strip()
+    cmd = [sys.executable, "-u", "main.py", "--sesurvey-case", case_id, "-y"]
+    title = f"SE-Survey #{case_id}" + (f" · {claim_no}" if claim_no else "")
+    return _spawn(cmd, title, "sesurvey", [claim_no] if claim_no else [])
+
+
+def _spawn(cmd, title: str, kind: str, claims: list):
+    """spawn subprocess ของ main.py + ลงทะเบียนการ์ดงาน (แกนร่วมของทุกทางเข้า)"""
     with _lock:
         if _active_count() >= MAX_CONCURRENT:
             return None, (f"มีงานกำลังรันอยู่ {MAX_CONCURRENT} งาน (เต็มขีดจำกัด) — "
@@ -330,9 +346,21 @@ def _img_ctype(name: str) -> str:
 # ---------------------------------------------------------------------------
 # HTTP handler
 # ---------------------------------------------------------------------------
+# origin ของหน้าเว็บ se-survey ที่อนุญาตให้ยิงงานเข้ามา (ปุ่ม "นำเข้า EMCS" หน้า inspector)
+_ALLOWED_ORIGINS = {
+    "https://survey.sesurvey.cloud",
+    "http://localhost:3000",      # dev
+    "http://127.0.0.1:3000",
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass  # เงียบ — ไม่ต้อง log ทุก request ออก console
+
+    def _cors_origin(self):
+        origin = self.headers.get("Origin", "")
+        return origin if origin in _ALLOWED_ORIGINS else None
 
     def _send(self, code, body, ctype="application/json; charset=utf-8"):
         if isinstance(body, (dict, list)):
@@ -342,8 +370,25 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")  # กัน browser ค้างหน้าเก่า
+        origin = self._cors_origin()
+        if origin:  # ให้หน้า se-survey (คนละ origin) อ่านคำตอบได้
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(data)
+
+    def do_OPTIONS(self):
+        """CORS preflight — เฉพาะ origin ในรายการอนุญาต"""
+        origin = self._cors_origin()
+        self.send_response(204 if origin else 403)
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Vary", "Origin")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _read_json(self) -> dict:
         n = int(self.headers.get("Content-Length", 0) or 0)
@@ -412,6 +457,14 @@ class Handler(BaseHTTPRequestHandler):
                        {"continued": continue_run(self._id(p), p.get("payload"))})
         elif u.path == "/forget":
             self._send(200, {"forgot": forget_run(self._id(self._read_json()))})
+        elif u.path == "/api/import-sesurvey":
+            # ปุ่ม "นำเข้า EMCS" จากหน้า inspector ของ se-survey (cross-origin — CORS อนุญาตแล้ว)
+            params = self._read_json()
+            run_id, err = start_sesurvey_run(params)
+            if err:
+                self._send(409, {"error": err})
+            else:
+                self._send(200, {"run_id": run_id})
         else:
             self._send(404, {"error": "not found"})
 

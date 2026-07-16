@@ -123,10 +123,16 @@ def parse_args():
                         "ก่อน (gate) ถ้ายังไม่ส่งจะไม่ยิง (ไม่อ่าน/ไม่กรอกฝั่งหน้า)")
     p.add_argument("--dry-run", action="store_true",
                    help="ใช้กับ --report-isurvey: ตรวจ gate + โชว์ payload แต่ไม่ยิงจริง")
+    p.add_argument("--sesurvey-case", default="",
+                   help="ดึงงานจากระบบ se-survey ด้วยเลขเคส (case id): โหลด SURV_REPORT XML "
+                        "จาก api.sesurvey.cloud แล้วเข้า flow นำเข้า XML ของ EMCS — "
+                        "⚠️ ตอนนี้เป็น dry-run เสมอ (หยุดก่อนแตะ EMCS) จนกว่าจะเปิดใช้จริง")
     args = p.parse_args()
 
-    if not (args.claim or args.claims or args.claims_file or args.data_json):
-        p.error("ต้องระบุ --claim / --claims / --claims-file / --data-json อย่างน้อยหนึ่งอย่าง")
+    if not (args.claim or args.claims or args.claims_file or args.data_json
+            or args.sesurvey_case):
+        p.error("ต้องระบุ --claim / --claims / --claims-file / --data-json / "
+                "--sesurvey-case อย่างน้อยหนึ่งอย่าง")
     return args
 
 
@@ -504,6 +510,57 @@ def run_import_xml(cfg, args):
         raise
 
 
+def run_sesurvey_import(cfg, args):
+    """โหมดงานจาก se-survey: ดึง SURV_REPORT XML ของเคสจาก api.sesurvey.cloud
+    (แอปสำรวจของเราเอง — ข้อมูลครบกว่า XML ของ ISURVEY) → ตรวจ/parse → นำเข้า EMCS
+
+    ⚠️ ตอนนี้ยัง DRY-RUN เสมอ: หยุดหลัง parse สำเร็จ ไม่เปิด browser/ไม่แตะ EMCS
+    (ตามข้อตกลง — เปิดใช้จริงหลังสรุปการทดสอบกับ EMCS ร่วมกัน โดยต่อเข้า
+    flow เดียวกับ run_import_xml: emcs.run_import + _offer_submit)"""
+    import requests
+    from autokey.surv_xml import parse_surv_report
+
+    case_id = str(args.sesurvey_case).strip()
+    if not case_id.isdigit():
+        raise SystemExit(f"--sesurvey-case ต้องเป็นเลขเคส (ได้ '{case_id}')")
+    if not cfg.sesurvey_api_token:
+        raise SystemExit("ไม่พบ SESURVEY_API_TOKEN ใน .env — ขอ token จากผู้ดูแลระบบ se-survey")
+
+    banner(f"ดึง XML เคส #{case_id} จาก se-survey ({cfg.sesurvey_api_url})")
+    url = f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/export-xml"
+    resp = requests.get(url, headers={"Authorization": f"Bearer {cfg.sesurvey_api_token}"},
+                        timeout=30)
+    if resp.status_code == 404:
+        raise SystemExit(f"ไม่พบเคส #{case_id} หรือเคสยังไม่มีข้อมูลรายงานสำรวจ")
+    if resp.status_code == 401:
+        raise SystemExit("token ไม่ถูกต้อง/integration ยังไม่เปิดบน server (INTEGRATION_TOKEN)")
+    resp.raise_for_status()
+
+    xml_dir = cfg.runs_dir / "xml"
+    xml_dir.mkdir(parents=True, exist_ok=True)
+    xml_path = xml_dir / f"sesurvey_case_{case_id}.xml"
+    xml_path.write_bytes(resp.content)
+    log(f"✓ บันทึก {xml_path} ({len(resp.content)} bytes)")
+
+    parsed = parse_surv_report(xml_path)
+    # สรุปหัวเรื่องจากตัว XML เอง (SURV_JOBNO/REF_CLAIM_NO อยู่ใน TXN_SURV_REPORT)
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml_path.read_text(encoding="utf-8", errors="replace"))
+    rep = root.find("TXN_SURV_REPORT")
+    get_tag = lambda t: (rep.findtext(t) or "").strip() if rep is not None else ""
+    log_plain("")
+    log_plain(f"  เลขเคลม:      {get_tag('REF_CLAIM_NO')}")
+    log_plain(f"  เลขเซอร์เวย์: {get_tag('SURV_JOBNO')}")
+    log_plain(f"  ผู้เอาประกัน:  {get_tag('ASSURED_NAME')}")
+    log_plain(f"  ผู้สำรวจ:      {get_tag('ACC_SURV')}")
+    log_plain(f"  สถานที่:       {get_tag('ACC_PLACE')} (จังหวัด {get_tag('ACC_PROVINCEID')}"
+              f" อำเภอ {get_tag('ACC_DISTRICTID')})")
+    log_plain(f"  คู่กรณี {len(parsed['third_parties'])} / ผู้บาดเจ็บ {len(parsed['injuries'])}"
+              f" / ทรัพย์สิน {len(parsed['assets'])}")
+    banner("DRY-RUN: ตรวจ XML ผ่าน — หยุดก่อนแตะ EMCS ตามข้อตกลง "
+           "(โหมดนำเข้าจริงจะเปิดหลังสรุปการทดสอบร่วมกัน)")
+
+
 def run_report_isurvey(cfg, args):
     """แจ้ง ISURVEY ว่าเคลม 'ส่งงานแล้ว' — gate ด้วยสถานะ EMCS ก่อนเสมอ
     (ถ้ายังไม่กดส่งงานใหม่ใน EMCS จะข้าม ไม่ยิง)"""
@@ -619,6 +676,10 @@ def main():
     set_log_file(cfg.runs_dir / "logs"
                  / f"run_{datetime.now():%Y%m%d_%H%M%S}_{os.getpid()}.log")
 
+    # --sesurvey-case: ดึงงานจากระบบ se-survey (dry-run — หยุดก่อนแตะ EMCS) แล้วจบ
+    if args.sesurvey_case:
+        run_sesurvey_import(cfg, args)
+        return
     # --report-isurvey: แจ้งสถานะ "ส่งงานแล้ว" กลับ ISURVEY (gate ด้วยสถานะ EMCS) แล้วจบ
     if args.report_isurvey:
         run_report_isurvey(cfg, args)
