@@ -557,7 +557,45 @@ def run_sesurvey_import(cfg, args):
               f" อำเภอ {get_tag('ACC_DISTRICTID')})")
     log_plain(f"  คู่กรณี {len(parsed['third_parties'])} / ผู้บาดเจ็บ {len(parsed['injuries'])}"
               f" / ทรัพย์สิน {len(parsed['assets'])}")
-    banner("DRY-RUN: ตรวจ XML ผ่าน — หยุดก่อนแตะ EMCS ตามข้อตกลง "
+
+    # โหลดรูปของเคสลงโฟลเดอร์เดียวกับ flow ปกติ (downloaded_images/<เลขเคลม>/)
+    # — โหมดนำเข้าจริงในอนาคตจะหยิบไปอัปเข้า EMCS ต่อได้เลย (dry-run แค่โหลด ไม่อัป)
+    claim_no = get_tag("REF_CLAIM_NO") or f"sesurvey_{case_id}"
+    hdrs = {"Authorization": f"Bearer {cfg.sesurvey_api_token}"}
+    try:
+        pr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/photos",
+                          headers=hdrs, timeout=30)
+        pr.raise_for_status()
+        photos = (pr.json().get("data") or {}).get("photos") or []
+    except Exception as e:
+        log(f"⚠️ ดึงรายการรูปไม่ได้: {e} — ข้ามขั้นโหลดรูป")
+        photos = []
+    if photos:
+        img_dir = cfg.download_dir / claim_no
+        img_dir.mkdir(parents=True, exist_ok=True)
+        got = 0
+        for ph in photos:
+            rel = str(ph.get("file_path") or "")
+            name = rel.split("/")[-1]
+            if not name:
+                continue
+            dest = img_dir / name
+            if dest.exists() and dest.stat().st_size > 0:
+                got += 1
+                continue  # โหลดไว้แล้ว (กดซ้ำ/รันซ้ำ) — ไม่โหลดใหม่
+            try:
+                fr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/files",
+                                  params={"path": rel}, headers=hdrs, timeout=60)
+                fr.raise_for_status()
+                dest.write_bytes(fr.content)
+                got += 1
+            except Exception as e:
+                log(f"   ⚠️ โหลดรูป {name} ไม่ได้: {e}")
+        log(f"✓ รูปเคส {got}/{len(photos)} ไฟล์ → {img_dir}")
+    else:
+        log("(เคสนี้ไม่มีรูปบน server)")
+
+    banner("DRY-RUN: ตรวจ XML + โหลดรูปครบ — หยุดก่อนแตะ EMCS ตามข้อตกลง "
            "(โหมดนำเข้าจริงจะเปิดหลังสรุปการทดสอบร่วมกัน)")
 
 
