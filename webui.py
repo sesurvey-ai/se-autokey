@@ -23,12 +23,47 @@ import re
 import subprocess
 import sys
 import threading
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+from autokey.config import _load_env_file
+
 BASE = Path(__file__).resolve().parent
+
+
+def _sesurvey_cfg():
+    """อ่าน URL + token ของ se-survey จาก env/.env (ไม่ต้องพึ่ง load_config เต็ม
+    ที่บังคับมี creds ISURVEY/EMCS) — token อยู่ฝั่ง server ไม่ส่งให้เบราว์เซอร์"""
+    envf = _load_env_file(BASE / ".env")
+
+    def get(k, default=""):
+        return os.environ.get(k, envf.get(k, default))
+    return (get("SESURVEY_API_URL", "https://api.sesurvey.cloud").rstrip("/"),
+            get("SESURVEY_API_TOKEN"))
+
+
+def fetch_sesurvey_cases():
+    """ดึงรายการเคสสำรวจแล้วจาก se-survey — คืน (cases, error)
+    proxy ฝั่ง server: เบราว์เซอร์เรียก webui (same-origin) ไม่ต้องรู้ token/ไม่ติด CORS"""
+    url, token = _sesurvey_cfg()
+    if not token:
+        return None, "ยังไม่ได้ตั้ง SESURVEY_API_TOKEN ใน .env"
+    try:
+        req = urllib.request.Request(
+            f"{url}/api/integrations/cases",
+            headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        return (body.get("data") or {}).get("cases") or [], None
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return None, "token ไม่ถูกต้อง หรือ integration ยังไม่เปิดบน server"
+        return None, f"server ตอบ {e.code}"
+    except Exception as e:
+        return None, f"เชื่อมต่อ se-survey ไม่ได้: {e}"
 
 # marker ที่ main.py (ผ่าน browser.wait_for_manual_fill) พิมพ์ออก stdout
 # เมื่อต้องการให้คนกรอกข้อมูลเอง — ต้องตรงกับค่าใน autokey/browser.py
@@ -411,6 +446,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, PAGE, "text/html; charset=utf-8")
         elif u.path == "/image":
             self._serve_image(parse_qs(u.query))
+        elif u.path == "/sesurvey-cases":
+            cases, err = fetch_sesurvey_cases()
+            if err:
+                self._send(502, {"error": err})
+            else:
+                self._send(200, {"cases": cases})
         else:
             self._send(404, {"error": "not found"})
 
@@ -695,6 +736,26 @@ PAGE = r"""<!doctype html>
       • ตรวจ draft บน Chrome แล้วกดปุ่ม <b>"✅ ส่งงาน + แจ้ง ISURVEY"</b> — ระบบจะกด "ส่งงานใหม่" ให้ + แจ้งกลับ ISURVEY<br>
       • ระบบ <b>ไม่กดส่งงานเอง</b> จนกว่าคุณจะสั่งผ่านปุ่ม (ถ้าไม่กด = เก็บเป็น draft)<br>
       • เคลมที่ไม่ใช่เคลมแห้ง หรือมีเรื่องใน EMCS อยู่แล้ว จะถูกข้ามพร้อมบอกเหตุผล
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+      <h2 style="font-size:16px;margin:0">📥 นำเข้าจากระบบ SE Survey</h2>
+      <span style="font-size:12px;color:var(--muted)">ดึง XML + รูป จากแอปสำรวจ แล้วนำเข้า EMCS</span>
+      <button class="run" id="loadcasesbtn" style="margin-left:auto;padding:8px 14px;font-size:13px">↻ โหลดรายการเคสสำรวจแล้ว</button>
+    </div>
+    <div style="display:flex;gap:10px;align-items:flex-end;margin-top:10px">
+      <div style="flex:1">
+        <label class="fld" for="secase">เลขเคส (case id) <span style="color:var(--muted);font-weight:400">— หรือกดปุ่มในตารางด้านล่าง</span></label>
+        <input type="text" id="secase" inputmode="numeric" placeholder="เช่น 73">
+      </div>
+      <button class="run" id="serunbtn" style="padding:11px 18px">⚡ นำเข้า EMCS</button>
+    </div>
+    <div id="secasesbox" style="margin-top:12px"></div>
+    <div class="note" style="margin-top:12px">
+      • ต้องตั้ง <b>SESURVEY_API_TOKEN</b> ใน .env ให้ตรงกับ INTEGRATION_TOKEN ของ server ก่อน<br>
+      • ตอนนี้เป็น <b>DRY-RUN</b>: ดึง XML + โหลดรูปมาเก็บบนเครื่อง แล้วหยุด — ยังไม่แตะ EMCS
     </div>
   </div>
 
@@ -1077,6 +1138,74 @@ runBtn.addEventListener("click", async () => {
 $("#claimmode").addEventListener("change", e => {
   $("#cmnote").hidden = (e.target.value !== "fresh");
 });
+
+// ── นำเข้าจาก SE Survey (ดึง XML+รูป → EMCS) ──
+const seRunBtn = $("#serunbtn"), seCaseInput = $("#secase");
+const seCasesBox = $("#secasesbox"), loadCasesBtn = $("#loadcasesbtn");
+const seSent = new Set();   // case id ที่กดส่งเข้า AutoKey แล้วในรอบนี้ (กันกดซ้ำ)
+
+async function startSesurvey(caseId, claimNo){
+  caseId = String(caseId||"").trim();
+  if (!/^\d+$/.test(caseId)){ alert("เลขเคสต้องเป็นตัวเลข"); return; }
+  try{
+    const {ok,data} = await postJSON("/api/import-sesurvey",
+      {case_id: caseId, claim_no: claimNo||""});
+    if (!ok){ alert(data.error || "เริ่มงานไม่สำเร็จ"); return; }
+    seSent.add(caseId);
+    renderSeCasesFromCache();
+    poll();
+  }catch(e){ alert("ติดต่อเซิร์ฟเวอร์ไม่ได้: " + e); }
+}
+seRunBtn.addEventListener("click", () => startSesurvey(seCaseInput.value, ""));
+seCaseInput.addEventListener("keydown", e => { if (e.key === "Enter") startSesurvey(seCaseInput.value, ""); });
+
+let seCasesCache = [];
+function renderSeCasesFromCache(){
+  if (!seCasesCache.length){
+    seCasesBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">— ไม่มีเคสสำรวจแล้ว —</div>';
+    return;
+  }
+  const rows = seCasesCache.map(c => {
+    const id = String(c.id);
+    const sent = seSent.has(id);
+    const who = c.surveyor_name && c.surveyor_name.trim() ? c.surveyor_name : "-";
+    const btn = sent
+      ? '<span style="color:var(--ok);font-weight:600;font-size:12px">✓ ส่งแล้ว</span>'
+      : '<button class="run sebtn" data-id="'+id+'" data-claim="'+escAttr(c.claim_no||"")+'" style="padding:6px 12px;font-size:12px">นำเข้า</button>';
+    return '<tr>'
+      + '<td style="padding:7px 10px;font-size:13px">'+escHtml(c.claim_no||"-")+'</td>'
+      + '<td style="padding:7px 10px;font-size:13px">'+escHtml(c.survey_job_no||"-")+'</td>'
+      + '<td style="padding:7px 10px;font-size:13px">'+escHtml(c.insurance_company||"-")+'</td>'
+      + '<td style="padding:7px 10px;font-size:13px">'+escHtml(who)+'</td>'
+      + '<td style="padding:7px 10px;text-align:right">'+btn+'</td>'
+      + '</tr>';
+  }).join("");
+  seCasesBox.innerHTML =
+    '<div style="overflow-x:auto;border:1px solid var(--line);border-radius:10px">'
+    + '<table style="width:100%;border-collapse:collapse">'
+    + '<thead><tr style="background:#f8fafc;text-align:left">'
+    + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">เลขเคลม</th>'
+    + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">เลขเซอร์เวย์</th>'
+    + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">บริษัทประกัน</th>'
+    + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">ผู้สำรวจ</th>'
+    + '<th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  seCasesBox.querySelectorAll(".sebtn").forEach(b => {
+    b.addEventListener("click", () => startSesurvey(b.dataset.id, b.dataset.claim));
+  });
+}
+loadCasesBtn.addEventListener("click", async () => {
+  loadCasesBtn.disabled = true;
+  seCasesBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">กำลังโหลด…</div>';
+  try{
+    const r = await fetch("/sesurvey-cases");
+    const data = await r.json();
+    if (!r.ok){ seCasesBox.innerHTML = '<div style="color:var(--err);font-size:13px;padding:8px 0">'+escHtml(data.error||"โหลดไม่สำเร็จ")+'</div>'; return; }
+    seCasesCache = data.cases || [];
+    renderSeCasesFromCache();
+  }catch(e){ seCasesBox.innerHTML = '<div style="color:var(--err);font-size:13px;padding:8px 0">ติดต่อเซิร์ฟเวอร์ไม่ได้</div>'; }
+  finally{ loadCasesBtn.disabled = false; }
+});
+
 setInterval(poll, 1200);
 poll();
 </script>
