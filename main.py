@@ -526,10 +526,10 @@ def run_sesurvey_import(cfg, args):
     if not cfg.sesurvey_api_token:
         raise SystemExit("ไม่พบ SESURVEY_API_TOKEN ใน .env — ขอ token จากผู้ดูแลระบบ se-survey")
 
+    hdrs = {"Authorization": f"Bearer {cfg.sesurvey_api_token}"}
     banner(f"ดึง XML เคส #{case_id} จาก se-survey ({cfg.sesurvey_api_url})")
     url = f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/export-xml"
-    resp = requests.get(url, headers={"Authorization": f"Bearer {cfg.sesurvey_api_token}"},
-                        timeout=30)
+    resp = requests.get(url, headers=hdrs, timeout=30)
     if resp.status_code == 404:
         raise SystemExit(f"ไม่พบเคส #{case_id} หรือเคสยังไม่มีข้อมูลรายงานสำรวจ")
     if resp.status_code == 401:
@@ -558,10 +558,28 @@ def run_sesurvey_import(cfg, args):
     log_plain(f"  คู่กรณี {len(parsed['third_parties'])} / ผู้บาดเจ็บ {len(parsed['injuries'])}"
               f" / ทรัพย์สิน {len(parsed['assets'])}")
 
+    # resolve รหัสบริษัทประกันของ EMCS (ddlInsurerNameMajor) จากชื่อบริษัทของเคส —
+    # ตอน import จริง (โหมดจริงในอนาคต) ต้องเลือกบริษัทให้ถูกก่อนอัปโหลด XML ไม่งั้นเข้าผิดบริษัท
+    from autokey.insurer_map import resolve_insurer_code
+    try:
+        mr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}",
+                          headers=hdrs, timeout=20)
+        company = (mr.json().get("data") or {}).get("insurance_company") if mr.ok else ""
+    except Exception:
+        company = ""
+    ins_code = resolve_insurer_code(company)
+    if company:
+        if ins_code:
+            log(f"✓ บริษัทประกัน: {company} → รหัส EMCS {ins_code}")
+        else:
+            log(f"⚠️ บริษัทประกัน: {company} — ยังไม่มีรหัส EMCS ในตาราง "
+                f"(เติมใน autokey/insurer_map.py ก่อนเปิดโหมดนำเข้าจริง)")
+    else:
+        log("⚠️ ไม่ทราบบริษัทประกันของเคส — ตรวจก่อน import")
+
     # โหลดรูปของเคสลงโฟลเดอร์เดียวกับ flow ปกติ (downloaded_images/<เลขเคลม>/)
     # — โหมดนำเข้าจริงในอนาคตจะหยิบไปอัปเข้า EMCS ต่อได้เลย (dry-run แค่โหลด ไม่อัป)
     claim_no = get_tag("REF_CLAIM_NO") or f"sesurvey_{case_id}"
-    hdrs = {"Authorization": f"Bearer {cfg.sesurvey_api_token}"}
     try:
         pr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/photos",
                           headers=hdrs, timeout=30)
