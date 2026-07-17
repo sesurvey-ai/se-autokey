@@ -1169,7 +1169,10 @@ function renderSeCasesFromCache(){
     const id = String(c.id);
     const sent = seSent.has(id);
     const who = c.surveyor_name && c.surveyor_name.trim() ? c.surveyor_name : "-";
-    const btn = sent
+    // นำเข้า EMCS ไปแล้ว (mark ถาวรฝั่ง server) → ห้ามซ้ำ: EMCS จะสร้างเรื่องซ้ำที่เลขเคลมเดิม
+    const btn = c.emcs_imported_at
+      ? '<span style="color:var(--ok);font-weight:600;font-size:12px" title="นำเข้าเมื่อ '+escAttr(c.emcs_imported_at)+'">✓ นำเข้า EMCS แล้ว</span>'
+      : sent
       ? '<span style="color:var(--ok);font-weight:600;font-size:12px">✓ ส่งแล้ว</span>'
       : '<button class="run sebtn" data-id="'+id+'" data-claim="'+escAttr(c.claim_no||"")+'" style="padding:6px 12px;font-size:12px">นำเข้า</button>';
     return '<tr>'

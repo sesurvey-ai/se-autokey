@@ -527,6 +527,23 @@ def run_sesurvey_import(cfg, args):
         raise SystemExit("ไม่พบ SESURVEY_API_TOKEN ใน .env — ขอ token จากผู้ดูแลระบบ se-survey")
 
     hdrs = {"Authorization": f"Bearer {cfg.sesurvey_api_token}"}
+
+    # ── ด่านกันซ้ำ (สำคัญที่สุด): เคสที่ import เข้า EMCS ไปแล้ว ห้าม import อีก ──
+    # EMCS ไม่กันเลขเคลมซ้ำ — import ซ้ำ = สร้างเรื่องซ้ำที่เลขเคลมเดิม (ลบไม่ได้ ยกเลิกได้อย่างเดียว)
+    # fail-closed: เช็คสถานะไม่ได้ = หยุด (โหมด import จริงจะต่อยอดจาก flow นี้ ห้ามปล่อยผ่านทั้งที่ไม่รู้สถานะ)
+    try:
+        meta_r = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}",
+                              headers=hdrs, timeout=20)
+        meta_r.raise_for_status()
+        meta = meta_r.json().get("data") or {}
+    except Exception as e:
+        raise SystemExit(f"เช็คสถานะเคส #{case_id} จาก se-survey ไม่ได้ ({e}) — หยุดก่อนเพื่อกัน import ซ้ำ")
+    if meta.get("emcs_imported_at"):
+        banner(f"⛔ เคส #{case_id} นำเข้า EMCS ไปแล้วเมื่อ {meta['emcs_imported_at']}"
+               + (f" (e-Survey {meta.get('emcs_esurvey_no')})" if meta.get("emcs_esurvey_no") else "")
+               + " — ไม่ทำซ้ำ (กันเรื่องซ้ำที่เลขเคลมเดิม)")
+        return
+
     banner(f"ดึง XML เคส #{case_id} จาก se-survey ({cfg.sesurvey_api_url})")
     url = f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/export-xml"
     resp = requests.get(url, headers=hdrs, timeout=30)
@@ -559,14 +576,9 @@ def run_sesurvey_import(cfg, args):
               f" / ทรัพย์สิน {len(parsed['assets'])}")
 
     # resolve รหัสบริษัทประกันของ EMCS (ddlInsurerNameMajor) จากชื่อบริษัทของเคส —
-    # ตอน import จริง (โหมดจริงในอนาคต) ต้องเลือกบริษัทให้ถูกก่อนอัปโหลด XML ไม่งั้นเข้าผิดบริษัท
+    # ตอน import จริง ต้องเลือกบริษัทให้ถูกก่อนอัปโหลด XML ไม่งั้นเข้าผิดบริษัท
     from autokey.insurer_map import resolve_insurer_code
-    try:
-        mr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}",
-                          headers=hdrs, timeout=20)
-        company = (mr.json().get("data") or {}).get("insurance_company") if mr.ok else ""
-    except Exception:
-        company = ""
+    company = meta.get("insurance_company") or ""
     ins_code = resolve_insurer_code(company)
     if company:
         if ins_code:
