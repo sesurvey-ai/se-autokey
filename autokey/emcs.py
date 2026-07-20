@@ -932,11 +932,28 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
     _set_selectpicker(driver, "ddlInsurerNameMajor", ins_id)
     branch = _import_branch_value(driver)
     _set_selectpicker(driver, "ddlInsurerBRList", branch)
-    time.sleep(1)
+    time.sleep(1.5)   # ให้ postback ของบริษัท/สาขา (บางบริษัทมี ajax) settle ก่อนแนบไฟล์
 
-    log("   ส่งไฟล์ XML → กดนำเข้าข้อมูล")
-    driver.find_element(By.ID, "inpImport").send_keys(str(xml_path))
-    time.sleep(1)
+    # แนบไฟล์ XML แล้ว "ยืนยันว่าติดจริง" ก่อนกดนำเข้า — บางบริษัท (เช่น ไทยไพบูลย์ 2429)
+    # การเลือกบริษัท/สาขามี postback async ที่ล้าง input ไฟล์ที่เพิ่งแนบ → EMCS ปฏิเสธว่า
+    # "ยังไม่ได้เลือกข้อมูลเพื่อทำการ Import". ไอโออิ (1059) เป็นค่า default ไม่ postback เลยไม่เจอ
+    log("   ส่งไฟล์ XML (ยืนยันว่าติดก่อนกดนำเข้า)")
+    attached = ""
+    for attempt in range(6):
+        driver.find_element(By.ID, "inpImport").send_keys(str(xml_path))
+        time.sleep(1.2)
+        attached = driver.execute_script(
+            "var f=document.getElementById('inpImport');"
+            "return (f && f.files && f.files.length) ? f.files[0].name : '';")
+        if attached:
+            break
+        log(f"   (แนบไฟล์รอบ {attempt + 1} ยังไม่ติด — น่าจะโดน postback ล้าง รอแล้วลองใหม่)")
+        time.sleep(1.5)
+    if not attached:
+        raise RuntimeError(
+            "แนบไฟล์ XML เข้า inpImport ไม่ติดหลังลอง 6 รอบ (input ถูก postback ของบริษัท/สาขาล้าง) — "
+            "ตรวจหน้า Import File XML")
+    log(f"   ✓ ไฟล์ติดแล้ว: {attached} → กดนำเข้าข้อมูล")
     driver.execute_script("document.getElementById('btnImport').click();")
     try:
         accept_alert(driver, timeout=10)               # เผื่อมี JS confirm
