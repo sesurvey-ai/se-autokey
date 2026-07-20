@@ -559,7 +559,10 @@ def run_sesurvey_import(cfg, args):
 
     xml_dir = cfg.runs_dir / "xml"
     xml_dir.mkdir(parents=True, exist_ok=True)
-    xml_path = xml_dir / f"sesurvey_case_{case_id}.xml"
+    # ⚠️ นามสกุลต้องเป็น .txt — EMCS (change handler ของ inpImport) รับเฉพาะ .txt เท่านั้น
+    # ไฟล์ .xml จะโดน validate ล้างทิ้งทันที ("ระบบรองรับไฟล์ นามสกุล .txt เท่านั้น")
+    # เนื้อหาเป็น INSERT_SURV_REPORT_XML เหมือนเดิม (ไฟล์ export ของ ISURVEY ก็เป็น .txt)
+    xml_path = xml_dir / f"sesurvey_case_{case_id}.txt"
     xml_path.write_bytes(resp.content)
     log(f"✓ บันทึก {xml_path} ({len(resp.content)} bytes)")
 

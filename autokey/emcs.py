@@ -934,11 +934,12 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
     _set_selectpicker(driver, "ddlInsurerBRList", branch)
     time.sleep(1.5)   # ให้ postback ของบริษัท/สาขา (บางบริษัทมี ajax) settle ก่อนแนบไฟล์
 
-    # แนบไฟล์ XML แล้ว "ยืนยันว่าติดจริง" ก่อนกดนำเข้า
-    # inpImport เป็น <input type=file style="display:none"> — chromedriver ไม่ยอม send_keys ให้
-    # element ที่ display:none (ไฟล์ไม่ติด แม้บริษัท/สาขาเลือกถูก → EMCS ปฏิเสธ "ยังไม่ได้เลือกข้อมูล")
-    # แก้: un-hide input ชั่วคราวด้วย JS ก่อน send_keys (ไม่กระทบ logic ฝั่ง EMCS)
-    log("   ส่งไฟล์ XML (un-hide input + ยืนยันว่าติดก่อนกดนำเข้า)")
+    # แนบไฟล์ แล้ว "ยืนยันว่าติดจริง" ก่อนกดนำเข้า (กัน import ทั้งที่ไฟล์ไม่ติด → EMCS สร้างเรื่องเปล่า)
+    # หมายเหตุสำคัญ: EMCS มี change handler validate นามสกุล — รับเฉพาะ .txt เท่านั้น
+    # ไฟล์นามสกุลอื่น (เช่น .xml) จะโดน $("#inpImport").val("") ล้างทิ้งทันที + swal เตือน
+    # → ต้องส่งไฟล์ .txt เข้ามา (ผู้เรียกตั้งชื่อ data.xml_file เป็น .txt); un-hide เผื่อ chromedriver
+    #   ไม่ยอม send_keys ให้ input ที่ display:none; verify files.length กันทุกกรณีที่ไฟล์ไม่ติด
+    log("   ส่งไฟล์ (un-hide input + ยืนยันว่าติดก่อนกดนำเข้า)")
     attached = ""
     for attempt in range(6):
         driver.execute_script(
