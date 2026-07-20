@@ -934,12 +934,17 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
     _set_selectpicker(driver, "ddlInsurerBRList", branch)
     time.sleep(1.5)   # ให้ postback ของบริษัท/สาขา (บางบริษัทมี ajax) settle ก่อนแนบไฟล์
 
-    # แนบไฟล์ XML แล้ว "ยืนยันว่าติดจริง" ก่อนกดนำเข้า — บางบริษัท (เช่น ไทยไพบูลย์ 2429)
-    # การเลือกบริษัท/สาขามี postback async ที่ล้าง input ไฟล์ที่เพิ่งแนบ → EMCS ปฏิเสธว่า
-    # "ยังไม่ได้เลือกข้อมูลเพื่อทำการ Import". ไอโออิ (1059) เป็นค่า default ไม่ postback เลยไม่เจอ
-    log("   ส่งไฟล์ XML (ยืนยันว่าติดก่อนกดนำเข้า)")
+    # แนบไฟล์ XML แล้ว "ยืนยันว่าติดจริง" ก่อนกดนำเข้า
+    # inpImport เป็น <input type=file style="display:none"> — chromedriver ไม่ยอม send_keys ให้
+    # element ที่ display:none (ไฟล์ไม่ติด แม้บริษัท/สาขาเลือกถูก → EMCS ปฏิเสธ "ยังไม่ได้เลือกข้อมูล")
+    # แก้: un-hide input ชั่วคราวด้วย JS ก่อน send_keys (ไม่กระทบ logic ฝั่ง EMCS)
+    log("   ส่งไฟล์ XML (un-hide input + ยืนยันว่าติดก่อนกดนำเข้า)")
     attached = ""
     for attempt in range(6):
+        driver.execute_script(
+            "var f=document.getElementById('inpImport');"
+            "if(f){f.style.display='block';f.style.visibility='visible';f.style.opacity='1';"
+            "f.style.width='1px';f.style.height='1px';f.removeAttribute('hidden');}")
         driver.find_element(By.ID, "inpImport").send_keys(str(xml_path))
         time.sleep(1.2)
         attached = driver.execute_script(
@@ -947,12 +952,11 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
             "return (f && f.files && f.files.length) ? f.files[0].name : '';")
         if attached:
             break
-        log(f"   (แนบไฟล์รอบ {attempt + 1} ยังไม่ติด — น่าจะโดน postback ล้าง รอแล้วลองใหม่)")
+        log(f"   (แนบไฟล์รอบ {attempt + 1} ยังไม่ติด — รอแล้วลองใหม่)")
         time.sleep(1.5)
     if not attached:
         raise RuntimeError(
-            "แนบไฟล์ XML เข้า inpImport ไม่ติดหลังลอง 6 รอบ (input ถูก postback ของบริษัท/สาขาล้าง) — "
-            "ตรวจหน้า Import File XML")
+            "แนบไฟล์ XML เข้า inpImport ไม่ติดหลังลอง 6 รอบ — ตรวจหน้า Import File XML")
     log(f"   ✓ ไฟล์ติดแล้ว: {attached} → กดนำเข้าข้อมูล")
     driver.execute_script("document.getElementById('btnImport').click();")
     try:
