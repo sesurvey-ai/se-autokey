@@ -1052,6 +1052,9 @@ def _derive_insured_title(data: ClaimData) -> tuple:
     - ไม่ตรง → '' : ไม่มีข้อมูลคำนำหน้าที่เชื่อถือได้ (เพศบอกได้แค่ ชาย/หญิง แต่
       แยก นาย vs นาง/นางสาว ไม่ได้) → ให้ผู้ใช้เลือกเอง (fill_driver หยุดรอ)
     คืน (title, แหล่งที่มา)"""
+    # se-survey มีคำนำหน้าผู้ขับขี่ตรง ๆ (มือถือกรอก/สแกนบัตร) → ใช้เลย ไม่ต้อง derive
+    if getattr(data, "driver_title", "").strip() and data.driver_title.strip() not in ("0", "-"):
+        return data.driver_title.strip(), "จาก se-survey"
     # ตัดคำนำหน้าที่อาจติดมากับชื่อผู้ขับ (เช่น 'น.ส.ปฐมาวดี') ก่อนเทียบ
     driver_full = f"{data.driver_name} {data.driver_surname}".strip()
     _dt, d_first, d_last = split_thai_name(driver_full)

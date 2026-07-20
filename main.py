@@ -514,6 +514,69 @@ def run_import_xml(cfg, args):
         raise
 
 
+# ประเภทรถ code (se-survey) → ชื่อไทย (fuzzy_select กับ ddlCType ของ EMCS ใช้ชื่อไทย ไม่ใช่ code)
+_CAR_TYPE_TH = {'A': 'เก๋ง', 'E': 'เก๋ง', 'M': 'รถจักรยานยนต์', 'O': 'อื่นๆ',
+                'T': 'กระบะ', 'V': 'รถตู้', 'W': 'รถบรรทุก'}
+
+
+def _populate_claim_from_report(data, rep):
+    """เติม ClaimData จาก report (ค่าไทยของ se-survey) ให้ fill_* กรอกหน้าหลัก EMCS ได้ครบ —
+    XML import ตั้งค่าไว้บางส่วน แต่ fill_* ต้องมีค่าไทยใน ClaimData เพื่อเลือก dropdown บังคับ
+    (ประเภทรถ/จังหวัด/ยี่ห้อ/คำนำหน้า/ลักษณะเหตุ). คืน loss_type (ลักษณะความเสียหาย) สำหรับ run_import"""
+    def gv(k):
+        return str(rep.get(k) or '').strip()
+
+    def split_dt(k):
+        v = gv(k)
+        return (v.split('|', 1)[0].strip(), v.split('|', 1)[1].strip()) if '|' in v else (v, '')
+
+    ct = gv('car_type').upper()
+    data.prb_car_type = _CAR_TYPE_TH.get(ct, gv('car_type'))
+    data.plate_province = gv('car_province')
+    data.car_brand = gv('car_brand')
+    data.car_color = gv('car_color')
+    data.insure_plate = gv('license_plate')
+    data.insure_model = gv('car_model')
+    data.insure_chassis = gv('chassis_no')
+    data.insure_engine = gv('engine_no')
+    data.insure_name = gv('assured_name')
+    # ผู้ขับขี่ (se-survey มีคำนำหน้า/เพศตรง ๆ)
+    data.driver_title = gv('driver_title')
+    data.driver_name = gv('driver_first_name') or data.driver_name
+    data.driver_surname = gv('driver_last_name') or data.driver_surname
+    data.driver_gender = gv('driver_gender') or data.driver_gender
+    data.driver_relation = gv('driver_relation')
+    data.driver_age = gv('driver_age')
+    data.driver_address = gv('driver_address')
+    data.driver_province = gv('driver_province')
+    data.driver_amphur = gv('driver_district')
+    data.driver_phone = gv('driver_phone')
+    data.driver_idcard = gv('driver_id_card')
+    data.driver_license_no = gv('driver_license_no')
+    data.driver_license_place = gv('driver_license_place')
+    data.driver_license_type = gv('driver_license_type')
+    data.driver_birthdate = gv('driver_birthdate')
+    data.license_issue_date = gv('driver_license_start')
+    data.license_expiry_date = gv('driver_license_end')
+    # อุบัติเหตุ
+    data.acc_province = gv('acc_province')
+    data.acc_amphur = gv('acc_district')
+    data.acc_type_desc = gv('acc_cause')
+    data.acc_place = gv('acc_place')
+    data.acc_detail = gv('acc_detail') or gv('survey_result')
+    data.acc_date = gv('acc_date')
+    data.acc_time = gv('acc_time')
+    data.acc_result = gv('acc_fault')
+    data.surveyor_name = gv('acc_surveyor') or gv('surveyor_name')
+    data.damage_estimate = gv('estimated_cost')
+    data.prb_number = gv('prb_number')
+    data.noti_date, data.noti_time = split_dt('acc_insurance_notify_date')
+    data.arrive_date, data.arrive_time = split_dt('acc_survey_arrive_date')
+    data.finish_date, data.finish_time = split_dt('acc_survey_complete_date')
+    # ลักษณะความเสียหาย: se-survey มี acc_damage_type → ใช้เลย; ไม่มี → 'auto' (resolve_loss_type เดิม)
+    return gv('acc_damage_type') or 'auto'
+
+
 def run_sesurvey_import(cfg, args):
     """โหมดงานจาก se-survey: ดึง SURV_REPORT XML ของเคสจาก api.sesurvey.cloud
     (แอปสำรวจของเราเอง — ข้อมูลครบกว่า XML ของ ISURVEY) → ตรวจ/parse → นำเข้า EMCS
@@ -657,13 +720,27 @@ def run_sesurvey_import(cfg, args):
     data.xml_file = str(xml_path)
     enrich_claim_from_xml(data, xml_path)
 
+    # เติมค่าไทยจาก report ของ se-survey → fill_* กรอกหน้าหลัก EMCS (dropdown บังคับ) ได้ครบ
+    # ไม่งั้น btnUpdate ไม่ผ่าน validation (ประเภทรถ/จังหวัด/ยี่ห้อ/คำนำหน้า/ลักษณะเหตุ ว่าง)
+    loss_type = "auto"
+    try:
+        rr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/report",
+                          headers=hdrs, timeout=20)
+        rr.raise_for_status()
+        rep = rr.json().get("data") or {}
+        loss_type = _populate_claim_from_report(data, rep)
+        log(f"✓ เติมข้อมูลหน้าหลักจาก report (ประเภทรถ {data.prb_car_type!r}, "
+            f"จังหวัดเกิดเหตุ {data.acc_province!r}, ลักษณะความเสียหาย {loss_type!r})")
+    except Exception as e:
+        log(f"⚠️ ดึง report มาเติม ClaimData ไม่ได้ ({e}) — fill_* อาจหยุดรอกรอกมือบางช่อง")
+
     per_run_dl = cfg.download_dir / "_dl" / str(os.getpid())
     driver = make_driver(detach=True, download_dir=per_run_dl)
     banner(f"LIVE: นำเข้าเคส #{case_id} เข้า EMCS (บริษัทรหัส {ins_code}) — draft-only")
     try:
         # save_price=False: ค่าสำรวจกรอกใน EMCS เอง (ฝั่ง se-survey ตัดหน้าค่าใช้จ่ายทิ้ง)
         esurvey = emcs.run_import(driver, cfg, data, images_folder=img_folder,
-                                  insurer_code=ins_code, save_price=False)
+                                  insurer_code=ins_code, save_price=False, loss_type=loss_type)
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"sesurvey_{case_id}")
         raise

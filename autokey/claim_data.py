@@ -86,6 +86,7 @@ class ClaimData:
     plate_province: str = ""       # จังหวัดรถ
     car_brand: str = ""            # ยี่ห้อรถ
     car_color: str = ""            # สีรถ
+    driver_title: str = ""         # คำนำหน้าผู้ขับขี่ (se-survey มี; ISURVEY ไม่มี → เดิม derive จากผู้เอาประกัน)
     driver_name: str = ""          # ชื่อผู้ขับขี่
     driver_surname: str = ""       # นามสกุลผู้ขับขี่
     driver_gender: str = ""        # เพศผู้ขับขี่ (M/W จาก XML — EMCS บังคับ)
