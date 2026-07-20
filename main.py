@@ -126,7 +126,11 @@ def parse_args():
     p.add_argument("--sesurvey-case", default="",
                    help="ดึงงานจากระบบ se-survey ด้วยเลขเคส (case id): โหลด SURV_REPORT XML "
                         "จาก api.sesurvey.cloud แล้วเข้า flow นำเข้า XML ของ EMCS — "
-                        "⚠️ ตอนนี้เป็น dry-run เสมอ (หยุดก่อนแตะ EMCS) จนกว่าจะเปิดใช้จริง")
+                        "default = dry-run (หยุดก่อนแตะ EMCS); ใส่ --sesurvey-live เพื่อ import จริง")
+    p.add_argument("--sesurvey-live", action="store_true",
+                   help="⛔ เปิดโหมด import จริงเข้า EMCS สำหรับ --sesurvey-case "
+                        "(default ไม่ใส่ = dry-run). ยังคงวินัย draft-only: บอทหยุดที่ draft "
+                        "คนกดส่งเอง. ใช้เมื่อสรุปการทดสอบร่วมกันแล้วเท่านั้น")
     args = p.parse_args()
 
     if not (args.claim or args.claims or args.claims_file or args.data_json
@@ -625,8 +629,60 @@ def run_sesurvey_import(cfg, args):
     else:
         log("(เคสนี้ไม่มีรูปบน server)")
 
-    banner("DRY-RUN: ตรวจ XML + โหลดรูปครบ — หยุดก่อนแตะ EMCS ตามข้อตกลง "
-           "(โหมดนำเข้าจริงจะเปิดหลังสรุปการทดสอบร่วมกัน)")
+    img_folder = str(img_dir) if photos else None
+
+    # ── GATE: default dry-run (หยุดก่อนแตะ EMCS); --sesurvey-live เท่านั้นถึงจะ import จริง ──
+    if not getattr(args, "sesurvey_live", False):
+        banner("DRY-RUN: ตรวจ XML + resolve บริษัท + โหลดรูปครบ — หยุดก่อนแตะ EMCS "
+               f"(ถ้าเปิด --sesurvey-live จะเลือกบริษัทรหัส {ins_code or '?'} + import XML เป็น draft)")
+        return
+
+    # ===== LIVE: import จริงเข้า EMCS (draft-only — บอทหยุดที่ draft คนกดส่งเอง) =====
+    if not ins_code:
+        raise SystemExit(f"resolve รหัสบริษัทประกันของ '{company}' ไม่ได้ — ยกเลิก import "
+                         "(กัน import เข้าผิดบริษัท) เติมใน autokey/insurer_map.py ก่อน")
+
+    from autokey import emcs
+    from autokey.claim_data import ClaimData
+    from autokey.surv_xml import enrich_claim_from_xml
+
+    # สร้าง ClaimData ให้ fill_imported ใช้: import_xml_report อ่าน data.xml_file (EMCS parse เอง);
+    # enrich เติมคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน/เพศผู้ขับ จาก XML เพื่ออุดช่องที่ import ทิ้งว่าง
+    data = ClaimData()
+    data.claim_value = get_tag("REF_CLAIM_NO")
+    data.invoice_value = get_tag("SURV_JOBNO")
+    data.xml_file = str(xml_path)
+    enrich_claim_from_xml(data, xml_path)
+
+    per_run_dl = cfg.download_dir / "_dl" / str(os.getpid())
+    driver = make_driver(detach=True, download_dir=per_run_dl)
+    banner(f"LIVE: นำเข้าเคส #{case_id} เข้า EMCS (บริษัทรหัส {ins_code}) — draft-only")
+    try:
+        # save_price=False: ค่าสำรวจกรอกใน EMCS เอง (ฝั่ง se-survey ตัดหน้าค่าใช้จ่ายทิ้ง)
+        esurvey = emcs.run_import(driver, cfg, data, images_folder=img_folder,
+                                  insurer_code=ins_code, save_price=False)
+    except Exception:
+        save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"sesurvey_{case_id}")
+        raise
+
+    # ── mark กลับ se-survey ทันทีที่ draft สร้างสำเร็จ (ปิด loop กันซ้ำ) ──
+    # draft ถูกสร้างใน EMCS แล้ว = เลขเคลมนี้ถือว่า "นำเข้าแล้ว" ต่อให้คนยังไม่กดส่ง
+    # (กัน import รอบสองมาสร้าง draft ซ้ำที่เลขเคลมเดิม)
+    try:
+        mr = requests.post(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/emcs-imported",
+                           headers=hdrs, json={"esurvey_no": esurvey or ""}, timeout=20)
+        if mr.ok:
+            d = mr.json().get("data") or {}
+            log(f"✓ แจ้ง se-survey ว่านำเข้าแล้ว" + (" (mark ไว้ก่อนแล้ว)" if d.get("already") else ""))
+        else:
+            log(f"⚠️ แจ้ง se-survey (emcs-imported) ไม่สำเร็จ: HTTP {mr.status_code} — "
+                "mark ด้วยมือภายหลัง กันปุ่มนำเข้าถูกกดซ้ำ")
+    except Exception as e:
+        log(f"⚠️ แจ้ง se-survey (emcs-imported) ไม่ได้: {e} — mark ด้วยมือภายหลัง")
+
+    banner(f"LIVE: สร้าง draft ใน EMCS สำเร็จ"
+           + (f" (e-Survey {esurvey})" if esurvey else "")
+           + " — ตรวจงาน + กรอกค่าใช้จ่าย + กดส่งเอง (บอทไม่กดส่งให้)")
 
 
 def run_report_isurvey(cfg, args):
@@ -744,7 +800,7 @@ def main():
     set_log_file(cfg.runs_dir / "logs"
                  / f"run_{datetime.now():%Y%m%d_%H%M%S}_{os.getpid()}.log")
 
-    # --sesurvey-case: ดึงงานจากระบบ se-survey (dry-run — หยุดก่อนแตะ EMCS) แล้วจบ
+    # --sesurvey-case: ดึงงานจากระบบ se-survey → นำเข้า EMCS (default dry-run; --sesurvey-live = จริง) แล้วจบ
     if args.sesurvey_case:
         run_sesurvey_import(cfg, args)
         return

@@ -903,7 +903,7 @@ def _close_sweetalert(driver, timeout: int = 10) -> str:
     return text
 
 
-def import_xml_report(driver, cfg, data: ClaimData) -> str:
+def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) -> str:
     """นำเข้า SURV_REPORT XML เข้า EMCS แทนการกรอกฟอร์มหลักเอง (ปุ่ม imbFileImport_XML)
 
     flow (verify หน้าจริง 2026-06-24): frmMainPage → imbFileImport_XML →
@@ -925,8 +925,11 @@ def import_xml_report(driver, cfg, data: ClaimData) -> str:
 
     wait_clickable(driver, By.ID, "imbFileImport_XML").click()
     wait_present(driver, By.ID, "inpImport", 30)        # frmFileImportXML โหลดแล้ว
-    log("   เลือกบริษัทประกัน (ไอโออิกรุงเทพ) + สาขา")
-    _set_selectpicker(driver, "ddlInsurerNameMajor", INSURER_MAJOR_ID)
+    # รหัสบริษัท: ผู้เรียกส่ง insurer_code มา (resolve จากชื่อบริษัทของเคส) — ไม่งั้น fallback
+    # ไอโออิ (บริษัทเดียวของโปรเจกต์เดิม). ผิดบริษัท = เข้าเรื่องผิดบัญชี → ต้อง resolve ให้ได้ก่อน
+    ins_id = str(insurer_code or INSURER_MAJOR_ID)
+    log(f"   เลือกบริษัทประกัน (รหัส {ins_id}) + สาขา")
+    _set_selectpicker(driver, "ddlInsurerNameMajor", ins_id)
     branch = _import_branch_value(driver)
     _set_selectpicker(driver, "ddlInsurerBRList", branch)
     time.sleep(1)
@@ -2281,7 +2284,7 @@ def _recascade_province(driver, province_id: str, timeout: int = 10):
 def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
                   loss_type: str = "auto", image_type: str = "รูปรถประกัน",
                   severity: str = "เบา", force_new: bool = False,
-                  save_price: bool = True) -> str:
+                  save_price: bool = True, insurer_code: str = None) -> str:
     """กรอกเคลมผ่านโหมด "นำเข้า XML": ให้ EMCS import ฟอร์มหลักจาก SURV_REPORT XML
     แล้วบอทอุดช่องว่าง/แก้ที่ import ทำพลาด + กรอกส่วนที่ import ไม่แตะ
 
@@ -2305,7 +2308,7 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
         guard_duplicate_report(driver, data, force_new)
 
     # นำเข้า XML → สร้าง draft + เติมฟอร์มหลัก ~90% → frmSurvey โหมดแก้
-    esurvey = import_xml_report(driver, cfg, data)
+    esurvey = import_xml_report(driver, cfg, data, insurer_code=insurer_code)
     main_window = driver.current_window_handle
     resolved_loss = resolve_loss_type(data, loss_type)
 
@@ -2356,10 +2359,10 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
 def run_import(driver, cfg, data: ClaimData, images_folder=None,
                loss_type: str = "auto", image_type: str = "รูปรถประกัน",
                severity: str = "เบา", force_new: bool = False,
-               save_price: bool = True) -> str:
+               save_price: bool = True, insurer_code: str = None) -> str:
     """login แล้วกรอกเคลมเดียวผ่านโหมดนำเข้า XML"""
     login(driver, cfg)
     return fill_imported(driver, cfg, data, images_folder=images_folder,
                          loss_type=loss_type, image_type=image_type,
                          severity=severity, force_new=force_new,
-                         save_price=save_price)
+                         save_price=save_price, insurer_code=insurer_code)
