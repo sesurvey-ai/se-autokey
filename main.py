@@ -574,6 +574,7 @@ def _populate_claim_from_report(data, rep):
     data.surveyor_name = gv('acc_surveyor') or gv('surveyor_name')
     data.damage_estimate = gv('estimated_cost')
     data.prb_number = gv('prb_number')
+    data.notify_value = gv('claim_ref_no')   # เลขที่รับแจ้ง (บังคับ * — se-survey มีรูปแบบถูก)
     data.noti_date, data.noti_time = split_dt('acc_insurance_notify_date')
     data.arrive_date, data.arrive_time = split_dt('acc_survey_arrive_date')
     data.finish_date, data.finish_time = split_dt('acc_survey_complete_date')

@@ -2333,6 +2333,19 @@ def _recascade_province(driver, province_id: str, timeout: int = 10):
     time.sleep(0.8)
 
 
+def _set_or_clear_claim_ref(driver, notify_value):
+    """เลขที่รับแจ้ง (txtAcc_ClaimRef_No, บังคับ *): มีค่ารูปแบบถูก (ABxx/xx) → set (se-survey มี);
+    ไม่งั้นเคลียร์ — import ของ ISURVEY-ไอโออิ ใส่ค่าดิบผิดรูป (เช่น '2026097275' ไม่มี /) →
+    validation reject; ปล่อยว่าง = ผ่าน (validFormat ข้ามค่าว่าง)"""
+    ref = str(notify_value or "").strip()
+    if re.match(r'^[A-Za-z0-9]{2,}/', ref):
+        set_text(driver, "txtAcc_ClaimRef_No", ref)
+        log(f"   ✓ เลขที่รับแจ้ง: {ref}")
+    else:
+        driver.execute_script(
+            "var e=document.getElementById('txtAcc_ClaimRef_No');if(e)e.value='';")
+
+
 def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
                   loss_type: str = "auto", image_type: str = "รูปรถประกัน",
                   severity: str = "เบา", force_new: bool = False,
@@ -2375,12 +2388,7 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
     fill_accident(driver, data, loss_type=resolved_loss)  # อำเภอเกิดเหตุ + ลักษณะความเสียหาย
     fill_verdict(driver, data)
 
-    # import เติม 'เลขที่รับแจ้ง' (txtAcc_ClaimRef_No) ด้วยค่า ISURVEY ดิบที่ผิดรูปแบบ
-    # ไอโออิ (เช่น '2026097275' — ต้อง ABxxx/xxx) → validation reject; flow ปกติเว้นว่าง
-    # = ผ่าน (validFormat ข้ามค่าว่าง) → เคลียร์ให้ว่างกัน format error
-    # (เคลียร์ตรงด้วย JS — set_text ข้ามค่าว่าง ไม่ลบของเดิม)
-    driver.execute_script(
-        "var e=document.getElementById('txtAcc_ClaimRef_No');if(e)e.value='';")
+    _set_or_clear_claim_ref(driver, data.notify_value)
 
     saved = save_main_form(driver, data, button_id="btnUpdate", is_new=False)
     esurvey = esurvey or saved
