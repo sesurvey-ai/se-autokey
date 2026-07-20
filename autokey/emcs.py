@@ -2418,3 +2418,53 @@ def run_import(driver, cfg, data: ClaimData, images_folder=None,
                          loss_type=loss_type, image_type=image_type,
                          severity=severity, force_new=force_new,
                          save_price=save_price, insurer_code=insurer_code)
+
+
+def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",
+                         images_folder=None, loss_type: str = "auto",
+                         image_type: str = "รูปรถประกัน", severity: str = "เบา",
+                         save_price: bool = True) -> str:
+    """เปิด draft 'ที่มีอยู่แล้ว' (import มาแล้ว) → เติมหน้าหลัก + คู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน/
+    ความเสียหาย/รูป/ค่าใช้จ่าย → บันทึก (btnUpdate) — **ไม่ import ซ้ำ ไม่สร้าง draft ใหม่ ไม่กดส่งงาน**
+
+    ใช้เมื่อ import สร้าง draft ไว้แล้วแต่หน้าหลักยังไม่ครบ (เช่น btnUpdate เคยล้ม) — เปิดเรื่องเดิม
+    มาเติมให้ครบ. flow เดียวกับส่วน 'หลัง import' ของ fill_imported เป๊ะ ยกเว้นข้าม import_xml_report
+    ⚠️ ควรใช้กับ draft ที่ยังไม่ได้เติมส่วนคู่กรณี/ความเสียหาย/รูป (ไม่งั้นอาจเพิ่ม row ซ้ำ)"""
+    login(driver, cfg)
+    reports = find_existing_reports(driver, data.claim_value)
+    if not reports:
+        raise RuntimeError(
+            f"ไม่พบ draft ของเคลม {data.claim_value} ใน EMCS — ยังไม่มีเรื่องให้เติม "
+            "(ต้อง import สร้าง draft ก่อน)")
+    target = _pick_draft_report(reports, esurvey)
+    log(f"EMCS: เปิด draft เดิม {target} เพื่อเติมข้อมูลหน้าหลัก (ไม่ import ซ้ำ)")
+    wait_clickable(driver, By.XPATH,
+                   f"//a[normalize-space(text())='{target}']", 20).click()
+    wait_visible(driver, By.ID, "btnUpdate", 20)
+    main_window = driver.current_window_handle
+    resolved_loss = resolve_loss_type(data, loss_type)
+
+    # เติมหน้าหลัก (เหมือน fill_imported หลัง import)
+    fill_severity(driver, severity)
+    fill_car(driver, data)
+    _recascade_province(driver, "ddlDri_ProvinceID")
+    fill_driver(driver, data)
+    _recascade_province(driver, "ddlAcc_ProvinceID")
+    fill_accident(driver, data, loss_type=resolved_loss)
+    fill_verdict(driver, data)
+    driver.execute_script(
+        "var e=document.getElementById('txtAcc_ClaimRef_No');if(e)e.value='';")
+    save_main_form(driver, data, button_id="btnUpdate", is_new=False)
+
+    # ส่วนที่ import ไม่เติม (คู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน/ความเสียหาย/รูป/ค่าใช้จ่าย)
+    fill_third_parties(driver, data)
+    fill_damage_list(driver, data, main_window)
+    fill_injuries(driver, data)
+    fill_assets(driver, data)
+    if images_folder is not None:
+        upload_images(driver, images_folder, image_type=image_type,
+                      n_opponents=len(data.third_parties or []),
+                      n_injuries=len(data.injuries or []),
+                      n_assets=len(data.assets or []))
+    fill_billing(driver, data, save_price=save_price)
+    return target

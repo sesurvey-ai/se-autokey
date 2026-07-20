@@ -131,6 +131,10 @@ def parse_args():
                    help="⛔ เปิดโหมด import จริงเข้า EMCS สำหรับ --sesurvey-case "
                         "(default ไม่ใส่ = dry-run). ยังคงวินัย draft-only: บอทหยุดที่ draft "
                         "คนกดส่งเอง. ใช้เมื่อสรุปการทดสอบร่วมกันแล้วเท่านั้น")
+    p.add_argument("--sesurvey-fill-existing", action="store_true",
+                   help="เปิด draft ที่ import ไว้แล้ว (เคสที่ mark emcs_imported แล้ว) มาเติม "
+                        "หน้าหลัก/คู่กรณี/รูป/ค่าใช้จ่าย + บันทึก — ไม่ import ซ้ำ ไม่สร้าง draft ใหม่ "
+                        "ไม่กดส่งงาน (ใช้เมื่อ btnUpdate เคยล้มเพราะข้อมูลหน้าหลักไม่ครบ)")
     args = p.parse_args()
 
     if not (args.claim or args.claims or args.claims_file or args.data_json
@@ -577,6 +581,101 @@ def _populate_claim_from_report(data, rep):
     return gv('acc_damage_type') or 'auto'
 
 
+def _download_case_photos(cfg, case_id, hdrs, claim_no):
+    """โหลดรูปของเคสจาก se-survey ลง downloaded_images/<เลขเคลม>/ — คืน path โฟลเดอร์ (None ถ้าไม่มีรูป)"""
+    import requests
+    try:
+        pr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/photos",
+                          headers=hdrs, timeout=30)
+        pr.raise_for_status()
+        photos = (pr.json().get("data") or {}).get("photos") or []
+    except Exception as e:
+        log(f"⚠️ ดึงรายการรูปไม่ได้: {e} — ข้ามขั้นโหลดรูป")
+        return None
+    if not photos:
+        log("(เคสนี้ไม่มีรูปบน server)")
+        return None
+    img_dir = cfg.download_dir / (claim_no or f"sesurvey_{case_id}")
+    img_dir.mkdir(parents=True, exist_ok=True)
+    got = 0
+    for ph in photos:
+        rel = str(ph.get("file_path") or "")
+        name = rel.split("/")[-1]
+        if not name:
+            continue
+        dest = img_dir / name
+        if dest.exists() and dest.stat().st_size > 0:
+            got += 1
+            continue
+        try:
+            fr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/files",
+                              params={"path": rel}, headers=hdrs, timeout=60)
+            fr.raise_for_status()
+            dest.write_bytes(fr.content)
+            got += 1
+        except Exception as e:
+            log(f"   ⚠️ โหลดรูป {name} ไม่ได้: {e}")
+    log(f"✓ รูปเคส {got}/{len(photos)} ไฟล์ → {img_dir}")
+    return str(img_dir)
+
+
+def _run_fill_existing(cfg, args, case_id, hdrs, meta):
+    """เปิด draft ที่ import ไว้แล้วมาเติมหน้าหลัก/คู่กรณี/รูป/ค่าใช้จ่าย + บันทึก —
+    ไม่ import ซ้ำ ไม่สร้าง draft ใหม่ ไม่ mark ซ้ำ ไม่กดส่งงาน"""
+    import requests
+    import xml.etree.ElementTree as ET
+    from autokey import emcs
+    from autokey.claim_data import ClaimData
+    from autokey.surv_xml import enrich_claim_from_xml
+
+    if not meta.get("emcs_imported_at"):
+        raise SystemExit(f"เคส #{case_id} ยังไม่เคย import เข้า EMCS — ไม่มี draft ให้เติม "
+                         "(ใช้ --sesurvey-live เพื่อ import สร้าง draft ก่อน)")
+    esurvey = str(meta.get("emcs_esurvey_no") or "").strip()
+
+    # ดึง XML (.txt) เพื่อ enrich คู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน + เลขเคลม/เซอร์เวย์
+    r = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/export-xml",
+                     headers=hdrs, timeout=30)
+    r.raise_for_status()
+    xml_dir = cfg.runs_dir / "xml"
+    xml_dir.mkdir(parents=True, exist_ok=True)
+    xml_path = xml_dir / f"sesurvey_case_{case_id}.txt"
+    xml_path.write_bytes(r.content)
+    rep_el = ET.fromstring(xml_path.read_text(encoding="utf-8", errors="replace")).find("TXN_SURV_REPORT")
+    gt = lambda t: (rep_el.findtext(t) or "").strip() if rep_el is not None else ""
+    claim_no = gt("REF_CLAIM_NO")
+
+    data = ClaimData()
+    data.claim_value = claim_no
+    data.invoice_value = gt("SURV_JOBNO")
+    data.xml_file = str(xml_path)
+    enrich_claim_from_xml(data, xml_path)
+    loss_type = "auto"
+    try:
+        rr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/report",
+                          headers=hdrs, timeout=20)
+        rr.raise_for_status()
+        loss_type = _populate_claim_from_report(data, rr.json().get("data") or {})
+        log(f"✓ เติมข้อมูลหน้าหลักจาก report (ประเภทรถ {data.prb_car_type!r}, "
+            f"ลักษณะความเสียหาย {loss_type!r})")
+    except Exception as e:
+        log(f"⚠️ ดึง report มาเติม ClaimData ไม่ได้ ({e}) — fill_* อาจหยุดรอบางช่อง")
+
+    img_folder = _download_case_photos(cfg, case_id, hdrs, claim_no)
+
+    per_run_dl = cfg.download_dir / "_dl" / str(os.getpid())
+    driver = make_driver(detach=True, download_dir=per_run_dl)
+    banner(f"FILL-EXISTING: เปิด draft เดิมเคส #{case_id} (e-Survey {esurvey or '?'}) เติมข้อมูล — ไม่ import ซ้ำ")
+    try:
+        emcs.fill_existing_report(driver, cfg, data, esurvey=esurvey,
+                                  images_folder=img_folder, loss_type=loss_type, save_price=False)
+    except Exception:
+        save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"fill_existing_{case_id}")
+        raise
+    banner(f"FILL-EXISTING: เติม+บันทึก draft เสร็จ (e-Survey {esurvey}) — "
+           "ตรวจงาน + กรอกค่าใช้จ่าย + กดส่งเอง (บอทไม่กดส่ง)")
+
+
 def run_sesurvey_import(cfg, args):
     """โหมดงานจาก se-survey: ดึง SURV_REPORT XML ของเคสจาก api.sesurvey.cloud
     (แอปสำรวจของเราเอง — ข้อมูลครบกว่า XML ของ ISURVEY) → ตรวจ/parse → นำเข้า EMCS
@@ -605,6 +704,11 @@ def run_sesurvey_import(cfg, args):
         meta = meta_r.json().get("data") or {}
     except Exception as e:
         raise SystemExit(f"เช็คสถานะเคส #{case_id} จาก se-survey ไม่ได้ ({e}) — หยุดก่อนเพื่อกัน import ซ้ำ")
+    # โหมดเติม draft เดิม (--sesurvey-fill-existing): เคสต้อง import แล้ว (มี esurvey) — เปิดเรื่องเดิม
+    # มาเติมหน้าหลัก/รูป/ค่าใช้จ่าย ไม่ import ซ้ำ ไม่ mark ซ้ำ (draft มีอยู่แล้ว = ไม่สร้างเรื่องใหม่)
+    if getattr(args, "sesurvey_fill_existing", False):
+        return _run_fill_existing(cfg, args, case_id, hdrs, meta)
+
     if meta.get("emcs_imported_at"):
         banner(f"⛔ เคส #{case_id} นำเข้า EMCS ไปแล้วเมื่อ {meta['emcs_imported_at']}"
                + (f" (e-Survey {meta.get('emcs_esurvey_no')})" if meta.get("emcs_esurvey_no") else "")
