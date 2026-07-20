@@ -629,8 +629,12 @@ def _populate_claim_from_report(data, rep):
 
 
 def _download_case_photos(cfg, case_id, hdrs, claim_no):
-    """โหลดรูปของเคสจาก se-survey ลง downloaded_images/<เลขเคลม>/ — คืน path โฟลเดอร์ (None ถ้าไม่มีรูป)"""
-    import requests
+    """โหลดรูปของเคสจาก se-survey ลง downloaded_images/<เลขเคลม>/ — คืน path โฟลเดอร์ (None ถ้าไม่มีรูป)
+
+    เขียน sidecar `_categories.json` = {ชื่อไฟล์: หมวดไทย} คู่มาด้วย — se-survey เก็บ category
+    ต่อรูป (ป้ายไทยชุดเดียวกับ 'ประเภทรูป' EMCS) → upload_images อ่านไฟล์นี้จัดกลุ่มอัปแยกประเภท
+    (แทนที่จะอัปทั้งกองเป็น 'รูปรถประกัน' ประเภทเดียว)"""
+    import requests, json
     try:
         pr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/photos",
                           headers=hdrs, timeout=30)
@@ -645,11 +649,15 @@ def _download_case_photos(cfg, case_id, hdrs, claim_no):
     img_dir = cfg.download_dir / (claim_no or f"sesurvey_{case_id}")
     img_dir.mkdir(parents=True, exist_ok=True)
     got = 0
+    cat_map = {}   # ชื่อไฟล์ → หมวดไทย (ประเภทรูป EMCS) สำหรับ upload_images จัดกลุ่ม
     for ph in photos:
         rel = str(ph.get("file_path") or "")
         name = rel.split("/")[-1]
         if not name:
             continue
+        cat = str(ph.get("category") or "").strip()
+        if cat:
+            cat_map[name] = cat
         dest = img_dir / name
         if dest.exists() and dest.stat().st_size > 0:
             got += 1
@@ -662,7 +670,14 @@ def _download_case_photos(cfg, case_id, hdrs, claim_no):
             got += 1
         except Exception as e:
             log(f"   ⚠️ โหลดรูป {name} ไม่ได้: {e}")
-    log(f"✓ รูปเคส {got}/{len(photos)} ไฟล์ → {img_dir}")
+    # sidecar หมวดรูป (ให้ upload_images จัดกลุ่มตามประเภท); ไม่มีหมวดเลย = ไม่เขียน (flow เดิมยังทำงาน)
+    if cat_map:
+        try:
+            (img_dir / "_categories.json").write_text(
+                json.dumps(cat_map, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            log(f"   ⚠️ เขียน _categories.json ไม่ได้: {e}")
+    log(f"✓ รูปเคส {got}/{len(photos)} ไฟล์ → {img_dir} (มีหมวด {len(cat_map)} รูป)")
     return str(img_dir)
 
 

@@ -1730,6 +1730,52 @@ def _upload_one_batch(driver, paths, image_type: str, html5_ui: bool):
     time.sleep(2)  # ปิดกล่องแล้วหน้า refresh — พักให้นิ่งก่อนไปหน้าถัดไป
 
 
+# ── 13 ประเภทรูปหลักของ EMCS (ddlImage_Type_Html5) — se-survey เก็บ category ต่อรูปตรงชุดนี้ 1:1 ──
+_EMCS_IMAGE_TYPES = {
+    "รูปประกอบ", "รูปแผนที่เกิดเหตุ", "รูปรถประกัน", "รูปรถคู่กรณี",
+    "ใบรายงานความเสียหาย", "ใบแจ้งความเสียหาย", "ใบรับเงินจากคู่กรณี",
+    "ใบขับขี่รถประกัน", "ใบขับขี่รถคู่กรณี", "ใบรายการแจ้งความ",
+    "รูปผู้บาดเจ็บรถประกัน", "รูปผู้บาดเจ็บรถคู่กรณี", "รูปทรัพย์สินอื่นๆของคู่กรณี",
+}
+_EMCS_DEFAULT_IMAGE_TYPE = "รูปประกอบ"   # ถังรวม (v1) — รูปไม่มีหมวด/หมวดแปลก ลงที่นี่ กัน misfile
+
+
+def _se_cat_to_emcs(category):
+    """map หมวดรูป se-survey → ตัวเลือก 'ประเภทรูป' EMCS. se-survey เก็บป้ายไทยชุดเดียวกับ EMCS
+    (1:1) → คืนตรง ๆ ให้ fuzzy_select เลือก; ว่าง/ไม่รู้จัก → 'รูปประกอบ'. รองรับหมวดคู่กรณี/
+    ผู้บาดเจ็บ/ทรัพย์สินที่ต่อท้าย 'คันที่N/คนที่N/ชิ้นที่N/รายการที่N' (EMCS มีตัวเลือก dynamic)"""
+    cat = (category or "").strip()
+    if not cat:
+        return _EMCS_DEFAULT_IMAGE_TYPE
+    if cat in _EMCS_IMAGE_TYPES:
+        return cat
+    base = re.sub(r"\s*(คันที่|คนที่|ชิ้นที่|รายการที่)\s*\d+\s*$", "", cat).strip()
+    if base in _EMCS_IMAGE_TYPES:
+        return cat   # คงคำเต็ม — fuzzy จับตัวเลือก 'คันที่ N' ได้ ถ้าไม่มีก็ตกไปตัวฐาน
+    log(f"   ⚠️ หมวดรูป '{cat}' ไม่ตรงประเภท EMCS — ใช้ '{_EMCS_DEFAULT_IMAGE_TYPE}'")
+    return _EMCS_DEFAULT_IMAGE_TYPE
+
+
+def _group_flat_by_category(folder, file_names, fallback_type):
+    """จัดกลุ่มรูปในโฟลเดอร์แบนตามหมวด (จาก _categories.json ของ se-survey) →
+    [(ประเภทรูป EMCS, [Path,...]), ...] เรียงตามลำดับที่พบหมวด
+    ไม่มี manifest (flow ISURVEY) → คืน None ให้ผู้เรียกใช้ batch เดี่ยวแบบเดิม (fallback_type)"""
+    import json
+    manifest = folder / "_categories.json"
+    if not manifest.exists():
+        return None
+    try:
+        cat_map = json.loads(manifest.read_text(encoding="utf-8"))
+    except Exception as e:
+        log(f"   ⚠️ อ่าน _categories.json ไม่ได้ ({e}) — อัปเป็นประเภทเดียว")
+        return None
+    groups = {}   # ประเภทรูป → [Path]  (dict รักษาลำดับ py3.7+)
+    for name in file_names:
+        etype = _se_cat_to_emcs(cat_map.get(name))
+        groups.setdefault(etype, []).append(folder / name)
+    return list(groups.items())
+
+
 def upload_images(driver, folder, image_type: str = "รูปรถประกัน", only=None,
                   n_opponents: int = 0, n_injuries: int = 0, n_assets: int = 0):
     """อัปโหลดรูปทั้งหมด: รูปรถประกัน (หลัก) + บุคคลที่สาม (tp_veh/tp_person/tp_prop)
@@ -1763,7 +1809,15 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
             chosen = set(only)
             files = [f for f in files if f in chosen]
         if files:
-            batches.append((image_type, [folder / name for name in files]))
+            grouped = _group_flat_by_category(folder, files, image_type)
+            if grouped is None:
+                # ไม่มี _categories.json (flow ISURVEY) → ชุดเดียวประเภท image_type แบบเดิม
+                batches.append((image_type, [folder / name for name in files]))
+            else:
+                # se-survey: แยกตามหมวดที่ติดมากับรูป → หลายชุด หลายประเภท
+                batches.extend(grouped)
+                log("EMCS: จัดกลุ่มรูปตามประเภท — " +
+                    ", ".join(f"{t}×{len(p)}" for t, p in grouped))
         elif only is not None:
             log("EMCS: ผู้ใช้ไม่ได้เลือกรูปรถประกัน — ข้ามส่วนรูปรถประกัน")
     batches.extend(opp_batches)     # รูปคู่กรณี (tp_veh/)
