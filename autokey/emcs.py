@@ -934,6 +934,21 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
     _set_selectpicker(driver, "ddlInsurerBRList", branch)
     time.sleep(1.5)   # ให้ postback ของบริษัท/สาขา (บางบริษัทมี ajax) settle ก่อนแนบไฟล์
 
+    # patch INSURERBRID ในไฟล์ให้เป็น "รหัสสาขา" (ตัวเลข) ที่ตรงกับสาขาที่เลือกจริง —
+    # se-survey ใส่เป็นข้อความ (เช่น "กรุงเทพ") แต่ EMCS validate ว่าต้องเป็นรหัสสาขา
+    # ไม่งั้น server ตอบ "ไม่พบข้อมูลนำเข้าที่ระบบต้องการ". branch = composite "brId|xxx" → ใช้ส่วนหน้า
+    br_id = str(branch).split("|")[0].strip()
+    if br_id.isdigit():
+        try:
+            _t = xml_path.read_text(encoding="utf-8", errors="replace")
+            _new = re.sub(r"<INSURERBRID>.*?</INSURERBRID>",
+                          f"<INSURERBRID>{br_id}</INSURERBRID>", _t, count=1, flags=re.S)
+            if _new != _t:
+                xml_path.write_text(_new, encoding="utf-8")
+                log(f"   patch INSURERBRID → {br_id} (ให้ตรงสาขาที่เลือก)")
+        except Exception as _e:
+            log(f"   ⚠️ patch INSURERBRID ไม่สำเร็จ: {_e}")
+
     # แนบไฟล์ แล้ว "ยืนยันว่าติดจริง" ก่อนกดนำเข้า (กัน import ทั้งที่ไฟล์ไม่ติด → EMCS สร้างเรื่องเปล่า)
     # หมายเหตุสำคัญ: EMCS มี change handler validate นามสกุล — รับเฉพาะ .txt เท่านั้น
     # ไฟล์นามสกุลอื่น (เช่น .xml) จะโดน $("#inpImport").val("") ล้างทิ้งทันที + swal เตือน
@@ -964,9 +979,21 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
         accept_alert(driver, timeout=10)               # เผื่อมี JS confirm
     except Exception:
         pass
-    swal = _close_sweetalert(driver, timeout=12)
-    if swal:
-        log(f"   [import] {swal[:140]}")
+    # จับ swal เต็มก่อนปิด — server-side validation ส่งตารางรายละเอียด (field ที่ผิด) มาใน content span
+    # ซึ่ง _close_sweetalert จับแค่หัวเรื่อง ไม่รวม span → อ่าน innerText ของ modal ทั้งก้อน
+    time.sleep(2.5)
+    swal_full = ""
+    try:
+        swal_full = driver.execute_script(
+            "var m=document.querySelector('.swal-modal,.sweet-alert,.swal-overlay');"
+            "return m ? m.innerText : '';") or ""
+    except Exception:
+        pass
+    swal = _close_sweetalert(driver, timeout=12) or ""
+    if swal_full:
+        log(f"   [import swal] {swal_full[:600]}")
+    elif swal:
+        log(f"   [import] {swal[:200]}")
 
     # ต้องเข้าหน้าฟอร์ม (frmSurvey) จริง — ไม่งั้น import ล้มเหลว
     try:
@@ -976,7 +1003,7 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
     except TimeoutException as e:
         raise RuntimeError(
             "นำเข้า XML แล้วไม่เข้าหน้าฟอร์ม (frmSurvey) — "
-            f"ข้อความระบบ: {swal[:160]!r}") from e
+            f"ข้อความระบบ: {(swal_full or swal)[:400]!r}") from e
     m = re.search(r"S\d{9,13}", swal or "")
     log("EMCS: นำเข้า XML สำเร็จ → ฟอร์มแก้ (frmSurvey)"
         + (f" e-Survey {m.group(0)}" if m else ""))
