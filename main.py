@@ -523,6 +523,50 @@ _CAR_TYPE_TH = {'A': 'เก๋ง', 'E': 'เก๋ง', 'M': 'รถจัก�
                 'T': 'กระบะ', 'V': 'รถตู้', 'W': 'รถบรรทุก'}
 
 
+def _populate_third_parties_from_report(data, rep):
+    """สร้าง data.third_parties จาก opposing_parties (ค่าไทยของ se-survey) แทน XML (ที่ให้ code) —
+    fill_third_parties อ่าน veh_type (ไทย เช่น 'เก๋ง') + insurer (ชื่อเต็ม) เพื่อเลือก dropdown บังคับ
+    ของคู่กรณี (ประเภทรถ/มีประกันภัยที่); XML ให้ veh_type_code ('A') ซึ่ง fuzzy_select ไม่ match"""
+    opp = rep.get("opposing_parties")
+    if not isinstance(opp, list) or not opp:
+        return
+    tps = []
+    for o in opp:
+        if not isinstance(o, dict):
+            continue
+        first = str(o.get("first_name") or "").strip()
+        last = str(o.get("last_name") or "").strip()
+        # ชื่อ key ต้องตรงกับที่ fill_third_parties อ่าน (emcs.py): idcard/lic_no/lic_issue_date
+        # (report ใช้ cid/license_no/license_start — remap ให้ตรง ไม่งั้นช่องบัตร/ใบขับขี่ว่าง)
+        tps.append({
+            "opo_type": "รถคู่กรณี",
+            "plate_no": str(o.get("plate") or "").strip(),
+            # จังหวัดทะเบียนรถคู่กรณี (* บังคับ): report ให้ชื่อ 'province' (fill_third_parties เลือกด้วย fuzzy)
+            "plate_province": str(o.get("plate_province") or o.get("province") or "").strip(),
+            "veh_type": str(o.get("car_type") or "").strip(),
+            "car_brand": str(o.get("car_brand") or "").strip(),
+            "car_model": str(o.get("car_model") or "").strip(),
+            "chassis_no": str(o.get("vin") or o.get("chassis_no") or "").strip(),
+            "drv_name": f"{first} {last}".strip(),
+            "opo_name": str(o.get("owner_name") or "").strip(),
+            "gender": str(o.get("gender") or "").strip(),
+            "age": str(o.get("age") or "").strip(),
+            "birthdate": str(o.get("birthdate") or "").strip(),
+            "address": str(o.get("address") or "").strip(),
+            "phone": str(o.get("phone") or "").strip(),
+            "idcard": str(o.get("cid") or "").strip(),
+            "lic_no": str(o.get("license_no") or "").strip(),
+            "lic_issue_date": str(o.get("license_start") or "").strip(),
+            "insurer": str(o.get("insurer") or "").strip(),
+            "policy_no": str(o.get("policy_no") or "").strip(),
+            "claim_no": str(o.get("claim_no") or "").strip(),
+            # ประเภทกรมธรรม์คู่กรณี: report ไม่มีช่องนี้ → "-" (บาง EMCS บังคับ ไม่งั้น validForm ฟ้อง)
+            "insure_type": str(o.get("insure_type") or o.get("policy_type") or "-").strip(),
+        })
+    if tps:
+        data.third_parties = tps
+
+
 def _populate_claim_from_report(data, rep):
     """เติม ClaimData จาก report (ค่าไทยของ se-survey) ให้ fill_* กรอกหน้าหลัก EMCS ได้ครบ —
     XML import ตั้งค่าไว้บางส่วน แต่ fill_* ต้องมีค่าไทยใน ClaimData เพื่อเลือก dropdown บังคับ
@@ -578,6 +622,8 @@ def _populate_claim_from_report(data, rep):
     data.noti_date, data.noti_time = split_dt('acc_insurance_notify_date')
     data.arrive_date, data.arrive_time = split_dt('acc_survey_arrive_date')
     data.finish_date, data.finish_time = split_dt('acc_survey_complete_date')
+    # คู่กรณี: เขียนทับ third_parties ด้วยค่าไทยจาก report (XML ให้ code — fill_third_parties เลือก dropdown ไม่ได้)
+    _populate_third_parties_from_report(data, rep)
     # ลักษณะความเสียหาย: se-survey มี acc_damage_type → ใช้เลย; ไม่มี → 'auto' (resolve_loss_type เดิม)
     return gv('acc_damage_type') or 'auto'
 

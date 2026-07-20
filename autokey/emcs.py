@@ -259,10 +259,17 @@ def fill_third_parties(driver, data: ClaimData):
             log(f"   - ข้ามยี่ห้อรถคู่กรณี {n + 1} (เลือกประเภทรถก่อน ตัวเลือกยี่ห้อถึงจะขึ้น)")
         set_text(driver, p + "txtCModel", tp.get("car_model", ""))
         set_text(driver, p + "txtChassisNo", tp.get("chassis_no", ""))
-        _select_index(driver, p + "ddlCar_Province",
-                      int(tp["plate_province_id"])
-                      if tp.get("plate_province_id", "").strip().isdigit() else None,
-                      label=f"จังหวัดรถคู่กรณี {n + 1}")
+        # จังหวัดทะเบียนรถคู่กรณี (* บังคับ) — se-survey ให้ "ชื่อ" (เลือกด้วย fuzzy เหมือนรถประกัน);
+        # ISURVEY เดิมให้ index → รองรับทั้งคู่ (มีชื่อใช้ชื่อก่อน ไม่มีค่อย fallback index)
+        plate_prov_name = (tp.get("plate_province", "") or "").strip()
+        if plate_prov_name:
+            fuzzy_select(driver, p + "ddlCar_Province", plate_prov_name,
+                         label=f"จังหวัดรถคู่กรณี {n + 1}")
+        else:
+            _select_index(driver, p + "ddlCar_Province",
+                          int(tp["plate_province_id"])
+                          if tp.get("plate_province_id", "").strip().isdigit() else None,
+                          label=f"จังหวัดรถคู่กรณี {n + 1}")
 
         # ผู้ขับขี่ — ฟอร์มคู่กรณีใช้ช่อง "ชื่อ" เดี่ยวที่มองเห็น = txtDri_Name
         # (ไม่ใช่ txtDri_Name01 ซึ่งเป็น layout สำรองที่ซ่อนไว้ — เดิมเซ็ตผิดช่อง

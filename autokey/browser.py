@@ -283,7 +283,20 @@ def iso_to_thai_date(date_str: str) -> str:
     """แปลงวันที่จากไฟล์ XML ('YYYY-MM-DD[ HH:MM:SS]') เป็น dd/mm/yyyy (พ.ศ.)
     ปีในไฟล์ปนกันทั้ง ค.ศ. และ พ.ศ. — ถ้า < 2400 ถือเป็น ค.ศ. แล้วบวก 543"""
     date_str = (date_str or "").strip().split(" ")[0]
-    if not date_str or "-" not in date_str:
+    if not date_str:
+        return ""
+    # se-survey/report ให้วันที่มาเป็น dd/mm/yyyy (พ.ศ.) อยู่แล้ว = ฟอร์แมตที่ EMCS ต้องการ
+    # → passthrough (แปลงปี ค.ศ.→พ.ศ. เผื่อกรณีปนมา) ไม่งั้น "/" ที่ไม่มี "-" จะถูกทิ้งเป็นค่าว่าง
+    if "/" in date_str and "-" not in date_str:
+        try:
+            d, m, y = date_str.split("/")
+            year = int(y)
+            if year < 2400:
+                year += 543
+            return f"{int(d):02d}/{int(m):02d}/{year}"
+        except ValueError:
+            return ""
+    if "-" not in date_str:
         return ""
     try:
         y, m, d = date_str.split("-")
