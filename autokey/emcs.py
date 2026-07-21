@@ -1879,9 +1879,15 @@ def open_report_images(driver, claim: str, esurvey: str):
     """ค้นเลขเคลม (ให้ลิงก์ e-Survey โผล่บนหน้า MainPage) → คลิกลิงก์เปิดเรื่อง →
     รอเมนู 'รูปประกอบ' (wuMenuPage1_imbImage) พร้อม (upload_images จะกดเมนูเอง)"""
     find_existing_reports(driver, claim)
-    wait_clickable(
-        driver, By.XPATH, f"//a[normalize-space(text())='{esurvey}']", 20
-    ).click()
+    link = wait_present(driver, By.XPATH, f"//a[normalize-space(text())='{esurvey}']", 20)
+    # EMCS ล็อกเรื่องที่กำลังถูกเปิด/แก้ไข → render ลิงก์ e-Survey เป็น disabled (คลิกไม่ทำงาน)
+    # เช็คก่อนคลิก เพื่อขึ้น error ชัดเจน แทนที่จะ timeout ลึก ๆ ที่ wuMenuPage1_imbImage
+    if link.get_attribute("disabled") is not None or "not-allowed" in (link.get_attribute("style") or ""):
+        raise RuntimeError(
+            f"เรื่อง {esurvey} ถูกล็อกใน EMCS (ลิงก์ e-Survey ถูก disable = มี session เปิด/แก้ไขค้างอยู่). "
+            "รอ lock ปลด (มัก timeout นาน/อาจต้องให้แอดมิน EMCS ปลด) หรือปิด session ที่เปิดเรื่องนี้ค้าง "
+            "ให้เรียบร้อยก่อน แล้วลองใหม่ — ห้ามเปิดเรื่องนี้ค้างในเบราว์เซอร์อื่นระหว่างรันบอท")
+    wait_clickable(driver, By.XPATH, f"//a[normalize-space(text())='{esurvey}']", 20).click()
     wait_present(driver, By.ID, "wuMenuPage1_imbImage", 20)
 
 
