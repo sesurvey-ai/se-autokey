@@ -135,6 +135,10 @@ def parse_args():
                    help="เปิด draft ที่ import ไว้แล้ว (เคสที่ mark emcs_imported แล้ว) มาเติม "
                         "หน้าหลัก/คู่กรณี/รูป/ค่าใช้จ่าย + บันทึก — ไม่ import ซ้ำ ไม่สร้าง draft ใหม่ "
                         "ไม่กดส่งงาน (ใช้เมื่อ btnUpdate เคยล้มเพราะข้อมูลหน้าหลักไม่ครบ)")
+    p.add_argument("--sesurvey-images-only", action="store_true",
+                   help="เปิด draft เดิม แล้วอัปเฉพาะ 'รูป' (แยกตามประเภทรูป EMCS ตาม category) — "
+                        "ไม่แตะหน้าหลัก/คู่กรณี/ค่าใช้จ่าย (กันเขียนทับที่ผู้ตรวจแก้ไว้) ไม่กดส่งงาน. "
+                        "ใช้ตอนต้องอัปรูปใหม่ให้แยกประเภท (ลบรูปเก่าใน EMCS ก่อน)")
     args = p.parse_args()
 
     if not (args.claim or args.claims or args.claims_file or args.data_json
@@ -738,6 +742,64 @@ def _run_fill_existing(cfg, args, case_id, hdrs, meta):
            "ตรวจงาน + กรอกค่าใช้จ่าย + กดส่งเอง (บอทไม่กดส่ง)")
 
 
+def _run_images_only(cfg, args, case_id, hdrs, meta):
+    """เปิด draft เดิม แล้วอัปเฉพาะ 'รูป' แยกตามประเภทรูป EMCS (ตาม category ของ se-survey) —
+    ไม่แตะหน้าหลัก/คู่กรณี/ค่าใช้จ่าย (กันเขียนทับที่ผู้ตรวจแก้) ไม่ import ซ้ำ ไม่ mark ไม่กดส่งงาน"""
+    import requests
+    import xml.etree.ElementTree as ET
+    from pathlib import Path
+    from autokey import emcs
+    from autokey.images import list_images
+
+    if not meta.get("emcs_imported_at"):
+        raise SystemExit(f"เคส #{case_id} ยังไม่เคย import เข้า EMCS — ไม่มี draft ให้เติมรูป")
+    esurvey = str(meta.get("emcs_esurvey_no") or "").strip()
+
+    # ต้องรู้เลขเคลมเพื่อค้นเรื่องเดิมใน EMCS
+    r = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/export-xml",
+                     headers=hdrs, timeout=30)
+    r.raise_for_status()
+    xml_dir = cfg.runs_dir / "xml"
+    xml_dir.mkdir(parents=True, exist_ok=True)
+    xml_path = xml_dir / f"sesurvey_case_{case_id}.txt"
+    xml_path.write_bytes(r.content)
+    rep_el = ET.fromstring(xml_path.read_text(encoding="utf-8", errors="replace")).find("TXN_SURV_REPORT")
+    claim_no = (rep_el.findtext("REF_CLAIM_NO") or "").strip() if rep_el is not None else ""
+    if not claim_no:
+        raise SystemExit("อ่านเลขเคลมจาก XML ไม่ได้ — อัปรูปไม่ได้")
+
+    img_folder = _download_case_photos(cfg, case_id, hdrs, claim_no)
+    if not img_folder:
+        raise SystemExit(f"เคส #{case_id} ไม่มีรูปให้อัป")
+
+    per_run_dl = cfg.download_dir / "_dl" / str(os.getpid())
+    # detach=False + quit หลังเสร็จ = ปิด browser เอง → ปลดล็อกงานทันที ให้ผู้ตรวจเปิดดู/กดส่งต่อได้
+    # (EMCS ล็อกงานเมื่อ session ใดเปิดเรื่องอยู่ — เปิดค้าง = session อื่นเปิดไม่ได้ e-Survey link ถูก disable)
+    driver = make_driver(detach=False, download_dir=per_run_dl)
+    banner(f"IMAGES-ONLY: เปิด draft เดิมเคส #{case_id} (e-Survey {esurvey or '?'}) อัปรูปแยกประเภท — ไม่แตะฟอร์ม")
+    try:
+        emcs.login(driver, cfg)
+        if esurvey:
+            emcs.open_report_images(driver, claim_no, esurvey)
+        else:
+            reports = emcs.find_existing_reports(driver, claim_no)
+            if not reports:
+                raise RuntimeError(f"ไม่พบเรื่องเดิมของเคลม {claim_no} ใน EMCS")
+            emcs.open_report_images(driver, claim_no, emcs._pick_draft_report(reports, ""))
+        # อัปทุกรูป (only=รายชื่อไฟล์ทั้งหมด = ไม่เปิด webui ให้เลือก) — upload_images จัดกลุ่มตามหมวดเอง
+        names = list_images(Path(img_folder))
+        emcs.upload_images(driver, img_folder, only=names)
+    except Exception:
+        save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"images_only_{case_id}")
+        raise
+    finally:
+        try:
+            driver.quit()   # ปิด browser = ปลดล็อกงานทันที
+        except Exception:
+            pass
+    banner(f"IMAGES-ONLY: อัปรูปเสร็จ (e-Survey {esurvey}) — ตรวจ + กดส่งเอง (บอทไม่กดส่ง ไม่แตะฟอร์ม)")
+
+
 def run_sesurvey_import(cfg, args):
     """โหมดงานจาก se-survey: ดึง SURV_REPORT XML ของเคสจาก api.sesurvey.cloud
     (แอปสำรวจของเราเอง — ข้อมูลครบกว่า XML ของ ISURVEY) → ตรวจ/parse → นำเข้า EMCS
@@ -770,6 +832,9 @@ def run_sesurvey_import(cfg, args):
     # มาเติมหน้าหลัก/รูป/ค่าใช้จ่าย ไม่ import ซ้ำ ไม่ mark ซ้ำ (draft มีอยู่แล้ว = ไม่สร้างเรื่องใหม่)
     if getattr(args, "sesurvey_fill_existing", False):
         return _run_fill_existing(cfg, args, case_id, hdrs, meta)
+    # โหมดอัปรูปอย่างเดียว (--sesurvey-images-only): เปิด draft เดิม อัปรูปแยกประเภท ไม่แตะฟอร์ม
+    if getattr(args, "sesurvey_images_only", False):
+        return _run_images_only(cfg, args, case_id, hdrs, meta)
 
     if meta.get("emcs_imported_at"):
         banner(f"⛔ เคส #{case_id} นำเข้า EMCS ไปแล้วเมื่อ {meta['emcs_imported_at']}"
