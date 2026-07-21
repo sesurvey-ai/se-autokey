@@ -619,6 +619,11 @@ def _populate_claim_from_report(data, rep):
     data.acc_date = gv('acc_date')
     data.acc_time = gv('acc_time')
     data.acc_result = gv('acc_fault')
+    # ความเห็น/ผลสำรวจ → EMCS หน้าหลัก (ช่องมาร์ค 'not used' แต่ user ขอให้เติม; se-survey มีข้อความครบ)
+    # ยุบ \n → เว้นวรรค: txtAcc_result/txtAcc_Comment เป็น input บรรทัดเดียว — ส่ง \n ผ่าน send_keys
+    # = กด Enter อาจ trigger postback ก่อนเวลา
+    data.accident_summary = " ".join(str(gv('survey_result') or "").split())   # → ผลการดำเนินงาน (txtAcc_result)
+    data.review_comment = " ".join(str(gv('review_comment') or "").split())    # → ความเห็นของผู้ตรวจสอบ (txtAcc_Comment)
     data.surveyor_name = gv('acc_surveyor') or gv('surveyor_name')
     data.damage_estimate = gv('estimated_cost')
     data.prb_number = gv('prb_number')

@@ -67,7 +67,8 @@ class ClaimData:
     arrive_time: str = ""          # เวลาถึงที่เกิดเหตุ
     finish_date: str = ""          # วันเสร็จงาน
     finish_time: str = ""          # เวลาเสร็จงาน
-    accident_summary: str = ""     # บันทึกความเห็นหัวหน้า
+    accident_summary: str = ""     # บันทึกความเห็นหัวหน้า → EMCS 'ผลการดำเนินงาน' (txtAcc_result)
+    review_comment: str = ""       # ความเห็นผู้ตรวจสอบ (se-survey review_comment) → EMCS txtAcc_Comment
 
     # ---- Tab 2: Accident info ----
     acc_date: str = ""             # วันที่เกิดเหตุ

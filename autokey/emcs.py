@@ -1189,6 +1189,9 @@ def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห�
 
     set_text(driver, "txtAcc_Place", data.acc_place)
     set_text(driver, "txtAcc_Detail", data.acc_detail)
+    # ผลการดำเนินงาน + ความเห็นผู้ตรวจสอบ (se-survey มีข้อความ; EMCS มาร์ค 'not used' แต่ช่องแก้ได้)
+    set_text(driver, "txtAcc_result", data.accident_summary)
+    set_text(driver, "txtAcc_Comment", data.review_comment)
     set_text(driver, "txtAcc_Surv", data.surveyor_name)
 
     # วัน-เวลาลูกค้าแจ้ง และบริษัทแจ้งพนักงานสำรวจ (ใช้ค่าเดียวกันตามเดิม)
