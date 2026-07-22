@@ -554,15 +554,18 @@ def _populate_third_parties_from_report(data, rep):
     opp = rep.get("opposing_parties")
     if not isinstance(opp, list) or not opp:
         return
+    # third_parties จาก XML (enrich ก่อนหน้า) มี province_id/district_id เป็นรหัส 4 หลัก
+    # (จาก DRI_PROVINCEID/DRI_DISTRICTID) — คงไว้ให้ fill_third_parties เลือก ddlDri_Province/DistrictID
+    xml_tps = list(data.third_parties or [])
     tps = []
-    for o in opp:
+    for i, o in enumerate(opp):
         if not isinstance(o, dict):
             continue
         first = str(o.get("first_name") or "").strip()
         last = str(o.get("last_name") or "").strip()
         # ชื่อ key ต้องตรงกับที่ fill_third_parties อ่าน (emcs.py): idcard/lic_no/lic_issue_date
         # (report ใช้ cid/license_no/license_start — remap ให้ตรง ไม่งั้นช่องบัตร/ใบขับขี่ว่าง)
-        tps.append({
+        tp = {
             "opo_type": "รถคู่กรณี",
             "plate_no": str(o.get("plate") or "").strip(),
             # จังหวัดทะเบียนรถคู่กรณี (* บังคับ): report ให้ชื่อ 'province' (fill_third_parties เลือกด้วย fuzzy)
@@ -589,7 +592,13 @@ def _populate_third_parties_from_report(data, rep):
             # ความเสียหายคู่กรณี (แผนภาพมือถือ) → fill_opponent_damage (ต่อคัน ≤ MAX_DAMAGE_ITEMS)
             # เดิมไม่ใส่ key นี้ → tp.get('damages') ว่าง → ฟอร์มความเสียหายคู่กรณีเปล่าทุกคัน
             "damages": [{"part": p, "level": r} for p, r in _report_damage_items(o.get("damage"))],
-        })
+        }
+        # คงรหัสจังหวัด/อำเภอผู้ขับคู่กรณีจาก XML (fill_third_parties เลือก ddlDri_*ID ด้วยรหัส ไม่ใช่ชื่อไทย)
+        if i < len(xml_tps):
+            for _k in ("province_id", "district_id"):
+                if str(xml_tps[i].get(_k) or "").strip():
+                    tp[_k] = xml_tps[i][_k]
+        tps.append(tp)
     if tps:
         data.third_parties = tps
 
