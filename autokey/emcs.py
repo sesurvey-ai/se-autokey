@@ -108,9 +108,15 @@ def gender_from_title(name: str) -> str:
 
 
 def resolve_gender(explicit: str, name: str = "") -> str:
-    """เพศจาก ISURVEY/XML ก่อน (normalize F→W); ว่าง → อนุมานจากคำนำหน้าในชื่อ
-    คืน 'M' (ชาย) / 'W' (หญิง) / '' (ไม่รู้ — ให้คนเลือกเอง)"""
+    """เพศจาก ISURVEY/XML ก่อน (normalize F→W, ค่าไทย ชาย/หญิง→M/W); ว่าง → อนุมานจากคำนำหน้าในชื่อ
+    คืน 'M' (ชาย) / 'W' (หญิง) / '' (ไม่รู้ — ให้คนเลือกเอง)
+    หมายเหตุ: คู่กรณี/ผู้บาดเจ็บจากแอปมือถือส่งเพศเป็นค่าไทย 'ชาย'/'หญิง' (ต่างจากรถประกันที่ส่ง M/F)
+    ทั้งทาง XML และ /cases/:id/report — normalize ที่นี่จุดเดียวครอบทุกเส้นทาง"""
     g = (explicit or "").strip().upper()
+    if g in ("ชาย", "ชาย ", "MALE"):
+        return "M"
+    if g in ("หญิง", "หญิง ", "FEMALE"):
+        return "W"
     if g == "F":
         g = "W"
     if g in ("M", "W"):
