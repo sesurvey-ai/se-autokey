@@ -526,6 +526,26 @@ def run_import_xml(cfg, args):
 _CAR_TYPE_TH = {'A': 'เก๋ง', 'E': 'เก๋ง', 'M': 'รถจักรยานยนต์', 'O': 'อื่นๆ',
                 'T': 'กระบะ', 'V': 'รถตู้', 'W': 'รถบรรทุก'}
 
+# ── ความเสียหาย (แผนภาพมือถือ) → รายการที่ fill_damage_list/fill_opponent_damage กรอกได้ ──
+_DMG_POS_TH = {'L': 'ซ้าย', 'R': 'ขวา', 'A': ''}          # pos → ต่อท้ายชื่อชิ้นส่วน (ให้ EMCS อ่านซ้าย/ขวา)
+_DMG_LVL_RANK = {'L': 'A', 'M': 'B', 'H': 'C', 'X': 'D'}  # ระดับ ต่ำ/กลาง/สูง/สูงมาก → rank A-D (rdoDam_Lavel)
+
+
+def _report_damage_items(raw):
+    """[{part, pos:L/R/A, level:L/M/H/X}] (แผนภาพความเสียหายมือถือ) →
+    [(ชื่อชิ้นส่วน+ซ้าย/ขวา, rank A-D)] ใช้ร่วมกันทั้งรถประกันและคู่กรณี"""
+    out = []
+    for it in (raw or []):
+        if not isinstance(it, dict):
+            continue
+        part = str(it.get('part') or '').strip()
+        if not part:
+            continue
+        pos = str(it.get('pos') or '').strip().upper()
+        rank = _DMG_LVL_RANK.get(str(it.get('level') or '').strip().upper(), '')
+        out.append((part + _DMG_POS_TH.get(pos, ''), rank))
+    return out
+
 
 def _populate_third_parties_from_report(data, rep):
     """สร้าง data.third_parties จาก opposing_parties (ค่าไทยของ se-survey) แทน XML (ที่ให้ code) —
@@ -566,6 +586,9 @@ def _populate_third_parties_from_report(data, rep):
             "claim_no": str(o.get("claim_no") or "").strip(),
             # ประเภทกรมธรรม์คู่กรณี: report ไม่มีช่องนี้ → "-" (บาง EMCS บังคับ ไม่งั้น validForm ฟ้อง)
             "insure_type": str(o.get("insure_type") or o.get("policy_type") or "-").strip(),
+            # ความเสียหายคู่กรณี (แผนภาพมือถือ) → fill_opponent_damage (ต่อคัน ≤ MAX_DAMAGE_ITEMS)
+            # เดิมไม่ใส่ key นี้ → tp.get('damages') ว่าง → ฟอร์มความเสียหายคู่กรณีเปล่าทุกคัน
+            "damages": [{"part": p, "level": r} for p, r in _report_damage_items(o.get("damage"))],
         })
     if tps:
         data.third_parties = tps
@@ -637,24 +660,12 @@ def _populate_claim_from_report(data, rep):
     # ความเสียหายรถประกัน (แผนภาพ structured) → รายการ EMCS ให้ fill_damage_list กรอก popup ได้
     # se-survey เก็บ insured_damage = [{part, pos:L/R/A, level:L/M/H/X}] (ไม่มีประเภท ครูด/บุบ แยก)
     # ก่อนหน้านี้ data.damage ว่างเสมอ → ฟอร์มความเสียหาย EMCS เปล่า ต้องติ๊กเองทุกเคส
-    idmg = rep.get('insured_damage')
-    if isinstance(idmg, list) and idmg:
-        _POS_TH = {'L': 'ซ้าย', 'R': 'ขวา', 'A': ''}         # ต่อท้ายชื่อชิ้นส่วน → _damage_side อ่านซ้าย/ขวา
-        _LVL_RANK = {'L': 'A', 'M': 'B', 'H': 'C', 'X': 'D'}  # ต่ำ/กลาง/สูง/สูงมาก → A-D (rdoDam_Lavel)
-        parts, types, ranks, costs = [], [], [], []
-        for it in idmg:
-            if not isinstance(it, dict):
-                continue
-            part = str(it.get('part') or '').strip()
-            if not part:
-                continue
-            pos = str(it.get('pos') or '').strip().upper()
-            parts.append(part + _POS_TH.get(pos, ''))
-            types.append('')  # แอปไม่มีประเภทความเสียหายแยก (fill ใช้ชิ้นส่วน+ระดับพอ)
-            ranks.append(_LVL_RANK.get(str(it.get('level') or '').strip().upper(), ''))
-            costs.append('')
-        if parts:
-            data.damage, data.type_damage, data.rank_damage, data.cost_damage = parts, types, ranks, costs
+    dmg = _report_damage_items(rep.get('insured_damage'))
+    if dmg:
+        data.damage = [p for p, _ in dmg]
+        data.type_damage = [''] * len(dmg)   # แอปไม่มีประเภทความเสียหายแยก (fill ใช้ชิ้นส่วน+ระดับพอ)
+        data.rank_damage = [r for _, r in dmg]
+        data.cost_damage = [''] * len(dmg)
     # ลักษณะความเสียหาย: se-survey มี acc_damage_type → ใช้เลย; ไม่มี → 'auto' (resolve_loss_type เดิม)
     return gv('acc_damage_type') or 'auto'
 
