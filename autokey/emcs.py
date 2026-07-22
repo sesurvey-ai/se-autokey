@@ -2075,7 +2075,15 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
             pass
     set_text(driver, "txtBill_No", data.invoice_value)
     set_text(driver, "wuCale_Bill_Date_txtCalendar", today_buddhist())
-    set_text(driver, "txtAcc_result", data.accident_summary)
+    # 3 ช่องสรุปความเห็นของหน้านี้ (textarea ทั้งหมด — ยืนยัน id จากหน้าจริง 21/07/69)
+    # try รายช่อง: บางบริษัท/บางเลย์เอาต์อาจไม่มีช่องเหล่านี้ — ขาดช่องต้องไม่ล้มทั้งหน้า
+    for _fid, _val in (("txtAcc_result", data.accident_summary),      # ผลการดำเนินงาน
+                       ("txtAcc_Comment", data.review_comment),       # ความเห็นของผู้ตรวจสอบ
+                       ("txtSurv_Comment", data.surveyor_comment)):   # ความเห็นของเซอร์เวย์
+        try:
+            set_text(driver, _fid, _val)
+        except Exception as e:
+            log(f"   ⚠️ กรอก {_fid} ไม่ได้ ({type(e).__name__}) — ข้าม กรอกเอง")
 
     # readback ยืนยันค่าที่กรอก (set_text เงียบตอนสำเร็จ — log ไว้ให้ตรวจ/audit)
     try:
@@ -2085,6 +2093,14 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
         log(f"   ✓ เลขที่ใบแจ้งหนี้ = {_bn!r} | วันที่วางบิล = {_bd!r}")
     except Exception:
         pass
+    for _fid, _lbl in (("txtAcc_result", "ผลการดำเนินงาน"),
+                       ("txtAcc_Comment", "ความเห็นของผู้ตรวจสอบ"),
+                       ("txtSurv_Comment", "ความเห็นของเซอร์เวย์")):
+        try:
+            _v = driver.find_element(By.ID, _fid).get_attribute("value") or ""
+            log(f"   ✓ {_lbl} = {_v[:60]!r}{'…' if len(_v) > 60 else ''}")
+        except Exception:
+            pass
 
     # ตารางราคา — กรอกเฉพาะช่อง "เสนอ" จากข้อมูล XML
     fill_fee_table(driver, data.bill)

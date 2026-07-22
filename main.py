@@ -624,6 +624,7 @@ def _populate_claim_from_report(data, rep):
     # = กด Enter อาจ trigger postback ก่อนเวลา
     data.accident_summary = " ".join(str(gv('survey_result') or "").split())   # → ผลการดำเนินงาน (txtAcc_result)
     data.review_comment = " ".join(str(gv('review_comment') or "").split())    # → ความเห็นของผู้ตรวจสอบ (txtAcc_Comment)
+    data.surveyor_comment = " ".join(str(gv('surveyor_comment') or "").split())  # → ความเห็นของเซอร์เวย์ (txtSurv_Comment หน้าค่าใช้จ่าย)
     data.surveyor_name = gv('acc_surveyor') or gv('surveyor_name')
     data.damage_estimate = gv('estimated_cost')
     data.prb_number = gv('prb_number')
@@ -633,6 +634,27 @@ def _populate_claim_from_report(data, rep):
     data.finish_date, data.finish_time = split_dt('acc_survey_complete_date')
     # คู่กรณี: เขียนทับ third_parties ด้วยค่าไทยจาก report (XML ให้ code — fill_third_parties เลือก dropdown ไม่ได้)
     _populate_third_parties_from_report(data, rep)
+    # ความเสียหายรถประกัน (แผนภาพ structured) → รายการ EMCS ให้ fill_damage_list กรอก popup ได้
+    # se-survey เก็บ insured_damage = [{part, pos:L/R/A, level:L/M/H/X}] (ไม่มีประเภท ครูด/บุบ แยก)
+    # ก่อนหน้านี้ data.damage ว่างเสมอ → ฟอร์มความเสียหาย EMCS เปล่า ต้องติ๊กเองทุกเคส
+    idmg = rep.get('insured_damage')
+    if isinstance(idmg, list) and idmg:
+        _POS_TH = {'L': 'ซ้าย', 'R': 'ขวา', 'A': ''}         # ต่อท้ายชื่อชิ้นส่วน → _damage_side อ่านซ้าย/ขวา
+        _LVL_RANK = {'L': 'A', 'M': 'B', 'H': 'C', 'X': 'D'}  # ต่ำ/กลาง/สูง/สูงมาก → A-D (rdoDam_Lavel)
+        parts, types, ranks, costs = [], [], [], []
+        for it in idmg:
+            if not isinstance(it, dict):
+                continue
+            part = str(it.get('part') or '').strip()
+            if not part:
+                continue
+            pos = str(it.get('pos') or '').strip().upper()
+            parts.append(part + _POS_TH.get(pos, ''))
+            types.append('')  # แอปไม่มีประเภทความเสียหายแยก (fill ใช้ชิ้นส่วน+ระดับพอ)
+            ranks.append(_LVL_RANK.get(str(it.get('level') or '').strip().upper(), ''))
+            costs.append('')
+        if parts:
+            data.damage, data.type_damage, data.rank_damage, data.cost_damage = parts, types, ranks, costs
     # ลักษณะความเสียหาย: se-survey มี acc_damage_type → ใช้เลย; ไม่มี → 'auto' (resolve_loss_type เดิม)
     return gv('acc_damage_type') or 'auto'
 
@@ -722,13 +744,16 @@ def _run_fill_existing(cfg, args, case_id, hdrs, meta):
     data.xml_file = str(xml_path)
     enrich_claim_from_xml(data, xml_path)
     loss_type = "auto"
+    severity = "เบา"
     try:
         rr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/report",
                           headers=hdrs, timeout=20)
         rr.raise_for_status()
-        loss_type = _populate_claim_from_report(data, rr.json().get("data") or {})
+        _rep = rr.json().get("data") or {}
+        loss_type = _populate_claim_from_report(data, _rep)
+        severity = str(_rep.get('damage_level') or '').strip() or 'เบา'
         log(f"✓ เติมข้อมูลหน้าหลักจาก report (ประเภทรถ {data.prb_car_type!r}, "
-            f"ลักษณะความเสียหาย {loss_type!r})")
+            f"ลักษณะความเสียหาย {loss_type!r}, รถเสียหาย {severity!r}, ชิ้นส่วน {len(data.damage)})")
     except Exception as e:
         log(f"⚠️ ดึง report มาเติม ClaimData ไม่ได้ ({e}) — fill_* อาจหยุดรอบางช่อง")
 
@@ -739,7 +764,8 @@ def _run_fill_existing(cfg, args, case_id, hdrs, meta):
     banner(f"FILL-EXISTING: เปิด draft เดิมเคส #{case_id} (e-Survey {esurvey or '?'}) เติมข้อมูล — ไม่ import ซ้ำ")
     try:
         emcs.fill_existing_report(driver, cfg, data, esurvey=esurvey,
-                                  images_folder=img_folder, loss_type=loss_type, save_price=False)
+                                  images_folder=img_folder, loss_type=loss_type,
+                                  severity=severity, save_price=False)
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"fill_existing_{case_id}")
         raise
@@ -959,14 +985,17 @@ def run_sesurvey_import(cfg, args):
     # เติมค่าไทยจาก report ของ se-survey → fill_* กรอกหน้าหลัก EMCS (dropdown บังคับ) ได้ครบ
     # ไม่งั้น btnUpdate ไม่ผ่าน validation (ประเภทรถ/จังหวัด/ยี่ห้อ/คำนำหน้า/ลักษณะเหตุ ว่าง)
     loss_type = "auto"
+    severity = "เบา"   # รถเสียหาย หนัก/เบา (HEV_CAR) — เดิมเดา 'เบา' เสมอ; เติมจาก damage_level ด้านล่าง
     try:
         rr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/report",
                           headers=hdrs, timeout=20)
         rr.raise_for_status()
         rep = rr.json().get("data") or {}
         loss_type = _populate_claim_from_report(data, rep)
+        severity = str(rep.get('damage_level') or '').strip() or 'เบา'  # หนัก/เบา (มือถือบังคับเลือก)
         log(f"✓ เติมข้อมูลหน้าหลักจาก report (ประเภทรถ {data.prb_car_type!r}, "
-            f"จังหวัดเกิดเหตุ {data.acc_province!r}, ลักษณะความเสียหาย {loss_type!r})")
+            f"จังหวัดเกิดเหตุ {data.acc_province!r}, ลักษณะความเสียหาย {loss_type!r}, "
+            f"รถเสียหาย {severity!r}, ชิ้นส่วน {len(data.damage)})")
     except Exception as e:
         log(f"⚠️ ดึง report มาเติม ClaimData ไม่ได้ ({e}) — fill_* อาจหยุดรอกรอกมือบางช่อง")
 
@@ -976,7 +1005,8 @@ def run_sesurvey_import(cfg, args):
     try:
         # save_price=False: ค่าสำรวจกรอกใน EMCS เอง (ฝั่ง se-survey ตัดหน้าค่าใช้จ่ายทิ้ง)
         esurvey = emcs.run_import(driver, cfg, data, images_folder=img_folder,
-                                  insurer_code=ins_code, save_price=False, loss_type=loss_type)
+                                  insurer_code=ins_code, save_price=False, loss_type=loss_type,
+                                  severity=severity)
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"sesurvey_{case_id}")
         raise
