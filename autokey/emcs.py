@@ -318,6 +318,17 @@ def fill_third_parties(driver, data: ClaimData):
         set_text(driver, p + "txtDri_DrvID", tp.get("lic_no", ""))
         set_text(driver, p + "wuCale_Dri_DrvDate_Start_txtCalendar",
                  iso_to_thai_date(tp.get("lic_issue_date", "")))
+        # ประเภทใบขับขี่คู่กรณี — value ของ dropdown = รหัส LICENSE_TYPE (จาก producer
+        # DRI_DRVTYPE); mirror ฝั่ง insured (ddlEmcs_License_Type). เลือกเฉพาะเมื่อ
+        # dropdown มีตัวเลือกจริง (กัน ElementNotInteractable ตอน layout ซ่อน/ยัง disabled)
+        lic_type = (tp.get("lic_type", "") or "").strip()
+        if lic_type and _select_has_options(driver, p + "ddlEmcs_License_Type"):
+            try:
+                Select(driver.find_element(By.ID, p + "ddlEmcs_License_Type")
+                       ).select_by_value(lic_type)
+                log(f"   ✓ ประเภทใบขับขี่คู่กรณี (code {lic_type})")
+            except Exception:
+                log(f"   ⚠️ เลือกประเภทใบขับขี่คู่กรณี {n + 1} (code {lic_type}) ไม่ได้")
 
         # ประกันของคู่กรณี — ถ้าไม่มีข้อมูลประกันเลย (เช่น มอไซค์ไม่มีประกัน) →
         # เลือก 'ไม่มีบริษัทประกันภัย' (EMCS จะปลด required กรมธรรม์/เลขเคลมคู่กรณี

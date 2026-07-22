@@ -593,9 +593,10 @@ def _populate_third_parties_from_report(data, rep):
             # เดิมไม่ใส่ key นี้ → tp.get('damages') ว่าง → ฟอร์มความเสียหายคู่กรณีเปล่าทุกคัน
             "damages": [{"part": p, "level": r} for p, r in _report_damage_items(o.get("damage"))],
         }
-        # คงรหัสจังหวัด/อำเภอผู้ขับคู่กรณีจาก XML (fill_third_parties เลือก ddlDri_*ID ด้วยรหัส ไม่ใช่ชื่อไทย)
+        # คงรหัสจากXML: จังหวัด/อำเภอ (ddlDri_*ID) + ประเภทใบขับขี่ (ddlEmcs_License_Type)
+        # — fill_third_parties เลือกด้วยรหัส ไม่ใช่ชื่อไทย; report ให้ label ตัดออก ต้องดึงจาก XML
         if i < len(xml_tps):
-            for _k in ("province_id", "district_id"):
+            for _k in ("province_id", "district_id", "lic_type"):
                 if str(xml_tps[i].get(_k) or "").strip():
                     tp[_k] = xml_tps[i][_k]
         tps.append(tp)
