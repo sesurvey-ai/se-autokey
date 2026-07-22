@@ -104,6 +104,13 @@ def parse_surv_report(path) -> dict:
             "gender": _text(inj, "GENDER"),
             "person_type": _text(inj, "PERSON_TYPE"),
             "wounded_type": _text(inj, "WOUNDED_TYPE"),
+            # form-carried (bot กรอกฟอร์มเอง — id ยืนยันจาก ผู้บาดเจ็บ.html 2026-07-23)
+            "work_place": _text(inj, "WORK_PLACE"),
+            "position": _text(inj, "POSITION"),
+            "income": _text(inj, "INCOME"),
+            "treat_from": _text(inj, "TREAT_FROM"),   # ISO ค.ศ. → iso_to_thai_date ในบอท
+            "treat_to": _text(inj, "TREAT_TO"),
+            "relation": _text(inj, "RELATION"),        # รหัส RELATION (ddlDri_Relation_ID value)
         })
 
     # ค่าสำรวจ (ฝั่ง "เสนอ" ของบริษัทสำรวจ) — ใช้กรอกตารางราคาหน้า Debit Note

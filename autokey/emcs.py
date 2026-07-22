@@ -635,6 +635,26 @@ def fill_injuries(driver, data: ClaimData):
                 log(f"   ⚠️ เลือกประเภทบาดเจ็บ {n + 1} (code {wt}) ไม่ได้")
         set_text(driver, p + "txtInj_Injure", inj.get("injure", ""))
 
+        # ── ฟิลด์เสริม form-carried (id ยืนยันจาก ผู้บาดเจ็บ.html; EMCS ไม่บังคับ,
+        #    set_text ข้ามค่าว่างเอง + มี JS fallback สำหรับ calendar readonly) ──
+        set_text(driver, p + "txtInj_Work_Place", inj.get("work_place", ""))
+        set_text(driver, p + "txtInj_Position", inj.get("position", ""))
+        set_text(driver, p + "txtInj_Income", inj.get("income", ""))
+        # ช่วงวันรักษา — XML เป็น ISO ค.ศ. (toXmlCE) → แปลงเป็นไทยเหมือน birthdate คู่กรณี
+        set_text(driver, p + "wuCale_From_Date_txtCalendar",
+                 iso_to_thai_date(inj.get("treat_from", "")))
+        set_text(driver, p + "wuCale_To_Date_txtCalendar",
+                 iso_to_thai_date(inj.get("treat_to", "")))
+        # ความสัมพันธ์ผู้บาดเจ็บ — value ของ dropdown = รหัส RELATION ตรงจาก producer
+        rel = (inj.get("relation", "") or "").strip()
+        if rel:
+            try:
+                Select(driver.find_element(By.ID, p + "ddlDri_Relation_ID")
+                       ).select_by_value(rel)
+                log(f"   ✓ ความสัมพันธ์ผู้บาดเจ็บ (code {rel})")
+            except Exception:
+                log(f"   ⚠️ เลือกความสัมพันธ์ผู้บาดเจ็บ {n + 1} (code {rel}) ไม่ได้")
+
     _save_section(driver, "btnSave_InjurePerson", "ผู้บาดเจ็บ")
 
 
