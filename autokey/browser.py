@@ -269,14 +269,21 @@ def click_first(driver, locators, timeout=10):
 
 def to_buddhist_date(date_str: str) -> str:
     """แปลง dd/mm/yyyy (ค.ศ.) เป็น dd/mm/yyyy (พ.ศ.)
-    ถ้าปีเป็น พ.ศ. อยู่แล้ว (>2400) จะไม่บวกซ้ำ / ค่าว่างคืน ''"""
+    ถ้าปีเป็น พ.ศ. อยู่แล้ว (>2400) จะไม่บวกซ้ำ / ค่าว่างคืน ''
+    - strip |time ที่ติดมา (se-survey เก็บ 'dd/mm/yyyy|HH:mm')
+    - zero-pad วัน/เดือน เป็น 2 หลักเสมอ: EMCS date field บังคับ dd/mm/yyyy (เดือน 1 หลัก
+      เช่น '23/7/2569' จาก to_char BKK ที่ไม่ pad → EMCS alert 'รูปแบบไม่ถูก')"""
     if not date_str or not date_str.strip():
         return ""
-    d, m, y = date_str.strip().split("/")
+    s = date_str.strip().split("|")[0].strip()   # กัน |time ติดมา
+    parts = s.split("/")
+    if len(parts) != 3:
+        return s                                  # format แปลก → คืนเดิม (ไม่ทำให้พังเพิ่ม)
+    d, m, y = parts
     year = int(y)
     if year < 2400:
         year += 543
-    return f"{d}/{m}/{year}"
+    return f"{int(d):02d}/{int(m):02d}/{year}"
 
 
 def iso_to_thai_date(date_str: str) -> str:
