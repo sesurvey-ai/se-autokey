@@ -1813,7 +1813,14 @@ def _group_flat_by_category(folder, file_names, fallback_type):
     for name in file_names:
         etype = _se_cat_to_emcs(cat_map.get(name))
         groups.setdefault(etype, []).append(folder / name)
-    return list(groups.items())
+    # rename ชื่อไฟล์ = 'หมวด_ลำดับ' ก่อนอัป → EMCS คอลัมน์ "รายการ" โชว์หมวดจากชื่อไฟล์
+    # (เหมือน flow มือถือที่ rename ฝั่ง client; เดิมอัปชื่อเดิม rn_image_picker_* = รายการเพี้ยน)
+    out = []
+    for etype, paths in groups.items():
+        renamed = _rename_clean_files(sorted(paths, key=lambda p: p.name),
+                                      etype + "_{seq}", 1)
+        out.append((etype, renamed))
+    return out
 
 
 def upload_images(driver, folder, image_type: str = "รูปรถประกัน", only=None,
