@@ -38,6 +38,15 @@ from .browser import (
 from .claim_data import ClaimData
 from .images import list_images
 
+
+def _dash(v):
+    """ฟิลด์ 'บังคับ' (required) EMCS ชนิด text: คืน '-' เมื่อไม่มีข้อมูลจริง (กติกา user 2026-07-23)
+    → ผ่าน required-field gate แล้ว save draft ได้ (set_text ข้ามค่าว่าง จึงต้อง fallback เอง);
+    หัวหน้าแก้ค่าจริงตอนตรวจ. '-' = marker 'ไม่มีข้อมูล' ไม่ใช่ค่าปลอม.
+    ใช้เฉพาะช่อง text เท่านั้น — dropdown/date/number ใส่ '-' ไม่ได้ (EMCS reject ชนิดข้อมูล)."""
+    s = "" if v is None else str(v)
+    return s.strip() or "-"
+
 # ผลคดี → id ของ radio button (แก้บั๊กเดิม: 'รถคู่กรณีเป็นฝ่ายผิด' กับ
 # 'คู่กรณีคันที่' เป็นคนละ label แต่ต้องชี้ radio ตัวเดียวกัน — โค้ดเดิมเทียบ
 # ด้วยข้อความที่ต่อกันจึงไม่มีวันเข้าเงื่อนไข ทำให้ไม่ถูกคลิก)
@@ -242,7 +251,7 @@ def fill_third_parties(driver, data: ClaimData):
 
         # เจ้าของ (XML มักว่าง — ใช้ชื่อผู้ขับขี่แทน ซึ่งเป็นเคสทั่วไป)
         owner = tp.get("opo_name", "") or tp.get("drv_name", "")
-        set_text(driver, p + "txtOpo_Name", owner)
+        set_text(driver, p + "txtOpo_Name", _dash(owner))
         set_text(driver, p + "txtOpo_Address",
                  tp.get("opo_address", "") or tp.get("address", ""))
         set_text(driver, p + "txtOpo_Type", tp.get("opo_type", ""))
@@ -281,7 +290,7 @@ def fill_third_parties(driver, data: ClaimData):
         # (ไม่ใช่ txtDri_Name01 ซึ่งเป็น layout สำรองที่ซ่อนไว้ — เดิมเซ็ตผิดช่อง
         # ทำให้ validation ฟ้อง 'ชื่อผู้ขับขี่รถคู่กรณี')
         drv_full = (tp.get("drv_name", "") or owner).strip()
-        set_text(driver, p + "txtDri_Name", drv_full)
+        set_text(driver, p + "txtDri_Name", _dash(drv_full))
 
         # เพศ — ว่างจาก ISURVEY → อนุมานจากคำนำหน้าในชื่อผู้ขับขี่ (fallback)
         gender = resolve_gender(tp.get("gender", ""), drv_full)
@@ -295,7 +304,7 @@ def fill_third_parties(driver, data: ClaimData):
         set_text(driver, p + "txtDri_Age", tp.get("age", ""))
         set_text(driver, p + "wuCale_Dri_BirthDay_txtCalendar",
                  iso_to_thai_date(tp.get("birthdate", "")))
-        set_text(driver, p + "txtDri_Adrress", tp.get("address", ""))
+        set_text(driver, p + "txtDri_Adrress", _dash(tp.get("address", "")))
 
         # จังหวัด/อำเภอ ผู้ขับขี่คู่กรณี — บาง layout ซ่อนช่องนี้ (ใช้ "ที่อยู่ปัจจุบัน"
         # เดี่ยวพอ) → เลือกเฉพาะเมื่อช่องโชว์จริง (กัน ElementNotInteractable + หน่วงเวลา)
@@ -313,9 +322,9 @@ def fill_third_parties(driver, data: ClaimData):
             log(f"   - ข้ามจังหวัด/อำเภอผู้ขับขี่คู่กรณี {n + 1} "
                 "(layout นี้ใช้ช่องที่อยู่เดี่ยว)")
 
-        set_text(driver, p + "txtDri_TelNo", tp.get("phone", ""))
-        set_text(driver, p + "txtDri_CardID", tp.get("idcard", ""))
-        set_text(driver, p + "txtDri_DrvID", tp.get("lic_no", ""))
+        set_text(driver, p + "txtDri_TelNo", _dash(tp.get("phone", "")))
+        set_text(driver, p + "txtDri_CardID", _dash(tp.get("idcard", "")))
+        set_text(driver, p + "txtDri_DrvID", _dash(tp.get("lic_no", "")))
         set_text(driver, p + "wuCale_Dri_DrvDate_Start_txtCalendar",
                  iso_to_thai_date(tp.get("lic_issue_date", "")))
         # ประเภทใบขับขี่คู่กรณี — value ของ dropdown = รหัส LICENSE_TYPE (จาก producer
@@ -352,9 +361,9 @@ def fill_third_parties(driver, data: ClaimData):
         else:
             fuzzy_select(driver, p + "ddlHave_Insurance", insurer,
                          label=f"บริษัทประกันคู่กรณี {n + 1}")
-            set_text(driver, p + "txtPolicyNo", policy_no)
-            set_text(driver, p + "txtPolicy_Type", insure_type)  # ประกันประเภท
-            set_text(driver, p + "txtClaimNo", claim_no)
+            set_text(driver, p + "txtPolicyNo", _dash(policy_no))
+            set_text(driver, p + "txtPolicy_Type", _dash(insure_type))  # ประกันประเภท
+            set_text(driver, p + "txtClaimNo", _dash(claim_no))
 
         # ความเสียหาย + KFK
         cost = tp.get("cost_damage", "").strip()
@@ -586,10 +595,10 @@ def fill_injuries(driver, data: ClaimData):
             if title and _select_has_options(driver, p + "ddlInj_Title_ID"):
                 fuzzy_select(driver, p + "ddlInj_Title_ID", title,
                              label=f"คำนำหน้าผู้บาดเจ็บ {n + 1}")
-            set_text(driver, p + "txtInj_Name01", first)
-            set_text(driver, p + "txtInj_LastName01", last)
+            set_text(driver, p + "txtInj_Name01", _dash(first))
+            set_text(driver, p + "txtInj_LastName01", _dash(last))
         elif _is_displayed(driver, p + "txtInj_Name"):
-            set_text(driver, p + "txtInj_Name", inj.get("name", ""))
+            set_text(driver, p + "txtInj_Name", _dash(inj.get("name", "")))
 
         # เพศ (0=ชาย M / 1=หญิง F,W)
         # เพศ — ว่างจาก ISURVEY → อนุมานจากคำนำหน้าในชื่อ (fallback)
@@ -604,7 +613,7 @@ def fill_injuries(driver, data: ClaimData):
             log(f"   ⚠️ ไม่ทราบเพศผู้บาดเจ็บ {n + 1} (ISURVEY ว่าง + ชื่อไม่มีคำนำหน้า)")
 
         set_text(driver, p + "txtInj_Age", inj.get("age", ""))
-        set_text(driver, p + "txtCitizen_ID", inj.get("citizen_id", ""))
+        set_text(driver, p + "txtCitizen_ID", _dash(inj.get("citizen_id", "")))
         set_text(driver, p + "txtInj_Job", inj.get("job", ""))
         # เลขทะเบียน — EMCS เติมให้อัตโนมัติจาก ddlPerson_Type แล้ว (รถประกัน/คู่กรณี
         # ตามประเภท) → อ่าน readback: มีค่าแล้ว "ห้ามเขียนทับด้วยค่าว่าง" (บั๊กเดิมที่ทำให้
@@ -632,7 +641,8 @@ def fill_injuries(driver, data: ClaimData):
                 "— อาจติด gate หน้าค่าใช้จ่าย ต้องกรอกเองบน EMCS")
         set_text(driver, p + "txtInj_Address", inj.get("address", ""))
         set_text(driver, p + "txtInj_Tel_No", inj.get("tel_no", ""))
-        set_text(driver, p + "txtInj_Hos_Name", inj.get("hospital", ""))
+        # โรงพยาบาล = ฟิลด์บังคับ EMCS; ไม่มีข้อมูลจริง → _dash คืน "-" ให้ผ่าน gate + เซฟบล็อกได้
+        set_text(driver, p + "txtInj_Hos_Name", _dash(inj.get("hospital", "")))
         set_text(driver, p + "txtInj_Cost", inj.get("cost", ""))
 
         # ประเภทบาดเจ็บ — value ของ ddlWounded_Type = code XML (01-06) ตรงๆ
@@ -644,7 +654,7 @@ def fill_injuries(driver, data: ClaimData):
                 log(f"   ✓ ประเภทบาดเจ็บ (code {wt})")
             except Exception:
                 log(f"   ⚠️ เลือกประเภทบาดเจ็บ {n + 1} (code {wt}) ไม่ได้")
-        set_text(driver, p + "txtInj_Injure", inj.get("injure", ""))
+        set_text(driver, p + "txtInj_Injure", _dash(inj.get("injure", "")))
 
         # ── ฟิลด์เสริม form-carried (id ยืนยันจาก ผู้บาดเจ็บ.html; EMCS ไม่บังคับ,
         #    set_text ข้ามค่าว่างเอง + มี JS fallback สำหรับ calendar readonly) ──
@@ -693,9 +703,9 @@ def fill_assets(driver, data: ClaimData):
     for n, a in enumerate(assets[:MAX_ASSETS]):
         p = ASSET_PREFIX.format(n=n)
         log(f"   --- ชิ้นที่ {n + 1}: {a.get('name', '')} ---")
-        set_text(driver, p + "txtAsset_Desc", a.get("name", ""))
-        set_text(driver, p + "txtAsset_Damage", a.get("damage_detail", ""))
-        set_text(driver, p + "txtAsset_Damage_Cause", a.get("damage_cause", ""))
+        set_text(driver, p + "txtAsset_Desc", _dash(a.get("name", "")))
+        set_text(driver, p + "txtAsset_Damage", _dash(a.get("damage_detail", "")))
+        set_text(driver, p + "txtAsset_Damage_Cause", _dash(a.get("damage_cause", "")))
         set_text(driver, p + "txtCost_Damage", a.get("damage_cost", ""))
 
         # เจ้าของ — คำนำหน้าแยกจากชื่อ (ถ้ามี), ที่เหลือชื่อเต็มลง txtOwner
@@ -703,9 +713,9 @@ def fill_assets(driver, data: ClaimData):
         if title and _select_has_options(driver, p + "ddlAsset_Title_ID"):
             fuzzy_select(driver, p + "ddlAsset_Title_ID", title,
                          label=f"คำนำหน้าเจ้าของ {n + 1}")
-            set_text(driver, p + "txtOwner", f"{first} {last}".strip())
+            set_text(driver, p + "txtOwner", _dash(f"{first} {last}".strip()))
         else:
-            set_text(driver, p + "txtOwner", a.get("owner_name", ""))
+            set_text(driver, p + "txtOwner", _dash(a.get("owner_name", "")))
         set_text(driver, p + "txtAddress", a.get("owner_address", ""))
         set_text(driver, p + "txtTel_No", a.get("owner_phone", ""))
 
@@ -1135,7 +1145,7 @@ def fill_policy(driver, data: ClaimData):
 def fill_car(driver, data: ClaimData):
     log("EMCS: กรอกรายละเอียดรถยนต์")
     wait_visible(driver, By.ID, "txtCar_RegNo")
-    set_text(driver, "txtCar_RegNo", _plate(data.insure_plate))
+    set_text(driver, "txtCar_RegNo", _dash(_plate(data.insure_plate)))
     set_text(driver, "txtCModel2", data.insure_model)
     set_text(driver, "txtChassisNo", data.insure_chassis)
     set_text(driver, "txtEngineNo", data.insure_engine)
@@ -1190,13 +1200,13 @@ def fill_driver(driver, data: ClaimData):
     # ตัดคำนำหน้าที่ติดมากับชื่อ (เช่น 'น.ส.ปฐมาวดี'→'ปฐมาวดี') — ไม่งั้นชื่อจะมีคำนำหน้าซ้ำ
     _t, dri_first, dri_last = split_thai_name(
         f"{data.driver_name} {data.driver_surname}".strip())
-    set_text(driver, "txtDri_Name01", dri_first or data.driver_name)
-    set_text(driver, "txtDri_LastName01", dri_last or data.driver_surname)
+    set_text(driver, "txtDri_Name01", _dash(dri_first or data.driver_name))
+    set_text(driver, "txtDri_LastName01", _dash(dri_last or data.driver_surname))
     set_text(driver, "txtDri_Age", data.driver_age)
     set_text(driver, "txtDri_Address", data.driver_address)
-    set_text(driver, "txtDri_TelNo", data.driver_phone)
-    set_text(driver, "txtDri_CardID", data.driver_idcard)
-    set_text(driver, "txtDri_DrvID", data.driver_license_no)
+    set_text(driver, "txtDri_TelNo", _dash(data.driver_phone))
+    set_text(driver, "txtDri_CardID", _dash(data.driver_idcard))
+    set_text(driver, "txtDri_DrvID", _dash(data.driver_license_no))
     set_text(driver, "txtDri_DrvPlace", data.driver_license_place)
     set_text(driver, "txtCost_Damage", data.damage_estimate)
     set_text(driver, "wuCale_Dri_BirthDay_txtCalendar", to_buddhist_date(data.driver_birthdate))
@@ -1224,8 +1234,8 @@ def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห�
     set_text(driver, "txtAcc_Date_Hour", h)
     set_text(driver, "txtAcc_Date_Minute", m)
 
-    set_text(driver, "txtAcc_Place", data.acc_place)
-    set_text(driver, "txtAcc_Detail", data.acc_detail)
+    set_text(driver, "txtAcc_Place", _dash(data.acc_place))
+    set_text(driver, "txtAcc_Detail", _dash(data.acc_detail))
     # ผลการดำเนินงาน + ความเห็นผู้ตรวจสอบ (se-survey มีข้อความ; EMCS มาร์ค 'not used' แต่ช่องแก้ได้)
     set_text(driver, "txtAcc_result", data.accident_summary)
     set_text(driver, "txtAcc_Comment", data.review_comment)
