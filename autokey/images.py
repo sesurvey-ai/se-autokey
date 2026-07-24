@@ -353,8 +353,15 @@ def _export_entries(search_dir: Path, claim: str):
                 if f.is_file() and f.suffix.lower() in IMAGE_EXTS:
                     yield f.relative_to(root).parts, f.name
             return
-    # 2) ไฟล์ .zip (export_<claim>_*.zip) — อ่าน entry ตรง ๆ ไม่ต้องแตก
-    zips = sorted(search_dir.glob(f"export_{claim}_*.zip")) or sorted(search_dir.glob("export_*.zip"))
+    # 2) ไฟล์ .zip (อาจอยู่ใน subfolder ต่อเคลม เช่น zip_import/<เคลม>/export_*.zip) — หา recursive
+    #    อ่าน entry ตรง ๆ ไม่ต้องแตก. เจาะจงเลขเคลมก่อน กัน .zip เคลมอื่นปน
+    zips = sorted(search_dir.rglob(f"export_{claim}_*.zip"))
+    if not zips:   # เผื่อชื่อ zip ไม่มีเลขเคลม แต่อยู่ในโฟลเดอร์ที่ชื่อมีเลขเคลม
+        for cand in sorted(search_dir.glob(f"*{claim}*")):
+            if cand.is_dir():
+                zips = sorted(cand.rglob("*.zip"))
+                if zips:
+                    break
     if zips:
         with zipfile.ZipFile(zips[0]) as zf:
             for info in sorted(zf.infolist(), key=lambda i: i.filename):
