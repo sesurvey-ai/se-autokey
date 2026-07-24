@@ -606,7 +606,7 @@ PAGE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>se-autokey · กรอกเคลมอัตโนมัติ</title>
+<title>se-autokey · นำเข้า EMCS</title>
 <style>
   :root{
     --bg:#0f172a; --card:#ffffff; --ink:#0f172a; --muted:#64748b;
@@ -618,7 +618,7 @@ PAGE = r"""<!doctype html>
     margin:0; font-family:Tahoma,"Segoe UI",sans-serif; color:var(--ink);
     background:linear-gradient(160deg,#eef2ff,#f8fafc 40%); min-height:100vh;
   }
-  .wrap{max-width:920px; margin:0 auto; padding:24px 18px 48px}
+  .wrap{max-width:1240px; margin:0 auto; padding:24px 18px 48px}
   header{display:flex; align-items:center; gap:12px; margin-bottom:18px}
   .logo{width:42px;height:42px;border-radius:12px;flex:none;
     background:linear-gradient(135deg,var(--brand),var(--brand2));
@@ -758,6 +758,26 @@ PAGE = r"""<!doctype html>
   .log .l-time{color:#64748b}
   .emptyruns{text-align:center;color:#94a3b8;font-size:14px;padding:30px 10px;
     border:1px dashed var(--line);border-radius:16px;background:#fff}
+  /* แท็บ + แดชบอร์ด 2 คอลัมน์ */
+  .tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+  .tab{background:#fff;border:1px solid var(--line);color:var(--muted);
+    padding:10px 18px;border-radius:12px;font-size:14px;font-weight:600}
+  .tab.active{background:var(--brand);color:#fff;border-color:var(--brand);
+    box-shadow:0 6px 16px rgba(79,70,229,.25)}
+  .tab:hover:not(.active){color:var(--ink);border-color:var(--brand2)}
+  .dash{display:grid;grid-template-columns:minmax(360px,440px) 1fr;gap:16px;align-items:start}
+  /* การ์ดเคสในรายการซ้าย */
+  .case-item{border:1px solid var(--line);border-radius:12px;padding:11px 13px;
+    margin-bottom:10px;background:#fff;transition:.15s}
+  .case-item:hover{border-color:var(--brand2);box-shadow:0 4px 14px rgba(2,6,23,.06)}
+  .case-sv{font-size:15px;font-weight:700;color:var(--ink);
+    font-variant-numeric:tabular-nums;letter-spacing:.3px}
+  .case-claim{font-size:12px;color:var(--muted);margin-top:1px}
+  .case-meta{font-size:11.5px;color:#94a3b8;margin-top:2px}
+  .case-btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+  .case-btns button{padding:6px 11px;font-size:12.5px;border-radius:8px;box-shadow:none}
+  .caselist{max-height:70vh;overflow:auto}
+  @media(max-width:900px){.dash{grid-template-columns:1fr}}
   @media(max-width:560px){.grid{grid-template-columns:1fr}.run-cmd{display:none}}
 </style>
 </head>
@@ -766,91 +786,106 @@ PAGE = r"""<!doctype html>
   <header>
     <div class="logo">SE</div>
     <div>
-      <h1>se-autokey · กรอกเคลมอัตโนมัติ</h1>
-      <div class="sub">ใส่เลขเคลม แล้วกดรัน — ระบบจะอ่าน ISURVEY แล้วกรอกลง EMCS ให้</div>
+      <h1>se-autokey · นำเข้า EMCS</h1>
+      <div class="sub">รายการงานสำรวจจากแอปมือถือ → นำเข้า EMCS · ดูรายละเอียดการนำเข้าแบบเรียลไทม์</div>
     </div>
   </header>
 
-  <div class="card">
-    <label class="fld" for="claims">เลขเคลม <span style="color:var(--muted);font-weight:400">(หลายเคลมได้ — บรรทัดละเลข)</span></label>
-    <textarea id="claims"></textarea>
+  <div class="tabs">
+    <button class="tab active" data-pane="sesurvey">📥 นำเข้า SE Survey</button>
+    <button class="tab" data-pane="isurvey">🖊 กรอกเคลม ISURVEY</button>
+  </div>
 
-    <div class="grid">
-      <div>
-        <label class="fld" for="invoice">เลขเซอร์เวย์ <span style="color:var(--muted);font-weight:400">(ใส่เมื่อค้นเจอหลายแถว — เฉพาะกรณีเคลมเดียว)</span></label>
-        <input type="text" id="invoice">
+  <div class="dash">
+   <div class="col-left">
+    <div class="tabpane" id="pane-sesurvey">
+     <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+        <h2 style="font-size:16px;margin:0">📥 งานสำรวจ (SE Survey)</h2>
+        <button class="run" id="loadcasesbtn" style="margin-left:auto;padding:7px 12px;font-size:13px">↻ โหลดรายการ</button>
       </div>
-      <div>
-        <label class="fld" for="severity">ความเสียหาย</label>
-        <select id="severity">
-          <option value="เบา">เบา</option>
-          <option value="หนัก">หนัก</option>
+      <div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:150px">
+          <label class="fld" for="secase">เลขเคส / เลขเซอร์เวย์</label>
+          <input type="text" id="secase" placeholder="เช่น 73 หรือ SETP-69060062">
+        </div>
+        <button class="run" id="serunbtn" style="padding:11px 14px">⚡ นำเข้า</button>
+        <button class="run" id="sedrybtn" style="padding:11px 14px;background:#64748b" title="ดึง+ตรวจ XML+รูป แล้วหยุด ไม่แตะ EMCS">🧪 ทดสอบ</button>
+      </div>
+      <div id="secasesbox" class="caselist" style="margin-top:12px"></div>
+      <div class="note" style="margin-top:12px">
+        • ต้องตั้ง <b>SESURVEY_API_TOKEN</b> ใน .env ให้ตรงกับ INTEGRATION_TOKEN ของ server<br>
+        • <b>⚡ นำเข้า</b> = กรอกฟอร์ม + อัปรูป + บันทึก draft (บอท<b>ไม่กดส่งงาน</b>)<br>
+        • <b>🧪 ทดสอบ</b> = dry-run: ดึง XML + โหลดรูป แล้วหยุด — ไม่แตะ EMCS
+      </div>
+     </div>
+    </div>
+
+    <div class="tabpane" id="pane-isurvey" hidden>
+     <div class="card">
+      <h2 style="font-size:16px;margin:0 0 12px">🖊 กรอกเคลมอัตโนมัติ (ISURVEY)</h2>
+      <label class="fld" for="claims">เลขเคลม <span style="color:var(--muted);font-weight:400">(หลายเคลมได้ — บรรทัดละเลข)</span></label>
+      <textarea id="claims"></textarea>
+
+      <div class="grid">
+        <div>
+          <label class="fld" for="invoice">เลขเซอร์เวย์ <span style="color:var(--muted);font-weight:400">(ใส่เมื่อค้นเจอหลายแถว — เฉพาะกรณีเคลมเดียว)</span></label>
+          <input type="text" id="invoice">
+        </div>
+        <div>
+          <label class="fld" for="severity">ความเสียหาย</label>
+          <select id="severity">
+            <option value="เบา">เบา</option>
+            <option value="หนัก">หนัก</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-top:12px">
+        <label class="fld" for="claimmode">ประเภทเคลมที่จะกรอก</label>
+        <select id="claimmode">
+          <option value="dry">เคลมแห้งเท่านั้น (ปลอดภัย — ค่าเริ่มต้น)</option>
+          <option value="fresh">รวมเคลมสด / นัดหมาย / ติดตาม</option>
         </select>
+        <div id="cmnote" hidden style="margin-top:8px;padding:8px 10px;background:#fff7ed;
+             border:1px solid #fdba74;border-radius:8px;font-size:12.5px;color:#9a3412;line-height:1.55">
+          ⚠️ <b>โหมดเคลมสด</b>: อ่านด้วย scrape (ช้ากว่า API) เพื่อดึงคู่กรณีจาก XML — ระบบกรอก
+          <b>หน้าหลัก + คู่กรณี + ราคา</b> ให้ แต่ <b>ผู้บาดเจ็บ และ ทรัพย์สิน ต้องกรอกเอง</b>
+          บน EMCS ก่อนส่ง (ตรวจให้ครบ)
+        </div>
       </div>
-    </div>
 
-    <div style="margin-top:12px">
-      <label class="fld" for="claimmode">ประเภทเคลมที่จะกรอก</label>
-      <select id="claimmode">
-        <option value="dry">เคลมแห้งเท่านั้น (ปลอดภัย — ค่าเริ่มต้น)</option>
-        <option value="fresh">รวมเคลมสด / นัดหมาย / ติดตาม</option>
-      </select>
-      <div id="cmnote" hidden style="margin-top:8px;padding:8px 10px;background:#fff7ed;
-           border:1px solid #fdba74;border-radius:8px;font-size:12.5px;color:#9a3412;line-height:1.55">
-        ⚠️ <b>โหมดเคลมสด</b>: อ่านด้วย scrape (ช้ากว่า API) เพื่อดึงคู่กรณีจาก XML — ระบบกรอก
-        <b>หน้าหลัก + คู่กรณี + ราคา</b> ให้ แต่ <b>ผู้บาดเจ็บ และ ทรัพย์สิน ต้องกรอกเอง</b>
-        บน EMCS ก่อนส่ง (ตรวจให้ครบ)
+      <div class="checks">
+        <label><input type="checkbox" id="readonly"> อ่านอย่างเดียว (ไม่กรอก EMCS)</label>
+        <label><input type="checkbox" id="skipimages"> ไม่ยุ่งกับรูปภาพ</label>
+        <label><input type="checkbox" id="nosaveprice"> ไม่บันทึกราคา (ทดสอบ — กรอกถึงหน้าค่าใช้จ่ายแต่ไม่กดเซฟราคา)</label>
+        <label class="warn"><input type="checkbox" id="forcenew"> ⚠️ สร้างเรื่องใหม่แม้มีเรื่องเดิม (--force-new) — draft ลบไม่ได้ ยกเลิกได้อย่างเดียว</label>
+        <label><input type="checkbox" id="importxml"> นำเข้าด้วย XML (import) — ให้ EMCS เติมฟอร์มหลักจากไฟล์ แล้วบอทอุดช่องว่าง (ความเสียหายลงได้ 20 ช่อง เหมาะกับ >8 ชิ้น) · ทำทีละเคลม</label>
+        <label><input type="checkbox" id="checklicense"> ตรวจใบขับขี่ผู้เอาประกัน — OCR หา+อ่านรูปใบขับขี่ในชุดรูป (เลขที่/เลขบัตร/ชื่อ) แล้วเทียบกับข้อมูลเคลม · ช้าลงเล็กน้อย</label>
       </div>
-    </div>
 
-    <div class="checks">
-      <label><input type="checkbox" id="readonly"> อ่านอย่างเดียว (ไม่กรอก EMCS)</label>
-      <label><input type="checkbox" id="skipimages"> ไม่ยุ่งกับรูปภาพ</label>
-      <label><input type="checkbox" id="nosaveprice"> ไม่บันทึกราคา (ทดสอบ — กรอกถึงหน้าค่าใช้จ่ายแต่ไม่กดเซฟราคา)</label>
-      <label class="warn"><input type="checkbox" id="forcenew"> ⚠️ สร้างเรื่องใหม่แม้มีเรื่องเดิม (--force-new) — draft ลบไม่ได้ ยกเลิกได้อย่างเดียว</label>
-      <label><input type="checkbox" id="importxml"> นำเข้าด้วย XML (import) — ให้ EMCS เติมฟอร์มหลักจากไฟล์ แล้วบอทอุดช่องว่าง (ความเสียหายลงได้ 20 ช่อง เหมาะกับ >8 ชิ้น) · ทำทีละเคลม</label>
-      <label><input type="checkbox" id="checklicense"> ตรวจใบขับขี่ผู้เอาประกัน — OCR หา+อ่านรูปใบขับขี่ในชุดรูป (เลขที่/เลขบัตร/ชื่อ) แล้วเทียบกับข้อมูลเคลม · ช้าลงเล็กน้อย</label>
-    </div>
+      <div class="actions">
+        <button class="run" id="runbtn">▶ รันโปรแกรม</button>
+      </div>
 
-    <div class="actions">
-      <button class="run" id="runbtn">▶ รันโปรแกรม</button>
-      <span class="badge idle" id="capbadge">กำลังรัน 0/4</span>
+      <div class="note">
+        • รันพร้อมกันได้ — แต่ละงานเปิดหน้าต่าง Chrome แยกกัน (ปรับเพดานด้วย SE_MAX_CONCURRENT)<br>
+        • หน้าต่าง Chrome จะเปิดขึ้นเองให้เห็นการทำงาน — กรอกเสร็จระบบ <b>บันทึกเป็น draft</b> แล้ว <b>หยุดรอให้ตรวจ</b><br>
+        • ก่อนอัปโหลดรูป ระบบจะโชว์รูปให้ <b>เลือกเฉพาะรูปที่จะนำเข้า EMCS</b> (ติ๊กเฉพาะที่ต้องการ)<br>
+        • ตรวจ draft บน Chrome แล้วกดปุ่ม <b>"✅ ส่งงาน + แจ้ง ISURVEY"</b> — ระบบจะกด "ส่งงานใหม่" ให้ + แจ้งกลับ ISURVEY<br>
+        • ระบบ <b>ไม่กดส่งงานเอง</b> จนกว่าคุณจะสั่งผ่านปุ่ม (ถ้าไม่กด = เก็บเป็น draft)<br>
+        • เคลมที่ไม่ใช่เคลมแห้ง หรือมีเรื่องใน EMCS อยู่แล้ว จะถูกข้ามพร้อมบอกเหตุผล
+      </div>
+     </div>
     </div>
+   </div>
 
-    <div class="note">
-      • รันพร้อมกันได้ — แต่ละงานเปิดหน้าต่าง Chrome แยกกัน (ปรับเพดานด้วย SE_MAX_CONCURRENT)<br>
-      • หน้าต่าง Chrome จะเปิดขึ้นเองให้เห็นการทำงาน — กรอกเสร็จระบบ <b>บันทึกเป็น draft</b> แล้ว <b>หยุดรอให้ตรวจ</b><br>
-      • ก่อนอัปโหลดรูป ระบบจะโชว์รูปให้ <b>เลือกเฉพาะรูปที่จะนำเข้า EMCS</b> (ติ๊กเฉพาะที่ต้องการ)<br>
-      • ตรวจ draft บน Chrome แล้วกดปุ่ม <b>"✅ ส่งงาน + แจ้ง ISURVEY"</b> — ระบบจะกด "ส่งงานใหม่" ให้ + แจ้งกลับ ISURVEY<br>
-      • ระบบ <b>ไม่กดส่งงานเอง</b> จนกว่าคุณจะสั่งผ่านปุ่ม (ถ้าไม่กด = เก็บเป็น draft)<br>
-      • เคลมที่ไม่ใช่เคลมแห้ง หรือมีเรื่องใน EMCS อยู่แล้ว จะถูกข้ามพร้อมบอกเหตุผล
-    </div>
+   <div class="col-main">
+     <h2 style="font-size:16px;margin:0 0 12px">📋 รายละเอียดการนำเข้า EMCS <span class="badge idle" id="capbadge" style="margin-left:8px;vertical-align:middle">กำลังรัน 0/4</span></h2>
+     <div id="runs"></div>
+     <div class="emptyruns" id="emptyruns">ยังไม่มีงาน — เลือกงานจากรายการซ้าย แล้วกด "นำเข้า"</div>
+   </div>
   </div>
-
-  <div class="card">
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
-      <h2 style="font-size:16px;margin:0">📥 นำเข้าจากระบบ SE Survey</h2>
-      <span style="font-size:12px;color:var(--muted)">ดึง XML + รูป จากแอปสำรวจ แล้วนำเข้า EMCS</span>
-      <button class="run" id="loadcasesbtn" style="margin-left:auto;padding:8px 14px;font-size:13px">↻ โหลดรายการเคสสำรวจแล้ว</button>
-    </div>
-    <div style="display:flex;gap:10px;align-items:flex-end;margin-top:10px">
-      <div style="flex:1">
-        <label class="fld" for="secase">เลขเคส / เลขเซอร์เวย์ <span style="color:var(--muted);font-weight:400">— หรือกดปุ่มในตารางด้านล่าง</span></label>
-        <input type="text" id="secase" placeholder="เช่น 73 หรือ SETP-69060062">
-      </div>
-      <button class="run" id="serunbtn" style="padding:11px 18px">⚡ นำเข้า EMCS (จริง)</button>
-      <button class="run" id="sedrybtn" style="padding:11px 18px;background:#64748b" title="ดึง+ตรวจ XML+รูป แล้วหยุด ไม่แตะ EMCS">🧪 ทดสอบ</button>
-    </div>
-    <div id="secasesbox" style="margin-top:12px"></div>
-    <div class="note" style="margin-top:12px">
-      • ต้องตั้ง <b>SESURVEY_API_TOKEN</b> ใน .env ให้ตรงกับ INTEGRATION_TOKEN ของ server ก่อน<br>
-      • <b>⚡ นำเข้า EMCS (จริง)</b> = กรอกฟอร์ม + อัปรูป + บันทึกเป็น draft (บอท<b>ไม่กดส่งงาน</b> — หัวหน้าตรวจแล้วส่งเอง)<br>
-      • <b>🧪 ทดสอบ</b> = dry-run: ดึง XML + โหลดรูปมาเก็บบนเครื่อง แล้วหยุด — ไม่แตะ EMCS
-    </div>
-  </div>
-
-  <div id="runs"></div>
-  <div class="emptyruns" id="emptyruns">ยังไม่มีงาน — ใส่เลขเคลมแล้วกด "รันโปรแกรม"</div>
 </div>
 
 <script>
@@ -1285,59 +1320,38 @@ async function downloadXml(caseId){
 let seCasesCache = [];
 function renderSeCasesFromCache(){
   if (!seCasesCache.length){
-    seCasesBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">— ไม่มีเคสสำรวจแล้ว —</div>';
+    seCasesBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">— ไม่มีเคสสำรวจแล้ว (กด ↻ โหลดรายการ) —</div>';
     return;
   }
-  const TD = 'padding:7px 10px;font-size:13px';
-  const SM = 'padding:5px 10px;font-size:12px;margin:2px';
-  const rows = seCasesCache.map(c => {
+  seCasesBox.innerHTML = seCasesCache.map(c => {
     const id = String(c.id);
     const claim = escAttr(c.claim_no||"");
     const who = c.surveyor_name && c.surveyor_name.trim() ? c.surveyor_name : "-";
     const imported = !!c.emcs_imported_at;
-    // สถานะการนำเข้า EMCS (mark ถาวรฝั่ง server)
-    const statusCell = imported
-      ? '<span style="color:var(--ok);font-weight:600;font-size:12px">✓ นำเข้าแล้ว</span>'
-        + '<div style="color:var(--muted);font-size:11px">'+escHtml(c.emcs_imported_at)+'</div>'
-      : '<span style="color:var(--muted);font-size:12px">— ยังไม่นำเข้า</span>';
-    // ปุ่ม action ตามสถานะ
+    const statusBadge = imported
+      ? '<span style="color:var(--ok);font-weight:600;font-size:11.5px;white-space:nowrap">✓ นำเข้าแล้ว '+escHtml(c.emcs_imported_at)+'</span>'
+      : '<span style="color:var(--muted);font-size:11.5px;white-space:nowrap">— ยังไม่นำเข้า</span>';
     let act;
     if (imported){
       // นำเข้าแล้ว → กู้/ซ่อม draft เดิม (ห้าม import ซ้ำ — EMCS สร้างเรื่องซ้ำที่เลขเคลมเดิม)
-      const rb = (m,label) => '<button class="run seact" data-id="'+id+'" data-claim="'+claim
-        +'" data-mode="'+m+'" style="'+SM+';background:#64748b">'+label+'</button>';
+      const rb = (m,label) => '<button class="run seact" data-id="'+id+'" data-claim="'+claim+'" data-mode="'+m+'" style="background:#64748b">'+label+'</button>';
       act = rb("fill-existing","เติมส่วนที่ขาด")+rb("images-only","อัปรูปใหม่")+rb("injured-only","กู้ผู้บาดเจ็บ");
     } else if (seSent.has(id)){
-      act = '<span style="color:var(--ok);font-weight:600;font-size:12px">✓ ส่งเข้า AutoKey แล้ว</span>';
+      act = '<span style="color:var(--ok);font-weight:600;font-size:12.5px">✓ ส่งเข้า AutoKey แล้ว</span>';
     } else {
-      act = '<button class="run seact" data-id="'+id+'" data-claim="'+claim
-          +'" data-mode="import" data-live="1" style="'+SM+'">⚡ นำเข้า</button>'
-          + '<button class="run seact" data-id="'+id+'" data-claim="'+claim
-          +'" data-mode="import" style="'+SM+';background:#64748b" title="ดึง+ตรวจ ไม่แตะ EMCS">🧪 ทดสอบ</button>';
+      act = '<button class="run seact" data-id="'+id+'" data-claim="'+claim+'" data-mode="import" data-live="1">⚡ นำเข้า EMCS</button>'
+          + '<button class="run seact" data-id="'+id+'" data-claim="'+claim+'" data-mode="import" style="background:#64748b" title="ดึง+ตรวจ ไม่แตะ EMCS">🧪 ทดสอบ</button>';
     }
-    // ปุ่มดาวน์โหลด XML สำรอง — มีทุกแถว (ไป import EMCS เองตอนบอทใช้ไม่ได้)
-    act += '<button class="xmlbtn" data-id="'+id+'" style="'+SM
-        + ';background:transparent;color:var(--muted);border:1px solid var(--line)" '
-        + 'title="ดาวน์โหลดไฟล์ XML (.txt) ไป import EMCS เอง — สำรองตอนบอทใช้ไม่ได้">📄 XML</button>';
-    return '<tr>'
-      + '<td style="'+TD+'">'+escHtml(c.claim_no||"-")+'</td>'
-      + '<td style="'+TD+'">'+escHtml(c.survey_job_no||"-")+'</td>'
-      + '<td style="'+TD+'">'+escHtml(c.insurance_company||"-")+'</td>'
-      + '<td style="'+TD+'">'+escHtml(who)+'</td>'
-      + '<td style="'+TD+'">'+statusCell+'</td>'
-      + '<td style="'+TD+';text-align:right;white-space:nowrap">'+act+'</td>'
-      + '</tr>';
+    act += '<button class="xmlbtn" data-id="'+id+'" style="background:transparent;color:var(--muted);border:1px solid var(--line)" title="ดาวน์โหลด XML (.txt) ไป import EMCS เอง — สำรอง">📄 XML</button>';
+    return '<div class="case-item">'
+      + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">'
+      +   '<span class="case-sv">'+escHtml(c.survey_job_no||"(ไม่มีเลขเซอร์เวย์)")+'</span>'+statusBadge
+      + '</div>'
+      + '<div class="case-claim">'+escHtml(c.claim_no||"-")+'</div>'
+      + '<div class="case-meta">'+escHtml(c.insurance_company||"-")+' · '+escHtml(who)+'</div>'
+      + '<div class="case-btns">'+act+'</div>'
+      + '</div>';
   }).join("");
-  seCasesBox.innerHTML =
-    '<div style="overflow-x:auto;border:1px solid var(--line);border-radius:10px">'
-    + '<table style="width:100%;border-collapse:collapse">'
-    + '<thead><tr style="background:#f8fafc;text-align:left">'
-    + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">เลขเคลม</th>'
-    + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">เลขเซอร์เวย์</th>'
-    + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">บริษัทประกัน</th>'
-    + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">ผู้สำรวจ</th>'
-    + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">สถานะ</th>'
-    + '<th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   seCasesBox.querySelectorAll(".seact").forEach(b => {
     b.addEventListener("click", () => startSesurvey(b.dataset.id, b.dataset.claim, b.dataset.mode, b.dataset.live === "1"));
   });
@@ -1357,6 +1371,17 @@ loadCasesBtn.addEventListener("click", async () => {
   }catch(e){ seCasesBox.innerHTML = '<div style="color:var(--err);font-size:13px;padding:8px 0">ติดต่อเซิร์ฟเวอร์ไม่ได้</div>'; }
   finally{ loadCasesBtn.disabled = false; }
 });
+
+// แท็บสลับ SE Survey / ISURVEY (client-side toggle หน้าเดียว)
+document.querySelectorAll(".tab").forEach(t => {
+  t.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+    const p = t.dataset.pane;
+    $("#pane-sesurvey").hidden = (p !== "sesurvey");
+    $("#pane-isurvey").hidden = (p !== "isurvey");
+  });
+});
+loadCasesBtn.click();   // auto-load รายการเคสตอนเปิดหน้า
 
 setInterval(poll, 1200);
 poll();
