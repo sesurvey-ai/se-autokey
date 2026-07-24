@@ -14,6 +14,9 @@ runtime/
 # ข้อมูลระหว่างรัน
 downloaded_images/
 runs/
+# โฟลเดอร์วาง zip export (fallback หมวดรูป) — ไม่ commit ไฟล์ที่วาง แต่เก็บ README ไว้
+zip_import/*
+!zip_import/README.txt
 
 # ไฟล์งานเฉพาะเครื่อง
 *.zip
