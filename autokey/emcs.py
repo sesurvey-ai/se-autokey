@@ -19,6 +19,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
 from .browser import (
+    _current_select_text,
     accept_alert,
     click_retry,
     fuzzy_select,
@@ -1142,6 +1143,34 @@ def fill_policy(driver, data: ClaimData):
     set_text(driver, "txtPolicy_Type", data.insure_type)
 
 
+def _select_car_brand(driver, car_brand, label="ยี่ห้อรถ"):
+    """เลือก 'ยี่ห้อรถ' (ddlCMFG) ให้ทน race ของ cascade ประเภทรถ→ยี่ห้อ:
+    ตัวเลือกยี่ห้อถูกโหลดจาก onchange postback ของ ddlCType ซึ่งบางครั้ง commit ไม่ทัน
+    presleep เดิม → ddlCMFG ว่าง (มีแต่ '-- ระบุ --'). แก้แบบเดียวกับที่คนต้องกดประเภทรถ
+    ซ้ำเองบนหน้าเว็บ: รอ list โหลด → ถ้ายังว่างให้ยิง onchange ของ ddlCType ซ้ำแล้วรอ
+    → ค่อย fuzzy_select. list ไม่ขึ้นจริง = หยุดรอคน (required)"""
+    time.sleep(2)   # รอ postback ประเภทรถ โหลดตัวเลือกยี่ห้อ (เท่าจังหวะฝั่งคู่กรณี)
+    if not _select_has_options(driver, "ddlCMFG"):
+        try:   # ยิง onchange ของ ddlCType ซ้ำ (this.value = ประเภทรถเดิม) ให้ repopulate ยี่ห้อ
+            driver.execute_script(
+                "var e=document.getElementById('ddlCType');"
+                "if(e){e.dispatchEvent(new Event('change'));}")
+        except Exception:
+            pass
+        try:
+            WebDriverWait(driver, 8).until(
+                lambda d: _select_has_options(d, "ddlCMFG"))
+        except TimeoutException:
+            pass
+    if _select_has_options(driver, "ddlCMFG"):
+        fuzzy_select(driver, "ddlCMFG", car_brand, label=label,
+                     required=True, timeout=5)
+    else:
+        wait_for_manual_fill(
+            label, "ตัวเลือกยี่ห้อยังไม่โหลด (postback ประเภทรถ ไม่สมบูรณ์)",
+            select_id="ddlCMFG")
+
+
 def fill_car(driver, data: ClaimData):
     log("EMCS: กรอกรายละเอียดรถยนต์")
     wait_visible(driver, By.ID, "txtCar_RegNo")
@@ -1150,14 +1179,20 @@ def fill_car(driver, data: ClaimData):
     set_text(driver, "txtChassisNo", data.insure_chassis)
     set_text(driver, "txtEngineNo", data.insure_engine)
 
-    # dropdown แต่ละตัวมี postback — เว้นจังหวะ 1s ตาม workflow เดิม
-    # ประเภทรถ/จังหวัดรถ/ยี่ห้อรถ = field บังคับ (required) → ถ้าว่าง/เลือกไม่ได้ หยุดรอคน
+    # dropdown แต่ละตัวมี postback — ประเภทรถ→ยี่ห้อ เป็น cascade (ผูกกัน) ฝั่ง server:
+    # onchange ของ ddlCType โหลด "ตัวเลือกยี่ห้อ" (ddlCMFG) → ต้องเลือกยี่ห้อ "ทันทีหลัง"
+    # ประเภทรถ + รอ list โหลดจริง ก่อนแตะจังหวัด (เลียนแบบฝั่งคู่กรณีที่ทำงานถูก emcs.py:260-287);
+    # ลำดับเดิม (จังหวัดคั่นกลาง + presleep=1) ทำ postback ยี่ห้อ commit ไม่ทัน → ยี่ห้อว่าง
+    # ประเภทรถ/จังหวัดรถ/ยี่ห้อรถ = field บังคับ (required) → ว่าง/เลือกไม่ได้ หยุดรอคน
     fuzzy_select(driver, "ddlCType", data.prb_car_type, presleep=1,
                  label="ประเภทรถ", required=True)
+    _select_car_brand(driver, data.car_brand)   # รอ+guard+ยิง onchange ซ้ำถ้า list ยังว่าง
     fuzzy_select(driver, "ddlCar_Province", data.plate_province, presleep=1,
                  label="จังหวัดรถ", required=True)
-    fuzzy_select(driver, "ddlCMFG", data.car_brand, presleep=1,
-                 label="ยี่ห้อรถ", required=True)
+    # verify-stuck: เผื่อ postback จังหวัดรีเซ็ตยี่ห้อกลับเป็น placeholder → เลือกยี่ห้อซ้ำ
+    if str(data.car_brand or "").strip() and \
+            _current_select_text(driver, "ddlCMFG").strip() in ("", "-- ระบุ --"):
+        _select_car_brand(driver, data.car_brand, label="ยี่ห้อรถ (เลือกซ้ำ)")
     fuzzy_select(driver, "ddlCar_Color", data.car_color, presleep=1, label="สีรถ")
 
 
