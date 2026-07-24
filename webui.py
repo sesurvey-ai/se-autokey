@@ -179,14 +179,21 @@ def start_run(params: dict):
 
 
 def start_sesurvey_run(params: dict):
-    """เริ่มงานจากปุ่ม 'นำเข้า EMCS' บนหน้า inspector ของ se-survey — คืน (run_id, error)
-    ฝั่ง main.py (--sesurvey-case) ตอนนี้เป็น dry-run เสมอ: ดึง+ตรวจ XML แล้วหยุดก่อนแตะ EMCS"""
+    """เริ่มงานจากหน้า SE Survey — คืน (run_id, error)
+
+    live=True → เติม --sesurvey-live = นำเข้า EMCS จริง (ยัง draft-only: บอทหยุดที่ draft
+    ไม่กดส่งงาน); live=False (ค่าเริ่มต้น) = dry-run ดึง+ตรวจ XML+รูป แล้วหยุดก่อนแตะ EMCS.
+    ⚠️ ปุ่ม inspector (cross-origin) ถูกบังคับ dry-run ที่ชั้น route — live ได้เฉพาะหน้า operator ท้องถิ่น"""
     case_id = str(params.get("case_id", "")).strip()
     if not case_id.isdigit():
         return None, "case_id ไม่ถูกต้อง"
     claim_no = str(params.get("claim_no", "")).strip()
+    live = bool(params.get("live"))
     cmd = [sys.executable, "-u", "main.py", "--sesurvey-case", case_id, "-y"]
-    title = f"SE-Survey #{case_id}" + (f" · {claim_no}" if claim_no else "")
+    if live:
+        cmd.append("--sesurvey-live")
+    tag = "จริง" if live else "dry-run"
+    title = f"SE-Survey #{case_id}" + (f" · {claim_no}" if claim_no else "") + f" ({tag})"
     return _spawn(cmd, title, "sesurvey", [claim_no] if claim_no else [])
 
 
@@ -499,8 +506,12 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/forget":
             self._send(200, {"forgot": forget_run(self._id(self._read_json()))})
         elif u.path == "/api/import-sesurvey":
-            # ปุ่ม "นำเข้า EMCS" จากหน้า inspector ของ se-survey (cross-origin — CORS อนุญาตแล้ว)
+            # ปุ่ม "นำเข้า EMCS": หน้า operator ท้องถิ่น (same-origin) หรือ inspector (cross-origin)
             params = self._read_json()
+            # 🔒 live import อนุญาตเฉพาะหน้า operator ท้องถิ่น — ถ้ามาจาก origin ภายนอก
+            # (ปุ่ม inspector ที่ยังพักไว้) บังคับ dry-run เสมอ กันเผลอยิง live จากเว็บ se-survey
+            if self._cors_origin() is not None:
+                params["live"] = False
             run_id, err = start_sesurvey_run(params)
             if err:
                 self._send(409, {"error": err})
@@ -750,12 +761,14 @@ PAGE = r"""<!doctype html>
         <label class="fld" for="secase">เลขเคส (case id) <span style="color:var(--muted);font-weight:400">— หรือกดปุ่มในตารางด้านล่าง</span></label>
         <input type="text" id="secase" inputmode="numeric" placeholder="เช่น 73">
       </div>
-      <button class="run" id="serunbtn" style="padding:11px 18px">⚡ นำเข้า EMCS</button>
+      <button class="run" id="serunbtn" style="padding:11px 18px">⚡ นำเข้า EMCS (จริง)</button>
+      <button class="run" id="sedrybtn" style="padding:11px 18px;background:#64748b" title="ดึง+ตรวจ XML+รูป แล้วหยุด ไม่แตะ EMCS">🧪 ทดสอบ</button>
     </div>
     <div id="secasesbox" style="margin-top:12px"></div>
     <div class="note" style="margin-top:12px">
       • ต้องตั้ง <b>SESURVEY_API_TOKEN</b> ใน .env ให้ตรงกับ INTEGRATION_TOKEN ของ server ก่อน<br>
-      • ตอนนี้เป็น <b>DRY-RUN</b>: ดึง XML + โหลดรูปมาเก็บบนเครื่อง แล้วหยุด — ยังไม่แตะ EMCS
+      • <b>⚡ นำเข้า EMCS (จริง)</b> = กรอกฟอร์ม + อัปรูป + บันทึกเป็น draft (บอท<b>ไม่กดส่งงาน</b> — หัวหน้าตรวจแล้วส่งเอง)<br>
+      • <b>🧪 ทดสอบ</b> = dry-run: ดึง XML + โหลดรูปมาเก็บบนเครื่อง แล้วหยุด — ไม่แตะ EMCS
     </div>
   </div>
 
@@ -1140,24 +1153,28 @@ $("#claimmode").addEventListener("change", e => {
 });
 
 // ── นำเข้าจาก SE Survey (ดึง XML+รูป → EMCS) ──
-const seRunBtn = $("#serunbtn"), seCaseInput = $("#secase");
+const seRunBtn = $("#serunbtn"), seDryBtn = $("#sedrybtn"), seCaseInput = $("#secase");
 const seCasesBox = $("#secasesbox"), loadCasesBtn = $("#loadcasesbtn");
 const seSent = new Set();   // case id ที่กดส่งเข้า AutoKey แล้วในรอบนี้ (กันกดซ้ำ)
 
-async function startSesurvey(caseId, claimNo){
+async function startSesurvey(caseId, claimNo, live){
   caseId = String(caseId||"").trim();
   if (!/^\d+$/.test(caseId)){ alert("เลขเคสต้องเป็นตัวเลข"); return; }
+  if (live && !confirm("นำเข้า EMCS จริง (สร้าง draft) สำหรับเคส #"+caseId+" ?\n\n"
+      + "• บอทจะกรอกฟอร์ม + อัปรูป + บันทึกเป็น draft — ไม่กดส่งงาน (หัวหน้าตรวจแล้วส่งเอง)\n"
+      + "• draft ที่สร้างลบไม่ได้ (ยกเลิกได้อย่างเดียว) — เคสที่นำเข้าแล้วระบบกันซ้ำให้")){ return; }
   try{
     const {ok,data} = await postJSON("/api/import-sesurvey",
-      {case_id: caseId, claim_no: claimNo||""});
+      {case_id: caseId, claim_no: claimNo||"", live: !!live});
     if (!ok){ alert(data.error || "เริ่มงานไม่สำเร็จ"); return; }
     seSent.add(caseId);
     renderSeCasesFromCache();
     poll();
   }catch(e){ alert("ติดต่อเซิร์ฟเวอร์ไม่ได้: " + e); }
 }
-seRunBtn.addEventListener("click", () => startSesurvey(seCaseInput.value, ""));
-seCaseInput.addEventListener("keydown", e => { if (e.key === "Enter") startSesurvey(seCaseInput.value, ""); });
+seRunBtn.addEventListener("click", () => startSesurvey(seCaseInput.value, "", true));
+seDryBtn.addEventListener("click", () => startSesurvey(seCaseInput.value, "", false));
+seCaseInput.addEventListener("keydown", e => { if (e.key === "Enter") startSesurvey(seCaseInput.value, "", true); });
 
 let seCasesCache = [];
 function renderSeCasesFromCache(){
@@ -1193,7 +1210,7 @@ function renderSeCasesFromCache(){
     + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">ผู้สำรวจ</th>'
     + '<th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   seCasesBox.querySelectorAll(".sebtn").forEach(b => {
-    b.addEventListener("click", () => startSesurvey(b.dataset.id, b.dataset.claim));
+    b.addEventListener("click", () => startSesurvey(b.dataset.id, b.dataset.claim, true));
   });
 }
 loadCasesBtn.addEventListener("click", async () => {
