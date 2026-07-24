@@ -16,6 +16,16 @@ from .processing import natural_sort_key, process_images_pro
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp")
 
+# หมวดในตัว zip export ของ EMCS (PICTURES/<CAT>/) สำหรับรูป "flat" (INS/REPORTS/OTHERS) →
+# ป้ายประเภทรูป EMCS ให้ _group_flat_by_category จัดกลุ่ม+ตั้งชื่อแยกหมวด (แทนกองเป็นประเภทเดียว).
+# หมวดบุคคลที่สาม TP_* จัดการแยกผ่าน subfolder tp_*/ + n_opponents/n_injuries/n_assets (ไม่อยู่ที่นี่)
+ZIP_DEFAULT_EMCS_TYPE = "รูปประกอบ"
+ZIP_CAT_TO_EMCS = {
+    "INS": "รูปรถประกัน",     # รูปรถประกัน
+    "OTHERS": "รูปประกอบ",     # เบ็ดเตล็ด
+    "REPORTS": "รูปประกอบ",    # เอกสาร/ใบรับงาน — หมวดไม่ชัด ใส่กลางให้หัวหน้าจัดบน EMCS
+}
+
 
 def archive_old_images(folder: Path):
     """ย้ายรูปเก่าจากรอบก่อนไปไว้ใน _old/<timestamp>/ กันรูปข้ามเคลมปนกัน
@@ -272,6 +282,7 @@ def extract_zip_images(zip_path: Path, folder: Path) -> dict:
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     counts = {}
+    cat_map = {}   # ชื่อไฟล์ flat → ประเภทรูป EMCS (INS/REPORTS/OTHERS) ให้ upload_images แยกกลุ่ม
     with zipfile.ZipFile(zip_path) as zf:
         for info in zf.infolist():
             name = Path(info.filename).name
@@ -300,6 +311,18 @@ def extract_zip_images(zip_path: Path, folder: Path) -> dict:
                 target = target.parent / f"{stem}_{k}{ext}"
                 k += 1
             target.write_bytes(zf.read(info))
+            # รูป flat (INS/REPORTS/OTHERS) → จำประเภทรูป EMCS ไว้ให้ _group_flat_by_category
+            # แยกกลุ่ม (INS→รูปรถประกัน, OTHERS→รูปประกอบ) + ตั้งชื่อไทยตามหมวด แทนกองประเภทเดียว
+            if not category.startswith("TP_"):
+                cat_map[target.name] = ZIP_CAT_TO_EMCS.get(category, ZIP_DEFAULT_EMCS_TYPE)
+
+    if cat_map:   # sidecar รูป flat — TP_* ไม่ต้อง (จัดการผ่าน tp_*/ + n_opponents)
+        import json
+        try:
+            (folder / "_categories.json").write_text(
+                json.dumps(cat_map, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            log(f"   ⚠️ เขียน _categories.json ไม่ได้: {e}")
 
     total = sum(counts.values())
     detail = ", ".join(f"{k}: {v}" for k, v in sorted(counts.items()))
