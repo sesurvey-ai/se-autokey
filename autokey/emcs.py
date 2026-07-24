@@ -1903,8 +1903,17 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
         if files:
             grouped = _group_flat_by_category(folder, files, image_type)
             if grouped is None:
-                # ไม่มี _categories.json (flow ISURVEY) → ชุดเดียวประเภท image_type แบบเดิม
-                batches.append((image_type, [folder / name for name in files]))
+                # ไม่มี _categories.json = ไม่รู้หมวดจริง (ISURVEY / รูป se-survey ที่ไม่ถูก
+                # tag หมวด เช่นนำเข้าจาก LINE/แกลเลอรีดิบ) → อย่าเดาว่าเป็น "รูปรถประกัน"
+                # ทั้งกอง (โกหกว่าเป็นรูปรถประกัน). ใช้ถังกลาง "รูปประกอบ" + rename ชื่อสะอาด
+                # (EMCS คอลัมน์ "รายการ" = ชื่อไฟล์ → กันชื่อดิบ rn_image_picker_*/S__*;
+                # หัวหน้าจัดหมวดจริงบน EMCS ทีหลัง)
+                flat = _rename_clean_files(
+                    sorted((folder / name for name in files), key=lambda p: p.name),
+                    _EMCS_DEFAULT_IMAGE_TYPE + "_{seq}", 1)
+                batches.append((_EMCS_DEFAULT_IMAGE_TYPE, flat))
+                log(f"EMCS: รูป {len(flat)} ไฟล์ไม่มีหมวด → อัปเป็น "
+                    f"'{_EMCS_DEFAULT_IMAGE_TYPE}' + ตั้งชื่อใหม่ (หัวหน้าจัดหมวดบน EMCS)")
             else:
                 # se-survey: แยกตามหมวดที่ติดมากับรูป → หลายชุด หลายประเภท
                 batches.extend(grouped)
