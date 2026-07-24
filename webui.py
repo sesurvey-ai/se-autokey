@@ -88,6 +88,26 @@ def fetch_sesurvey_xml(case_id: str):
     except Exception as e:
         return None, f"เชื่อมต่อ se-survey ไม่ได้: {e}"
 
+
+def resolve_case_ref(ref):
+    """คืน (case_id, error): ตัวเลขล้วน = case id; อื่น = เลขเซอร์เวย์ (survey_job_no เช่น SETP-...) → หาใน list.
+    ใช้กับ proxy XML ของ webui (ฝั่ง import ส่ง raw ให้ main.py resolve เอง)"""
+    ref = str(ref or "").strip()
+    if not ref:
+        return None, "ไม่มีเลขเคส/เลขเซอร์เวย์"
+    if ref.isdigit():
+        return ref, None
+    cases, err = fetch_sesurvey_cases()
+    if err:
+        return None, f"ค้นเลขเซอร์เวย์ไม่ได้: {err}"
+    hits = [c for c in cases if str(c.get("survey_job_no") or "").strip().lower() == ref.lower()]
+    if not hits:
+        return None, f"ไม่พบเลขเซอร์เวย์ '{ref}' (ในเคสล่าสุด {len(cases)} รายการ)"
+    if len(hits) > 1:
+        return None, f"เลขเซอร์เวย์ '{ref}' ซ้ำหลายเคส — ใช้ case id แทน"
+    return str(hits[0].get("id")), None
+
+
 # marker ที่ main.py (ผ่าน browser.wait_for_manual_fill) พิมพ์ออก stdout
 # เมื่อต้องการให้คนกรอกข้อมูลเอง — ต้องตรงกับค่าใน autokey/browser.py
 MANUAL_MARKER = "@@MANUAL_FILL@@"
@@ -220,9 +240,9 @@ def start_sesurvey_run(params: dict):
         แตะ EMCS จริงเสมอ — ไม่มี dry-run
     ทุกโหมดยัง draft-only: บอทไม่กดส่งงาน.
     ⚠️ route บังคับ import+dry ถ้ามาจาก cross-origin (ปุ่ม inspector) — live/กู้ ได้เฉพาะหน้า operator ท้องถิ่น"""
-    case_id = str(params.get("case_id", "")).strip()
-    if not case_id.isdigit():
-        return None, "case_id ไม่ถูกต้อง"
+    case_id = str(params.get("case_id", "")).strip()   # รับทั้ง case id + เลขเซอร์เวย์ (main.py resolve เอง)
+    if not case_id:
+        return None, "ไม่มีเลขเคส/เลขเซอร์เวย์"
     mode = str(params.get("mode", "import")).strip() or "import"
     if mode not in _SESURVEY_MODES:
         return None, f"mode ไม่ถูกต้อง: {mode}"
@@ -505,9 +525,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"cases": cases})
         elif u.path == "/sesurvey-xml":
             # ดาวน์โหลดไฟล์ XML สำรอง (proxy แนบ token) — ไป import EMCS เอง
-            case_id = ((parse_qs(u.query).get("case_id") or [""])[0]).strip()
-            if not case_id.isdigit():
-                self._send(400, {"error": "case_id ไม่ถูกต้อง"})
+            ref = ((parse_qs(u.query).get("case_id") or [""])[0]).strip()
+            case_id, rerr = resolve_case_ref(ref)   # รับ case id / เลขเซอร์เวย์
+            if rerr:
+                self._send(400, {"error": rerr})
             else:
                 data, err = fetch_sesurvey_xml(case_id)
                 if err:
@@ -814,8 +835,8 @@ PAGE = r"""<!doctype html>
     </div>
     <div style="display:flex;gap:10px;align-items:flex-end;margin-top:10px">
       <div style="flex:1">
-        <label class="fld" for="secase">เลขเคส (case id) <span style="color:var(--muted);font-weight:400">— หรือกดปุ่มในตารางด้านล่าง</span></label>
-        <input type="text" id="secase" inputmode="numeric" placeholder="เช่น 73">
+        <label class="fld" for="secase">เลขเคส / เลขเซอร์เวย์ <span style="color:var(--muted);font-weight:400">— หรือกดปุ่มในตารางด้านล่าง</span></label>
+        <input type="text" id="secase" placeholder="เช่น 73 หรือ SETP-69060062">
       </div>
       <button class="run" id="serunbtn" style="padding:11px 18px">⚡ นำเข้า EMCS (จริง)</button>
       <button class="run" id="sedrybtn" style="padding:11px 18px;background:#64748b" title="ดึง+ตรวจ XML+รูป แล้วหยุด ไม่แตะ EMCS">🧪 ทดสอบ</button>
@@ -1216,7 +1237,7 @@ const seSent = new Set();   // case id ที่กดส่งเข้า Auto
 async function startSesurvey(caseId, claimNo, mode, live){
   caseId = String(caseId||"").trim();
   mode = mode || "import";
-  if (!/^\d+$/.test(caseId)){ alert("เลขเคสต้องเป็นตัวเลข"); return; }
+  if (!caseId){ alert("ใส่เลขเคส (case id) หรือเลขเซอร์เวย์"); return; }
   const CONFIRM = {
     "import-live": "นำเข้า EMCS จริง (สร้าง draft) เคส #"+caseId+" ?\n\n"
       + "• กรอกฟอร์ม + อัปรูป + บันทึกเป็น draft — ไม่กดส่งงาน (หัวหน้าตรวจแล้วส่งเอง)\n"
@@ -1248,7 +1269,7 @@ seCaseInput.addEventListener("keydown", e => { if (e.key === "Enter") startSesur
 // ดาวน์โหลดไฟล์ XML สำรอง (.txt) ผ่าน proxy webui → เอาไป import EMCS เอง
 async function downloadXml(caseId){
   caseId = String(caseId||"").trim();
-  if (!/^\d+$/.test(caseId)) return;
+  if (!caseId) return;
   try{
     const r = await fetch("/sesurvey-xml?case_id="+encodeURIComponent(caseId));
     if (!r.ok){ let e={}; try{ e = await r.json(); }catch(_){}; alert(e.error || ("โหลด XML ไม่สำเร็จ ("+r.status+")")); return; }

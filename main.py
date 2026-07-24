@@ -125,8 +125,8 @@ def parse_args():
     p.add_argument("--dry-run", action="store_true",
                    help="ใช้กับ --report-isurvey: ตรวจ gate + โชว์ payload แต่ไม่ยิงจริง")
     p.add_argument("--sesurvey-case", default="",
-                   help="ดึงงานจากระบบ se-survey ด้วยเลขเคส (case id): โหลด SURV_REPORT XML "
-                        "จาก api.sesurvey.cloud แล้วเข้า flow นำเข้า XML ของ EMCS — "
+                   help="ดึงงานจากระบบ se-survey ด้วยเลขเคส (case id) หรือเลขเซอร์เวย์ (SETP-...; auto-detect): "
+                        "โหลด SURV_REPORT XML จาก api.sesurvey.cloud แล้วเข้า flow นำเข้า XML ของ EMCS — "
                         "default = dry-run (หยุดก่อนแตะ EMCS); ใส่ --sesurvey-live เพื่อ import จริง")
     p.add_argument("--sesurvey-live", action="store_true",
                    help="⛔ เปิดโหมด import จริงเข้า EMCS สำหรับ --sesurvey-case "
@@ -936,6 +936,31 @@ def _run_injured_only(cfg, args, case_id, hdrs, meta):
     banner(f"INJURED-ONLY: เติม+บันทึกผู้บาดเจ็บเสร็จ (e-Survey {esurvey}) — ตรวจงาน + กดส่งเอง (บอทไม่กดส่ง)")
 
 
+def _resolve_case_id_by_survey(cfg, hdrs, survey_no):
+    """resolve เลขเซอร์เวย์ (survey_job_no เช่น SETP-69060062) → case id ผ่าน /api/integrations/cases.
+    เลขเซอร์เวย์ SETP unique → เจอตัวเดียว. list คืนเฉพาะเคส surveyed/reviewed ล่าสุด 100 เคส
+    (เก่ากว่านั้นใส่ case id ตรง ๆ). คืน case_id (str) หรือ SystemExit ถ้าไม่เจอ/ซ้ำ"""
+    import requests
+    sv = str(survey_no).strip()
+    try:
+        r = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases", headers=hdrs, timeout=20)
+        r.raise_for_status()
+        cases = ((r.json() or {}).get("data") or {}).get("cases") or []
+    except Exception as e:
+        raise SystemExit(f"ค้นเลขเซอร์เวย์ '{sv}' ไม่ได้ (ดึงรายการเคส se-survey ล้มเหลว: {e})")
+    hits = [c for c in cases
+            if str(c.get("survey_job_no") or "").strip().lower() == sv.lower()]
+    if not hits:
+        raise SystemExit(f"ไม่พบเลขเซอร์เวย์ '{sv}' (ค้นจากเคส surveyed/reviewed ล่าสุด {len(cases)} เคส) "
+                         "— เช็คเลข/สิทธิ์ token หรือใส่ case id แทน")
+    if len(hits) > 1:
+        ids = ", ".join(str(c.get("id")) for c in hits)
+        raise SystemExit(f"เลขเซอร์เวย์ '{sv}' ตรงหลายเคส (id {ids}) — ผิดปกติ (SETP ควร unique) ใช้ case id แทน")
+    cid = str(hits[0].get("id"))
+    log(f"✓ เลขเซอร์เวย์ {sv} → เคส #{cid} (claim {hits[0].get('claim_no') or '?'})")
+    return cid
+
+
 def run_sesurvey_import(cfg, args):
     """โหมดงานจาก se-survey: ดึง SURV_REPORT XML ของเคสจาก api.sesurvey.cloud
     (แอปสำรวจของเราเอง — ข้อมูลครบกว่า XML ของ ISURVEY) → ตรวจ/parse → นำเข้า EMCS
@@ -946,13 +971,15 @@ def run_sesurvey_import(cfg, args):
     import requests
     from autokey.surv_xml import parse_surv_report
 
-    case_id = str(args.sesurvey_case).strip()
-    if not case_id.isdigit():
-        raise SystemExit(f"--sesurvey-case ต้องเป็นเลขเคส (ได้ '{case_id}')")
+    raw_ref = str(args.sesurvey_case).strip()
+    if not raw_ref:
+        raise SystemExit("--sesurvey-case ว่าง — ใส่เลขเคส (case id) หรือเลขเซอร์เวย์ (SETP-...)")
     if not cfg.sesurvey_api_token:
         raise SystemExit("ไม่พบ SESURVEY_API_TOKEN ใน .env — ขอ token จากผู้ดูแลระบบ se-survey")
 
     hdrs = {"Authorization": f"Bearer {cfg.sesurvey_api_token}"}
+    # auto-detect: ตัวเลขล้วน = case id (db); อื่น ๆ = เลขเซอร์เวย์ (survey_job_no เช่น SETP-...) → resolve
+    case_id = raw_ref if raw_ref.isdigit() else _resolve_case_id_by_survey(cfg, hdrs, raw_ref)
 
     # ── ด่านกันซ้ำ (สำคัญที่สุด): เคสที่ import เข้า EMCS ไปแล้ว ห้าม import อีก ──
     # EMCS ไม่กันเลขเคลมซ้ำ — import ซ้ำ = สร้างเรื่องซ้ำที่เลขเคลมเดิม (ลบไม่ได้ ยกเลิกได้อย่างเดียว)
