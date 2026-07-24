@@ -178,21 +178,42 @@ def start_run(params: dict):
     return _spawn(cmd, title, kind, claims)
 
 
+# โหมดงาน se-survey → (flag ของ main.py, ป้ายชื่อ) — import ต่อ --sesurvey-live ตาม live
+_SESURVEY_MODES = {
+    "import":        (None,                       "นำเข้า"),
+    "fill-existing": ("--sesurvey-fill-existing",  "เติมส่วนที่ขาด"),
+    "images-only":   ("--sesurvey-images-only",    "อัปรูปใหม่"),
+    "injured-only":  ("--sesurvey-injured-only",   "กู้ผู้บาดเจ็บ"),
+}
+
+
 def start_sesurvey_run(params: dict):
     """เริ่มงานจากหน้า SE Survey — คืน (run_id, error)
 
-    live=True → เติม --sesurvey-live = นำเข้า EMCS จริง (ยัง draft-only: บอทหยุดที่ draft
-    ไม่กดส่งงาน); live=False (ค่าเริ่มต้น) = dry-run ดึง+ตรวจ XML+รูป แล้วหยุดก่อนแตะ EMCS.
-    ⚠️ ปุ่ม inspector (cross-origin) ถูกบังคับ dry-run ที่ชั้น route — live ได้เฉพาะหน้า operator ท้องถิ่น"""
+    mode: import (ค่าเริ่มต้น) / fill-existing / images-only / injured-only
+      - import + live=True → --sesurvey-live = นำเข้า EMCS จริง (สร้าง draft); live=False = dry-run
+        (ดึง+ตรวจ XML+รูป แล้วหยุดก่อนแตะ EMCS)
+      - โหมดกู้/ซ่อม (fill-existing/images-only/injured-only): เปิด draft เดิม (เคสต้อง import แล้ว)
+        แตะ EMCS จริงเสมอ — ไม่มี dry-run
+    ทุกโหมดยัง draft-only: บอทไม่กดส่งงาน.
+    ⚠️ route บังคับ import+dry ถ้ามาจาก cross-origin (ปุ่ม inspector) — live/กู้ ได้เฉพาะหน้า operator ท้องถิ่น"""
     case_id = str(params.get("case_id", "")).strip()
     if not case_id.isdigit():
         return None, "case_id ไม่ถูกต้อง"
+    mode = str(params.get("mode", "import")).strip() or "import"
+    if mode not in _SESURVEY_MODES:
+        return None, f"mode ไม่ถูกต้อง: {mode}"
     claim_no = str(params.get("claim_no", "")).strip()
     live = bool(params.get("live"))
     cmd = [sys.executable, "-u", "main.py", "--sesurvey-case", case_id, "-y"]
-    if live:
-        cmd.append("--sesurvey-live")
-    tag = "จริง" if live else "dry-run"
+    flag, label = _SESURVEY_MODES[mode]
+    if flag:
+        cmd.append(flag)
+        tag = label
+    else:  # import
+        if live:
+            cmd.append("--sesurvey-live")
+        tag = "นำเข้าจริง" if live else "dry-run"
     title = f"SE-Survey #{case_id}" + (f" · {claim_no}" if claim_no else "") + f" ({tag})"
     return _spawn(cmd, title, "sesurvey", [claim_no] if claim_no else [])
 
@@ -508,10 +529,11 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/import-sesurvey":
             # ปุ่ม "นำเข้า EMCS": หน้า operator ท้องถิ่น (same-origin) หรือ inspector (cross-origin)
             params = self._read_json()
-            # 🔒 live import อนุญาตเฉพาะหน้า operator ท้องถิ่น — ถ้ามาจาก origin ภายนอก
-            # (ปุ่ม inspector ที่ยังพักไว้) บังคับ dry-run เสมอ กันเผลอยิง live จากเว็บ se-survey
+            # 🔒 live import + โหมดกู้/ซ่อม อนุญาตเฉพาะหน้า operator ท้องถิ่น — ถ้ามาจาก origin
+            # ภายนอก (ปุ่ม inspector ที่ยังพักไว้) บังคับ import แบบ dry-run เสมอ กันเผลอแตะ EMCS
             if self._cors_origin() is not None:
                 params["live"] = False
+                params["mode"] = "import"
             run_id, err = start_sesurvey_run(params)
             if err:
                 self._send(409, {"error": err})
@@ -1157,24 +1179,37 @@ const seRunBtn = $("#serunbtn"), seDryBtn = $("#sedrybtn"), seCaseInput = $("#se
 const seCasesBox = $("#secasesbox"), loadCasesBtn = $("#loadcasesbtn");
 const seSent = new Set();   // case id ที่กดส่งเข้า AutoKey แล้วในรอบนี้ (กันกดซ้ำ)
 
-async function startSesurvey(caseId, claimNo, live){
+async function startSesurvey(caseId, claimNo, mode, live){
   caseId = String(caseId||"").trim();
+  mode = mode || "import";
   if (!/^\d+$/.test(caseId)){ alert("เลขเคสต้องเป็นตัวเลข"); return; }
-  if (live && !confirm("นำเข้า EMCS จริง (สร้าง draft) สำหรับเคส #"+caseId+" ?\n\n"
-      + "• บอทจะกรอกฟอร์ม + อัปรูป + บันทึกเป็น draft — ไม่กดส่งงาน (หัวหน้าตรวจแล้วส่งเอง)\n"
-      + "• draft ที่สร้างลบไม่ได้ (ยกเลิกได้อย่างเดียว) — เคสที่นำเข้าแล้วระบบกันซ้ำให้")){ return; }
+  const CONFIRM = {
+    "import-live": "นำเข้า EMCS จริง (สร้าง draft) เคส #"+caseId+" ?\n\n"
+      + "• กรอกฟอร์ม + อัปรูป + บันทึกเป็น draft — ไม่กดส่งงาน (หัวหน้าตรวจแล้วส่งเอง)\n"
+      + "• draft ที่สร้างลบไม่ได้ (ยกเลิกได้อย่างเดียว) — เคสที่นำเข้าแล้วระบบกันซ้ำให้",
+    "fill-existing": "เติมส่วนที่ขาดบน draft เดิม เคส #"+caseId+" ?\n\n"
+      + "• เปิด draft เดิม เติมหน้าหลัก/คู่กรณี/รูป/ค่าใช้จ่าย แล้วบันทึก — ไม่กดส่ง\n"
+      + "⚠️ เหมาะกับ draft ที่ยังไม่ได้เติมคู่กรณี/รูป (ไม่งั้นอาจเพิ่มซ้ำ)",
+    "images-only": "อัปรูปใหม่บน draft เดิม เคส #"+caseId+" ?\n\n"
+      + "• อัปรูปแยกหมวด — ไม่แตะฟอร์ม ไม่กดส่ง\n"
+      + "⚠️ ควรลบรูปเก่าใน EMCS ก่อน (ไม่งั้นรูปซ้ำ)",
+    "injured-only": "กู้บล็อกผู้บาดเจ็บบน draft เดิม เคส #"+caseId+" ?\n\n"
+      + "• เติมเฉพาะผู้บาดเจ็บ (รพ.ว่าง → '-') แล้วบันทึก — ไม่แตะส่วนอื่น ไม่กดส่ง",
+  };
+  const key = (mode === "import") ? (live ? "import-live" : null) : mode;
+  if (key && CONFIRM[key] && !confirm(CONFIRM[key])) return;
   try{
     const {ok,data} = await postJSON("/api/import-sesurvey",
-      {case_id: caseId, claim_no: claimNo||"", live: !!live});
+      {case_id: caseId, claim_no: claimNo||"", mode: mode, live: !!live});
     if (!ok){ alert(data.error || "เริ่มงานไม่สำเร็จ"); return; }
-    seSent.add(caseId);
+    if (mode === "import") seSent.add(caseId);
     renderSeCasesFromCache();
     poll();
   }catch(e){ alert("ติดต่อเซิร์ฟเวอร์ไม่ได้: " + e); }
 }
-seRunBtn.addEventListener("click", () => startSesurvey(seCaseInput.value, "", true));
-seDryBtn.addEventListener("click", () => startSesurvey(seCaseInput.value, "", false));
-seCaseInput.addEventListener("keydown", e => { if (e.key === "Enter") startSesurvey(seCaseInput.value, "", true); });
+seRunBtn.addEventListener("click", () => startSesurvey(seCaseInput.value, "", "import", true));
+seDryBtn.addEventListener("click", () => startSesurvey(seCaseInput.value, "", "import", false));
+seCaseInput.addEventListener("keydown", e => { if (e.key === "Enter") startSesurvey(seCaseInput.value, "", "import", true); });
 
 let seCasesCache = [];
 function renderSeCasesFromCache(){
@@ -1182,22 +1217,40 @@ function renderSeCasesFromCache(){
     seCasesBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">— ไม่มีเคสสำรวจแล้ว —</div>';
     return;
   }
+  const TD = 'padding:7px 10px;font-size:13px';
+  const SM = 'padding:5px 10px;font-size:12px;margin:2px';
   const rows = seCasesCache.map(c => {
     const id = String(c.id);
-    const sent = seSent.has(id);
+    const claim = escAttr(c.claim_no||"");
     const who = c.surveyor_name && c.surveyor_name.trim() ? c.surveyor_name : "-";
-    // นำเข้า EMCS ไปแล้ว (mark ถาวรฝั่ง server) → ห้ามซ้ำ: EMCS จะสร้างเรื่องซ้ำที่เลขเคลมเดิม
-    const btn = c.emcs_imported_at
-      ? '<span style="color:var(--ok);font-weight:600;font-size:12px" title="นำเข้าเมื่อ '+escAttr(c.emcs_imported_at)+'">✓ นำเข้า EMCS แล้ว</span>'
-      : sent
-      ? '<span style="color:var(--ok);font-weight:600;font-size:12px">✓ ส่งแล้ว</span>'
-      : '<button class="run sebtn" data-id="'+id+'" data-claim="'+escAttr(c.claim_no||"")+'" style="padding:6px 12px;font-size:12px">นำเข้า</button>';
+    const imported = !!c.emcs_imported_at;
+    // สถานะการนำเข้า EMCS (mark ถาวรฝั่ง server)
+    const statusCell = imported
+      ? '<span style="color:var(--ok);font-weight:600;font-size:12px">✓ นำเข้าแล้ว</span>'
+        + '<div style="color:var(--muted);font-size:11px">'+escHtml(c.emcs_imported_at)+'</div>'
+      : '<span style="color:var(--muted);font-size:12px">— ยังไม่นำเข้า</span>';
+    // ปุ่ม action ตามสถานะ
+    let act;
+    if (imported){
+      // นำเข้าแล้ว → กู้/ซ่อม draft เดิม (ห้าม import ซ้ำ — EMCS สร้างเรื่องซ้ำที่เลขเคลมเดิม)
+      const rb = (m,label) => '<button class="run seact" data-id="'+id+'" data-claim="'+claim
+        +'" data-mode="'+m+'" style="'+SM+';background:#64748b">'+label+'</button>';
+      act = rb("fill-existing","เติมส่วนที่ขาด")+rb("images-only","อัปรูปใหม่")+rb("injured-only","กู้ผู้บาดเจ็บ");
+    } else if (seSent.has(id)){
+      act = '<span style="color:var(--ok);font-weight:600;font-size:12px">✓ ส่งเข้า AutoKey แล้ว</span>';
+    } else {
+      act = '<button class="run seact" data-id="'+id+'" data-claim="'+claim
+          +'" data-mode="import" data-live="1" style="'+SM+'">⚡ นำเข้า</button>'
+          + '<button class="run seact" data-id="'+id+'" data-claim="'+claim
+          +'" data-mode="import" style="'+SM+';background:#64748b" title="ดึง+ตรวจ ไม่แตะ EMCS">🧪 ทดสอบ</button>';
+    }
     return '<tr>'
-      + '<td style="padding:7px 10px;font-size:13px">'+escHtml(c.claim_no||"-")+'</td>'
-      + '<td style="padding:7px 10px;font-size:13px">'+escHtml(c.survey_job_no||"-")+'</td>'
-      + '<td style="padding:7px 10px;font-size:13px">'+escHtml(c.insurance_company||"-")+'</td>'
-      + '<td style="padding:7px 10px;font-size:13px">'+escHtml(who)+'</td>'
-      + '<td style="padding:7px 10px;text-align:right">'+btn+'</td>'
+      + '<td style="'+TD+'">'+escHtml(c.claim_no||"-")+'</td>'
+      + '<td style="'+TD+'">'+escHtml(c.survey_job_no||"-")+'</td>'
+      + '<td style="'+TD+'">'+escHtml(c.insurance_company||"-")+'</td>'
+      + '<td style="'+TD+'">'+escHtml(who)+'</td>'
+      + '<td style="'+TD+'">'+statusCell+'</td>'
+      + '<td style="'+TD+';text-align:right;white-space:nowrap">'+act+'</td>'
       + '</tr>';
   }).join("");
   seCasesBox.innerHTML =
@@ -1208,9 +1261,10 @@ function renderSeCasesFromCache(){
     + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">เลขเซอร์เวย์</th>'
     + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">บริษัทประกัน</th>'
     + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">ผู้สำรวจ</th>'
+    + '<th style="padding:7px 10px;font-size:12px;color:var(--muted)">สถานะ</th>'
     + '<th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
-  seCasesBox.querySelectorAll(".sebtn").forEach(b => {
-    b.addEventListener("click", () => startSesurvey(b.dataset.id, b.dataset.claim, true));
+  seCasesBox.querySelectorAll(".seact").forEach(b => {
+    b.addEventListener("click", () => startSesurvey(b.dataset.id, b.dataset.claim, b.dataset.mode, b.dataset.live === "1"));
   });
 }
 loadCasesBtn.addEventListener("click", async () => {
