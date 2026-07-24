@@ -2615,3 +2615,39 @@ def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",
                       n_assets=len(data.assets or []))
     fill_billing(driver, data, save_price=save_price)
     return target
+
+
+def fill_injured_only_existing(driver, cfg, data: ClaimData, esurvey: str = "",
+                              loss_type: str = "auto", severity: str = "เบา") -> str:
+    """เปิด draft เดิม → re-save หน้าหลัก (ปลดล็อกเมนู) → เติม **เฉพาะบล็อกผู้บาดเจ็บ** + บันทึก —
+    **ไม่แตะคู่กรณี/ความเสียหาย/ทรัพย์สิน/รูป/ค่าใช้จ่าย** (กันเพิ่ม row ซ้ำ + กันอัปรูปซ้ำ)
+
+    ใช้เมื่อบล็อกผู้บาดเจ็บ save ไม่ผ่านตอน import (เช่น รพ.ว่าง ติด required-gate) แล้วแก้ด้วย
+    _dash ('-'). หน้าหลัก = record เดียว (overwrite ไม่ซ้ำ) ต้อง re-save เพื่อปลดล็อกเมนูผู้บาดเจ็บ;
+    ddlInj_Count เป็น absolute → ได้จำนวนผู้บาดเจ็บพอดี ไม่ซ้ำ. ไม่กดส่งงาน."""
+    login(driver, cfg)
+    reports = find_existing_reports(driver, data.claim_value)
+    if not reports:
+        raise RuntimeError(
+            f"ไม่พบ draft ของเคลม {data.claim_value} ใน EMCS — ยังไม่มีเรื่องให้เติม")
+    target = _pick_draft_report(reports, esurvey)
+    log(f"EMCS: เปิด draft เดิม {target} เพื่อเติม 'เฉพาะผู้บาดเจ็บ' (ไม่แตะส่วนอื่น)")
+    wait_clickable(driver, By.XPATH,
+                   f"//a[normalize-space(text())='{target}']", 20).click()
+    wait_visible(driver, By.ID, "btnUpdate", 20)
+    resolved_loss = resolve_loss_type(data, loss_type)
+
+    # re-save หน้าหลัก (ปลดล็อกเมนูผู้บาดเจ็บ) — record เดียว overwrite ไม่ซ้ำ
+    fill_severity(driver, severity)
+    fill_car(driver, data)
+    _recascade_province(driver, "ddlDri_ProvinceID")
+    fill_driver(driver, data)
+    _recascade_province(driver, "ddlAcc_ProvinceID")
+    fill_accident(driver, data, loss_type=resolved_loss)
+    fill_verdict(driver, data)
+    _set_or_clear_claim_ref(driver, data.notify_value)
+    save_main_form(driver, data, button_id="btnUpdate", is_new=False)
+
+    # เติมเฉพาะผู้บาดเจ็บ (self-contained: unlock เมนู → set count → fill → save)
+    fill_injuries(driver, data)
+    return target

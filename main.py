@@ -139,6 +139,10 @@ def parse_args():
                    help="เปิด draft เดิม แล้วอัปเฉพาะ 'รูป' (แยกตามประเภทรูป EMCS ตาม category) — "
                         "ไม่แตะหน้าหลัก/คู่กรณี/ค่าใช้จ่าย (กันเขียนทับที่ผู้ตรวจแก้ไว้) ไม่กดส่งงาน. "
                         "ใช้ตอนต้องอัปรูปใหม่ให้แยกประเภท (ลบรูปเก่าใน EMCS ก่อน)")
+    p.add_argument("--sesurvey-injured-only", action="store_true",
+                   help="เปิด draft เดิม แล้วเติม 'เฉพาะบล็อกผู้บาดเจ็บ' + บันทึก (re-save หน้าหลักเพื่อ "
+                        "ปลดล็อกเมนู) — ไม่แตะคู่กรณี/ความเสียหาย/ทรัพย์สิน/รูป/ค่าใช้จ่าย (กันเพิ่ม row "
+                        "ซ้ำ+อัปรูปซ้ำ) ไม่กดส่งงาน. ใช้เมื่อผู้บาดเจ็บ save ไม่ผ่านตอน import (เช่น รพ.ว่าง)")
     args = p.parse_args()
 
     if not (args.claim or args.claims or args.claims_file or args.data_json
@@ -852,6 +856,69 @@ def _run_images_only(cfg, args, case_id, hdrs, meta):
     banner(f"IMAGES-ONLY: อัปรูปเสร็จ (e-Survey {esurvey}) — ตรวจ + กดส่งเอง (บอทไม่กดส่ง ไม่แตะฟอร์ม)")
 
 
+def _run_injured_only(cfg, args, case_id, hdrs, meta):
+    """เปิด draft เดิม → เติม 'เฉพาะบล็อกผู้บาดเจ็บ' + บันทึก (re-save หน้าหลักเพื่อปลดล็อกเมนู) —
+    ไม่แตะคู่กรณี/ความเสียหาย/ทรัพย์สิน/รูป/ค่าใช้จ่าย (กันเพิ่ม row ซ้ำ + อัปรูปซ้ำ) ไม่กดส่งงาน.
+    ใช้เมื่อบล็อกผู้บาดเจ็บ save ไม่ผ่านตอน import (เช่น รพ.ว่าง ติด required-gate) แล้วแก้ด้วย _dash '-'"""
+    import requests
+    import xml.etree.ElementTree as ET
+    from autokey import emcs
+    from autokey.claim_data import ClaimData
+    from autokey.surv_xml import enrich_claim_from_xml
+
+    if not meta.get("emcs_imported_at"):
+        raise SystemExit(f"เคส #{case_id} ยังไม่เคย import เข้า EMCS — ไม่มี draft ให้เติมผู้บาดเจ็บ")
+    esurvey = str(meta.get("emcs_esurvey_no") or "").strip()
+
+    r = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/export-xml",
+                     headers=hdrs, timeout=30)
+    r.raise_for_status()
+    xml_dir = cfg.runs_dir / "xml"
+    xml_dir.mkdir(parents=True, exist_ok=True)
+    xml_path = xml_dir / f"sesurvey_case_{case_id}.txt"
+    xml_path.write_bytes(r.content)
+    rep_el = ET.fromstring(xml_path.read_text(encoding="utf-8", errors="replace")).find("TXN_SURV_REPORT")
+    gt = lambda t: (rep_el.findtext(t) or "").strip() if rep_el is not None else ""
+    claim_no = gt("REF_CLAIM_NO")
+
+    data = ClaimData()
+    data.claim_value = claim_no
+    data.invoice_value = gt("SURV_JOBNO")
+    data.xml_file = str(xml_path)
+    enrich_claim_from_xml(data, xml_path)
+    if not data.injuries:
+        raise SystemExit(f"เคส #{case_id} ไม่มีผู้บาดเจ็บใน XML — ไม่มีอะไรให้เติม")
+    loss_type = "auto"
+    severity = "เบา"
+    try:
+        rr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/report",
+                          headers=hdrs, timeout=20)
+        rr.raise_for_status()
+        _rep = rr.json().get("data") or {}
+        loss_type = _populate_claim_from_report(data, _rep)
+        severity = str(_rep.get('damage_level') or '').strip() or 'เบา'
+        log(f"✓ เติมข้อมูลหน้าหลักจาก report (ผู้บาดเจ็บ {len(data.injuries)} คน)")
+    except Exception as e:
+        log(f"⚠️ ดึง report มาเติม ClaimData ไม่ได้ ({e}) — re-save หน้าหลักอาจหยุดรอบางช่อง")
+
+    per_run_dl = cfg.download_dir / "_dl" / str(os.getpid())
+    # detach=False + quit หลังเสร็จ = ปิด browser → ปลดล็อกงานให้ผู้ตรวจเปิดต่อได้
+    driver = make_driver(detach=False, download_dir=per_run_dl)
+    banner(f"INJURED-ONLY: เปิด draft เดิมเคส #{case_id} (e-Survey {esurvey or '?'}) เติมเฉพาะผู้บาดเจ็บ — ไม่แตะส่วนอื่น")
+    try:
+        emcs.fill_injured_only_existing(driver, cfg, data, esurvey=esurvey,
+                                        loss_type=loss_type, severity=severity)
+    except Exception:
+        save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"injured_only_{case_id}")
+        raise
+    finally:
+        try:
+            driver.quit()   # ปิด browser = ปลดล็อกงานทันที
+        except Exception:
+            pass
+    banner(f"INJURED-ONLY: เติม+บันทึกผู้บาดเจ็บเสร็จ (e-Survey {esurvey}) — ตรวจงาน + กดส่งเอง (บอทไม่กดส่ง)")
+
+
 def run_sesurvey_import(cfg, args):
     """โหมดงานจาก se-survey: ดึง SURV_REPORT XML ของเคสจาก api.sesurvey.cloud
     (แอปสำรวจของเราเอง — ข้อมูลครบกว่า XML ของ ISURVEY) → ตรวจ/parse → นำเข้า EMCS
@@ -887,6 +954,9 @@ def run_sesurvey_import(cfg, args):
     # โหมดอัปรูปอย่างเดียว (--sesurvey-images-only): เปิด draft เดิม อัปรูปแยกประเภท ไม่แตะฟอร์ม
     if getattr(args, "sesurvey_images_only", False):
         return _run_images_only(cfg, args, case_id, hdrs, meta)
+    # โหมดเติมเฉพาะผู้บาดเจ็บ (--sesurvey-injured-only): เปิด draft เดิม เติมบล็อกผู้บาดเจ็บ ไม่แตะส่วนอื่น
+    if getattr(args, "sesurvey_injured_only", False):
+        return _run_injured_only(cfg, args, case_id, hdrs, meta)
 
     if meta.get("emcs_imported_at"):
         banner(f"⛔ เคส #{case_id} นำเข้า EMCS ไปแล้วเมื่อ {meta['emcs_imported_at']}"
