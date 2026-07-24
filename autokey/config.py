@@ -54,6 +54,10 @@ class Config:
     sesurvey_api_url: str = "https://api.sesurvey.cloud"
     sesurvey_api_token: str = ""
 
+    # โฟลเดอร์วาง zip export (ISURVEY/EMCS "ดาวน์โหลดรูปภาพ") เป็น fallback หมวดรูปเมื่อ API ไม่มี
+    # category (รูป LINE/แกลเลอรีดิบไม่ถูก tag) — วางโฟลเดอร์แตกแล้ว (มี PICTURES/) หรือ .zip ที่ชื่อมีเลขเคลม
+    sesurvey_zip_dir: str = ""
+
 
 def load_config() -> Config:
     env = _load_env_file(BASE_DIR / ".env")
@@ -77,6 +81,8 @@ def load_config() -> Config:
         cfg.sekey_api_url = get("SE_KEY_API_URL")
     if get("SESURVEY_API_URL"):
         cfg.sesurvey_api_url = get("SESURVEY_API_URL")
+    if get("SESURVEY_ZIP_DIR"):
+        cfg.sesurvey_zip_dir = get("SESURVEY_ZIP_DIR")
 
     missing = [
         name for name, val in [

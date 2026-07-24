@@ -36,6 +36,7 @@ from autokey.claim_data import ClaimData
 from autokey.config import load_config
 from autokey.images import (
     archive_old_images,
+    categories_from_export,
     download_xml_export,
     images_from_zip,
     list_images,
@@ -705,12 +706,14 @@ def _download_case_photos(cfg, case_id, hdrs, claim_no):
     img_dir = cfg.download_dir / (claim_no or f"sesurvey_{case_id}")
     img_dir.mkdir(parents=True, exist_ok=True)
     got = 0
+    names = []     # ชื่อไฟล์ทั้งหมด (ไว้จับคู่หมวดจาก zip export ถ้า API ไม่มี category)
     cat_map = {}   # ชื่อไฟล์ → หมวดไทย (ประเภทรูป EMCS) สำหรับ upload_images จัดกลุ่ม
     for ph in photos:
         rel = str(ph.get("file_path") or "")
         name = rel.split("/")[-1]
         if not name:
             continue
+        names.append(name)
         cat = str(ph.get("category") or "").strip()
         if cat:
             cat_map[name] = cat
@@ -726,6 +729,19 @@ def _download_case_photos(cfg, case_id, hdrs, claim_no):
             got += 1
         except Exception as e:
             log(f"   ⚠️ โหลดรูป {name} ไม่ได้: {e}")
+    # API ไม่มี category (รูป LINE/แกลเลอรีดิบไม่ถูก tag ตอนสำรวจ) → ลองเติมหมวดจาก zip export ของเคลม
+    # (ISURVEY/EMCS "ดาวน์โหลดรูปภาพ") ที่วางไว้ใน SESURVEY_ZIP_DIR (default base_dir/zip_import)
+    if not cat_map:
+        zip_dir = str(getattr(cfg, "sesurvey_zip_dir", "") or (cfg.base_dir / "zip_import"))
+        exp = categories_from_export(zip_dir, claim_no)
+        if exp:
+            for n in names:
+                if n in exp:
+                    cat_map[n] = exp[n]
+            log(f"   API ไม่มีหมวด → เติมจาก zip export {len(cat_map)}/{got} รูป (drop: {zip_dir})")
+        else:
+            log(f"   API ไม่มีหมวด + ไม่พบ zip export ({zip_dir}) → อัปเป็น 'รูปประกอบ'")
+
     # sidecar หมวดรูป (ให้ upload_images จัดกลุ่มตามประเภท); ไม่มีหมวดเลย = ไม่เขียน (flow เดิมยังทำงาน)
     if cat_map:
         try:

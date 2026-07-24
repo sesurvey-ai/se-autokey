@@ -330,6 +330,72 @@ def extract_zip_images(zip_path: Path, folder: Path) -> dict:
     return counts
 
 
+_TP_EXPORT_LABEL = {
+    "TP_VEH": "รูปรถคู่กรณี คันที่{n}",
+    "TP_PERSON": "รูปผู้บาดเจ็บรถคู่กรณี คนที่{n}",
+    "TP_PROP": "รูปทรัพย์สินอื่นๆของคู่กรณี รายการที่{n}",
+}
+
+
+def _export_entries(search_dir: Path, claim: str):
+    """yield (parts, filename) ของรูปใน PICTURES/ จากโฟลเดอร์ zip ที่แตกแล้ว หรือไฟล์ .zip ใน search_dir.
+    parts = tuple ใต้ PICTURES เช่น ('INS','a.jpg') / ('TP_VEH','111','b.jpg')"""
+    search_dir = Path(search_dir)
+    if not search_dir.is_dir():
+        return
+    # 1) โฟลเดอร์แตกแล้ว (มี PICTURES/ อยู่ข้างใน) — ลองโฟลเดอร์ที่ชื่อมีเลขเคลมก่อน แล้วค่อย search_dir เอง
+    for cand in sorted(search_dir.glob(f"*{claim}*")) + [search_dir]:
+        if not cand.is_dir():
+            continue
+        root = next((p for p in cand.rglob("PICTURES") if p.is_dir()), None)
+        if root:
+            for f in sorted(root.rglob("*")):
+                if f.is_file() and f.suffix.lower() in IMAGE_EXTS:
+                    yield f.relative_to(root).parts, f.name
+            return
+    # 2) ไฟล์ .zip (export_<claim>_*.zip) — อ่าน entry ตรง ๆ ไม่ต้องแตก
+    zips = sorted(search_dir.glob(f"export_{claim}_*.zip")) or sorted(search_dir.glob("export_*.zip"))
+    if zips:
+        with zipfile.ZipFile(zips[0]) as zf:
+            for info in sorted(zf.infolist(), key=lambda i: i.filename):
+                if info.is_dir():
+                    continue
+                p = Path(info.filename)
+                if p.suffix.lower() in IMAGE_EXTS and "PICTURES" in p.parts:
+                    idx = p.parts.index("PICTURES")
+                    yield p.parts[idx + 1:], p.name
+
+
+def categories_from_export(search_dir, claim: str) -> dict:
+    """map {ชื่อไฟล์รูป: ประเภทรูป EMCS} จาก zip export ของเคลม (โฟลเดอร์แตกแล้ว/ .zip) ใน search_dir —
+    fallback หมวดให้ flow นำเข้า se-survey เมื่อ API ไม่มี category (รูป LINE/แกลเลอรีดิบไม่ถูก tag).
+    INS→รูปรถประกัน, OTHERS/REPORTS→รูปประกอบ, TP_VEH/PERSON/PROP→'...คันที่/คนที่/รายการที่ N'
+    (N=ลำดับกลุ่มย่อยเรียงตามชื่อ). จับคู่รูปด้วยชื่อไฟล์ (basename เดียวกับที่โหลดจาก API).
+    คืน {} เมื่อไม่พบ export"""
+    entries = list(_export_entries(Path(search_dir), claim))
+    if not entries:
+        return {}
+    # ลำดับกลุ่มย่อยของหมวดบุคคลที่สาม (คันที่/คนที่/รายการที่ N) เรียงตามชื่อกลุ่ม
+    raw = {}
+    for parts, _ in entries:
+        cat = parts[0].upper()
+        if cat.startswith("TP_") and len(parts) > 2:
+            raw.setdefault(cat, set()).add(parts[1])
+    order = {c: {g: i + 1 for i, g in enumerate(sorted(gs))} for c, gs in raw.items()}
+    out = {}
+    for parts, name in entries:
+        cat = parts[0].upper()
+        if cat.startswith("TP_"):
+            tmpl = _TP_EXPORT_LABEL.get(cat)
+            if not tmpl:
+                continue
+            n = order.get(cat, {}).get(parts[1], 1) if len(parts) > 2 else 1
+            out[name] = tmpl.format(n=n)
+        else:
+            out[name] = ZIP_CAT_TO_EMCS.get(cat, ZIP_DEFAULT_EMCS_TYPE)
+    return out
+
+
 def images_from_zip(driver, claim: str, folder: Path) -> dict:
     """โหลดรูปทั้งเคลมผ่านปุ่ม 'ดาวน์โหลดรูปภาพ' (zip) แล้วแตกลงโฟลเดอร์
     คืน dict จำนวนรูปต่อหมวด ({} เมื่อไม่สำเร็จ — ผู้เรียกควร fallback)"""
