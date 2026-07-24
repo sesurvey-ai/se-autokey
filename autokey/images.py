@@ -375,7 +375,7 @@ def _export_entries(search_dir: Path, claim: str):
 
 def categories_from_export(search_dir, claim: str) -> dict:
     """map {ชื่อไฟล์รูป: ประเภทรูป EMCS} จาก zip export ของเคลม (โฟลเดอร์แตกแล้ว/ .zip) ใน search_dir —
-    fallback หมวดให้ flow นำเข้า se-survey เมื่อ API ไม่มี category (รูป LINE/แกลเลอรีดิบไม่ถูก tag).
+    fallback หมวดให้ flow นำเข้า se-survey เมื่อ API ไม่มี category (รูปที่โหลด/รับมาจากภายนอก LINE/อีเมล/ระบบอื่น ไม่ถูก tag).
     INS→รูปรถประกัน, OTHERS/REPORTS→รูปประกอบ, TP_VEH/PERSON/PROP→'...คันที่/คนที่/รายการที่ N'
     (N=ลำดับกลุ่มย่อยเรียงตามชื่อ). จับคู่รูปด้วยชื่อไฟล์ (basename เดียวกับที่โหลดจาก API).
     คืน {} เมื่อไม่พบ export"""

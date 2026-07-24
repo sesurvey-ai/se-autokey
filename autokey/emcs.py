@@ -1904,7 +1904,7 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
             grouped = _group_flat_by_category(folder, files, image_type)
             if grouped is None:
                 # ไม่มี _categories.json = ไม่รู้หมวดจริง (ISURVEY / รูป se-survey ที่ไม่ถูก
-                # tag หมวด เช่นนำเข้าจาก LINE/แกลเลอรีดิบ) → อย่าเดาว่าเป็น "รูปรถประกัน"
+                # tag หมวด เช่นรูปที่โหลด/รับมาจากภายนอก LINE/อีเมล/ระบบอื่น) → อย่าเดาว่าเป็น "รูปรถประกัน"
                 # ทั้งกอง (โกหกว่าเป็นรูปรถประกัน). ใช้ถังกลาง "รูปประกอบ" + rename ชื่อสะอาด
                 # (EMCS คอลัมน์ "รายการ" = ชื่อไฟล์ → กันชื่อดิบ rn_image_picker_*/S__*;
                 # หัวหน้าจัดหมวดจริงบน EMCS ทีหลัง)

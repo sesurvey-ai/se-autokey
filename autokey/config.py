@@ -55,7 +55,7 @@ class Config:
     sesurvey_api_token: str = ""
 
     # โฟลเดอร์วาง zip export (ISURVEY/EMCS "ดาวน์โหลดรูปภาพ") เป็น fallback หมวดรูปเมื่อ API ไม่มี
-    # category (รูป LINE/แกลเลอรีดิบไม่ถูก tag) — วางโฟลเดอร์แตกแล้ว (มี PICTURES/) หรือ .zip ที่ชื่อมีเลขเคลม
+    # category (รูปที่โหลด/รับมาจากภายนอก LINE/อีเมล/ระบบอื่น ไม่ถูก tag) — วางโฟลเดอร์แตกแล้ว (มี PICTURES/) หรือ .zip ที่ชื่อมีเลขเคลม
     sesurvey_zip_dir: str = ""
 
 

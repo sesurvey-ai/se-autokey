@@ -729,7 +729,8 @@ def _download_case_photos(cfg, case_id, hdrs, claim_no):
             got += 1
         except Exception as e:
             log(f"   ⚠️ โหลดรูป {name} ไม่ได้: {e}")
-    # API ไม่มี category (รูป LINE/แกลเลอรีดิบไม่ถูก tag ตอนสำรวจ) → ลองเติมหมวดจาก zip export ของเคลม
+    # API ไม่มี category (รูปที่โหลด/รับมาจากภายนอก เช่น LINE/อีเมล/ระบบอื่น ไม่ได้ถ่ายในแอปจึงไม่ถูก tag)
+    # → ลองเติมหมวดจาก zip export ของเคลม
     # (ISURVEY/EMCS "ดาวน์โหลดรูปภาพ") ที่วางไว้ใน SESURVEY_ZIP_DIR (default base_dir/zip_import)
     if not cat_map:
         zip_dir = str(getattr(cfg, "sesurvey_zip_dir", "") or (cfg.base_dir / "zip_import"))
