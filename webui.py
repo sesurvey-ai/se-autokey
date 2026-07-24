@@ -65,6 +65,29 @@ def fetch_sesurvey_cases():
     except Exception as e:
         return None, f"เชื่อมต่อ se-survey ไม่ได้: {e}"
 
+
+def fetch_sesurvey_xml(case_id: str):
+    """ดึงไฟล์ XML (INSERT_SURV_REPORT_XML) ของเคสจาก se-survey — คืน (bytes, error)
+    proxy ฝั่ง server แนบ token; เบราว์เซอร์ดาวน์โหลดผ่าน webui (same-origin) ไม่ต้องรู้ token
+    ใช้เป็น 'ไฟล์สำรอง' ไป import EMCS เองตอนบอทใช้ไม่ได้"""
+    url, token = _sesurvey_cfg()
+    if not token:
+        return None, "ยังไม่ได้ตั้ง SESURVEY_API_TOKEN ใน .env"
+    try:
+        req = urllib.request.Request(
+            f"{url}/api/integrations/cases/{case_id}/export-xml",
+            headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read(), None
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return None, "token ไม่ถูกต้อง หรือ integration ยังไม่เปิดบน server"
+        if e.code == 404:
+            return None, "ไม่พบเคส หรือยังไม่มีรายงานสำรวจ"
+        return None, f"server ตอบ {e.code}"
+    except Exception as e:
+        return None, f"เชื่อมต่อ se-survey ไม่ได้: {e}"
+
 # marker ที่ main.py (ผ่าน browser.wait_for_manual_fill) พิมพ์ออก stdout
 # เมื่อต้องการให้คนกรอกข้อมูลเอง — ต้องตรงกับค่าใน autokey/browser.py
 MANUAL_MARKER = "@@MANUAL_FILL@@"
@@ -480,6 +503,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(502, {"error": err})
             else:
                 self._send(200, {"cases": cases})
+        elif u.path == "/sesurvey-xml":
+            # ดาวน์โหลดไฟล์ XML สำรอง (proxy แนบ token) — ไป import EMCS เอง
+            case_id = ((parse_qs(u.query).get("case_id") or [""])[0]).strip()
+            if not case_id.isdigit():
+                self._send(400, {"error": "case_id ไม่ถูกต้อง"})
+            else:
+                data, err = fetch_sesurvey_xml(case_id)
+                if err:
+                    self._send(502, {"error": err})
+                else:
+                    self._send(200, data, "application/octet-stream")
         else:
             self._send(404, {"error": "not found"})
 
@@ -1211,6 +1245,22 @@ seRunBtn.addEventListener("click", () => startSesurvey(seCaseInput.value, "", "i
 seDryBtn.addEventListener("click", () => startSesurvey(seCaseInput.value, "", "import", false));
 seCaseInput.addEventListener("keydown", e => { if (e.key === "Enter") startSesurvey(seCaseInput.value, "", "import", true); });
 
+// ดาวน์โหลดไฟล์ XML สำรอง (.txt) ผ่าน proxy webui → เอาไป import EMCS เอง
+async function downloadXml(caseId){
+  caseId = String(caseId||"").trim();
+  if (!/^\d+$/.test(caseId)) return;
+  try{
+    const r = await fetch("/sesurvey-xml?case_id="+encodeURIComponent(caseId));
+    if (!r.ok){ let e={}; try{ e = await r.json(); }catch(_){}; alert(e.error || ("โหลด XML ไม่สำเร็จ ("+r.status+")")); return; }
+    const blob = await r.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "sesurvey_case_"+caseId+".txt";   // EMCS รับเฉพาะ .txt
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }catch(e){ alert("ติดต่อเซิร์ฟเวอร์ไม่ได้: " + e); }
+}
+
 let seCasesCache = [];
 function renderSeCasesFromCache(){
   if (!seCasesCache.length){
@@ -1244,6 +1294,10 @@ function renderSeCasesFromCache(){
           + '<button class="run seact" data-id="'+id+'" data-claim="'+claim
           +'" data-mode="import" style="'+SM+';background:#64748b" title="ดึง+ตรวจ ไม่แตะ EMCS">🧪 ทดสอบ</button>';
     }
+    // ปุ่มดาวน์โหลด XML สำรอง — มีทุกแถว (ไป import EMCS เองตอนบอทใช้ไม่ได้)
+    act += '<button class="xmlbtn" data-id="'+id+'" style="'+SM
+        + ';background:transparent;color:var(--muted);border:1px solid var(--line)" '
+        + 'title="ดาวน์โหลดไฟล์ XML (.txt) ไป import EMCS เอง — สำรองตอนบอทใช้ไม่ได้">📄 XML</button>';
     return '<tr>'
       + '<td style="'+TD+'">'+escHtml(c.claim_no||"-")+'</td>'
       + '<td style="'+TD+'">'+escHtml(c.survey_job_no||"-")+'</td>'
@@ -1265,6 +1319,9 @@ function renderSeCasesFromCache(){
     + '<th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   seCasesBox.querySelectorAll(".seact").forEach(b => {
     b.addEventListener("click", () => startSesurvey(b.dataset.id, b.dataset.claim, b.dataset.mode, b.dataset.live === "1"));
+  });
+  seCasesBox.querySelectorAll(".xmlbtn").forEach(b => {
+    b.addEventListener("click", () => downloadXml(b.dataset.id));
   });
 }
 loadCasesBtn.addEventListener("click", async () => {
