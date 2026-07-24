@@ -1028,43 +1028,11 @@ def run_sesurvey_import(cfg, args):
     else:
         log("⚠️ ไม่ทราบบริษัทประกันของเคส — ตรวจก่อน import")
 
-    # โหลดรูปของเคสลงโฟลเดอร์เดียวกับ flow ปกติ (downloaded_images/<เลขเคลม>/)
-    # — โหมดนำเข้าจริงในอนาคตจะหยิบไปอัปเข้า EMCS ต่อได้เลย (dry-run แค่โหลด ไม่อัป)
+    # โหลดรูปของเคส + หมวดรูป → downloaded_images/<เลขเคลม>/ (เขียน _categories.json ให้ upload_images
+    # จัดกลุ่มตามประเภทตอน import). _download_case_photos ใช้ API category ก่อน; ไม่มี → fallback zip export
+    # (SESURVEY_ZIP_DIR). ทำใน dry-run ด้วย (แค่โหลด+จัดหมวด ไม่แตะ EMCS)
     claim_no = get_tag("REF_CLAIM_NO") or f"sesurvey_{case_id}"
-    try:
-        pr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/photos",
-                          headers=hdrs, timeout=30)
-        pr.raise_for_status()
-        photos = (pr.json().get("data") or {}).get("photos") or []
-    except Exception as e:
-        log(f"⚠️ ดึงรายการรูปไม่ได้: {e} — ข้ามขั้นโหลดรูป")
-        photos = []
-    if photos:
-        img_dir = cfg.download_dir / claim_no
-        img_dir.mkdir(parents=True, exist_ok=True)
-        got = 0
-        for ph in photos:
-            rel = str(ph.get("file_path") or "")
-            name = rel.split("/")[-1]
-            if not name:
-                continue
-            dest = img_dir / name
-            if dest.exists() and dest.stat().st_size > 0:
-                got += 1
-                continue  # โหลดไว้แล้ว (กดซ้ำ/รันซ้ำ) — ไม่โหลดใหม่
-            try:
-                fr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/files",
-                                  params={"path": rel}, headers=hdrs, timeout=60)
-                fr.raise_for_status()
-                dest.write_bytes(fr.content)
-                got += 1
-            except Exception as e:
-                log(f"   ⚠️ โหลดรูป {name} ไม่ได้: {e}")
-        log(f"✓ รูปเคส {got}/{len(photos)} ไฟล์ → {img_dir}")
-    else:
-        log("(เคสนี้ไม่มีรูปบน server)")
-
-    img_folder = str(img_dir) if photos else None
+    img_folder = _download_case_photos(cfg, case_id, hdrs, claim_no)
 
     # ── GATE: default dry-run (หยุดก่อนแตะ EMCS); --sesurvey-live เท่านั้นถึงจะ import จริง ──
     if not getattr(args, "sesurvey_live", False):
