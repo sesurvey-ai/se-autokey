@@ -2132,14 +2132,56 @@ return out;
 """
 
 
+def _save_and_exit_billing(driver):
+    """โหมด draft-park (se-survey ⚡ นำเข้า / เติม draft เดิม): บันทึกหัวบิลด้วย
+    btnSurvey_Update แล้วกดกลับหน้า Inbox/Outbox (wuMenuPage1_imbReturn_In_Out) เพื่อ
+    'ออกจากเรื่อง' — ปลดล็อกให้คนอื่นเปิดต่อได้ (ไม่งั้นเรื่องค้างถูกล็อก).
+    ไม่แตะ 'บันทึกราคา'/'ส่งงานใหม่'. บันทึกไม่สำเร็จ = ไม่กดกลับ (กันข้อมูลหาย +
+    ปล่อยให้คนตรวจบนหน้าจอ)."""
+    # (1) บันทึกหัวบิล (เลขที่ใบแจ้งหนี้ + วันที่วางบิล) — verify ปุ่มไม่ใช่ 'ส่งงาน' ก่อนกด
+    #     (กันกดส่งงานพลาด ตามวินัยเดียวกับตัวหาปุ่ม 'บันทึก' ที่กันคำว่า 'ส่งงาน')
+    try:
+        btn = wait_clickable(driver, By.ID, "btnSurvey_Update", 15)
+        txt = (btn.get_attribute("value") or btn.text or "").strip()
+        if "ส่งงาน" in txt:
+            log(f"   ⛔ btnSurvey_Update มีข้อความ 'ส่งงาน' ({txt!r}) — ไม่กด "
+                "(กันกดส่งงานพลาด) บันทึก/ออกจากเรื่องเองบนหน้าจอ")
+            return
+        btn.click()
+        try:
+            # ยืนยันจริงจาก eclaim3: ขึ้น alert 'บันทึกการแก้ไขเรียบร้อยแล้ว' → accept_alert กด 'ตกลง'
+            accept_alert(driver, timeout=10)
+        except Exception:
+            pass
+        log("EMCS: บันทึกหน้าค่าใช้จ่าย (btnSurvey_Update) ✅")
+    except Exception as e:
+        log(f"   ⚠️ กดปุ่มบันทึก (btnSurvey_Update) ไม่ได้ ({type(e).__name__}) — "
+            "บันทึก + ออกจากเรื่องเองบนหน้าจอ (ยังไม่กดกลับ Inbox กันข้อมูลหาย)")
+        return
+    # (2) กลับหน้า Inbox/Outbox = ออกจากเรื่องที่ทำเสร็จ → ปลดล็อกให้คนอื่นเข้าต่อได้
+    try:
+        click_retry(driver, By.ID, "wuMenuPage1_imbReturn_In_Out")
+        try:
+            accept_alert(driver, timeout=10)   # เผื่อมี confirm/alert ตอนออกจากเรื่อง — กด 'ตกลง'
+        except Exception:
+            pass
+        log("EMCS: กลับหน้า Inbox/Outbox แล้ว — ออกจากเรื่อง ปลดล็อก (คนอื่นเปิดต่อได้)")
+    except Exception as e:
+        log(f"   ⚠️ กดปุ่มกลับ Inbox/Outbox (wuMenuPage1_imbReturn_In_Out) ไม่ได้ "
+            f"({type(e).__name__}) — กดกลับ/ออกจากเรื่องเองเพื่อปลดล็อก")
+
+
 def fill_billing(driver, data: ClaimData, save_price: bool = True,
                  navigate: bool = True):
     """หน้าค่าใช้จ่าย: เลข invoice + วันที่วางบิล(วันนี้ พ.ศ.) + สรุปความเห็น
     แล้วกด "บันทึก" (เป็น draft แก้ได้ — จุดส่งงานจริงคือปุ่ม 'ส่งงานใหม่'
     ซึ่งสคริปต์ไม่กดให้เด็ดขาด ต้องตรวจแล้วกดเอง)
 
-    save_price=False: กรอกตารางราคาให้ครบแต่ไม่กดปุ่ม 'บันทึกราคา' (btnSurveySave)
-    — ใช้ตอนทดสอบ/ตรวจค่าก่อนบันทึก (ผู้ใช้กด 'บันทึกราคา' เองบนหน้าจอ)
+    save_price=False (โหมด draft-park: se-survey ⚡ นำเข้า / เติม draft เดิม):
+    ไม่กด 'บันทึกราคา' (btnSurveySave) และไม่แตะ 'ส่งงานใหม่' — แต่ **บันทึกหัวบิล
+    (เลขที่ใบแจ้งหนี้+วันที่) ด้วย btnSurvey_Update** แล้ว **กดกลับหน้า Inbox/Outbox
+    (wuMenuPage1_imbReturn_In_Out) = ออกจากเรื่อง เพื่อปลดล็อก** (ไม่งั้นเรื่องค้างถูกล็อก
+    คนอื่นเปิดต่อไม่ได้ ต้องรอ). ราคา + ส่งงาน คนทำเองภายหลัง
     navigate=False: อยู่หน้าค่าใช้จ่ายแล้ว (เช่นหลังกด 'งานต่อเนื่อง') — ไม่ต้องกดเมนูเข้าใหม่"""
     log("EMCS: กรอกหน้าค่าใช้จ่าย")
     if navigate:
@@ -2204,9 +2246,11 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
     fill_fee_table(driver, data.bill)
 
     if not save_price:
-        log("EMCS: กรอกหน้าค่าใช้จ่ายครบแล้ว — ไม่กดปุ่ม 'บันทึกราคา' ตามคำสั่ง "
-            "(--no-save-price) → ตรวจตารางราคาให้ครบ แล้วกด 'บันทึกราคา' + "
-            "'ส่งงานใหม่' เองบนหน้าจอ")
+        # โหมด draft-park: ไม่กด 'บันทึกราคา'/'ส่งงานใหม่' — แต่บันทึกหัวบิล (btnSurvey_Update)
+        # แล้ว 'ออกจากเรื่อง' (กลับ Inbox/Outbox) เพื่อปลดล็อก; ราคา+ส่งงาน คนทำเองภายหลัง
+        log("EMCS: กรอกหน้าค่าใช้จ่ายแล้ว — ไม่กด 'บันทึกราคา'/'ส่งงานใหม่' "
+            "(ราคา+ส่งงาน ทำเองภายหลัง)")
+        _save_and_exit_billing(driver)
         return
 
     # ปุ่มบันทึกของหน้านี้คือ btnSurveySave ('บันทึกราคา') ซึ่งจะ enable

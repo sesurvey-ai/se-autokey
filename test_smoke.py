@@ -828,6 +828,37 @@ check("find_submit: มีทั้งคู่ → เลือก 'ส่ง�
 _btn, _lab = emcs._find_submit_button(_FakeDriver({}))
 check("find_submit: ไม่มีปุ่ม → (None,'')", _btn is None and _lab == "")
 
+# ---- 22b. _save_and_exit_billing: บันทึกหัวบิล (btnSurvey_Update) + กลับ Inbox/Outbox; กัน 'ส่งงาน' ----
+class _FakeBtn:
+    def __init__(self, val=""):
+        self._val, self.text, self.clicked = val, "", False
+    def get_attribute(self, k):
+        return self._val if k == "value" else None
+    def click(self):
+        self.clicked = True
+
+def _run_save_exit(update_val):
+    fake_update = _FakeBtn(update_val)
+    clicked_ids = []
+    _orig = (emcs.wait_clickable, emcs.click_retry, emcs.accept_alert)
+    emcs.wait_clickable = lambda d, by, value, timeout=10: (
+        fake_update if value == "btnSurvey_Update" else (_ for _ in ()).throw(Exception("x")))
+    emcs.click_retry = lambda d, by, value, timeout=15, attempts=3: clicked_ids.append(value)
+    emcs.accept_alert = lambda d, timeout=30: ""
+    try:
+        emcs._save_and_exit_billing(None)
+    finally:
+        emcs.wait_clickable, emcs.click_retry, emcs.accept_alert = _orig
+    return fake_update.clicked, clicked_ids
+
+_upd, _ids = _run_save_exit("บันทึก")
+check("save_exit: กด btnSurvey_Update (บันทึกหัวบิล)", _upd is True)
+check("save_exit: แล้วกดกลับ Inbox/Outbox (imbReturn_In_Out)",
+      _ids == ["wuMenuPage1_imbReturn_In_Out"])
+_upd2, _ids2 = _run_save_exit("ส่งงานใหม่")
+check("save_exit: ปุ่มมีคำ 'ส่งงาน' → ไม่กด btnSurvey_Update (กันส่งงานพลาด)", _upd2 is False)
+check("save_exit: เจอ 'ส่งงาน' → ไม่กดกลับ Inbox ด้วย (หยุดทันที)", _ids2 == [])
+
 # ---- 23. webui._build_cmd: โหมดเคลม (dry = เคลมแห้ง / fresh = เคลมสด) ----
 import webui as _webui  # noqa: E402
 _cmd, _e = _webui._build_cmd({"claims": "2026013041465", "claimmode": "dry"})
