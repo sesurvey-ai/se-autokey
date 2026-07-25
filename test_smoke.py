@@ -859,6 +859,122 @@ _upd2, _ids2 = _run_save_exit("ส่งงานใหม่")
 check("save_exit: ปุ่มมีคำ 'ส่งงาน' → ไม่กด btnSurvey_Update (กันส่งงานพลาด)", _upd2 is False)
 check("save_exit: เจอ 'ส่งงาน' → ไม่กดกลับ Inbox ด้วย (หยุดทันที)", _ids2 == [])
 
+# ---- 22c. ยี่ห้อรถ ไทย→อังกฤษ + guard กันเลือก placeholder ('-- ระบุ --') ----
+# เคส #104 (จริง): ตัวเลือก ddlCMFG ของ EMCS เป็นอังกฤษล้วน แต่ se-survey ส่ง 'เอ็มจี'
+# → fuzzy 0 คะแนน แล้วโค้ดเดิมเลือก '-- ระบุ --' ให้ = ช่องบังคับว่างแบบเงียบ ๆ
+from autokey.car_brand import normalize_brand as _nb  # noqa: E402
+from autokey.browser import _is_placeholder_option as _isph  # noqa: E402
+from autokey.browser import FUZZY_MIN_SCORE as _MINSC  # noqa: E402
+from rapidfuzz import fuzz as _fz, process as _pc  # noqa: E402
+
+check("brand: 'เอ็มจี' → 'MG'", _nb("เอ็มจี") == "MG")
+check("brand: 'นิสสัน' → 'NISSAN'", _nb("นิสสัน") == "NISSAN")
+check("brand: อังกฤษอยู่แล้ว ส่งผ่าน (ISURVEY/XML เดิมไม่กระทบ)",
+      _nb("TOYOTA") == "TOYOTA" and _nb("MG") == "MG")
+check("brand: มีรุ่นต่อท้าย 'โตโยต้า วีออส' → 'TOYOTA'", _nb("โตโยต้า วีออส") == "TOYOTA")
+check("brand: ว่าง/None → ว่าง", _nb("") == "" and _nb(None) == "")
+check("brand: ไทยที่ไม่รู้จัก → คืนค่าเดิม (ไปจบที่หยุดรอคนเลือก)",
+      _nb("ยานยนต์ดาวอังคาร") == "ยานยนต์ดาวอังคาร")
+# WRatio เป็น case-sensitive + ตัวเลือก EMCS พิมพ์ใหญ่ล้วน → 'Mazda' ดิบเคยไปโดน 'MG'
+check("brand: อังกฤษ title case → พิมพ์ใหญ่ (กัน 'Mazda' ไปโดน 'MG')",
+      _nb("Mazda") == "MAZDA" and _nb("Toyota") == "TOYOTA")
+# กติกา _dash: ฟิลด์บังคับที่ไม่มีข้อมูลใส่ '-' → ห้ามเอาไปเลือกยี่ห้อ ('-ALL-'/'NASA' มีจริง)
+check("brand: '-' / 'NA' / 'N/A' (ไม่มีข้อมูล) → ว่าง ไม่ใช่ยี่ห้อ",
+      _nb("-") == "" and _nb("NA") == "" and _nb("N/A") == "")
+# fuzzy fallback ต้องไม่จับ "ชื่อรุ่น" เป็นยี่ห้อ (ฟอร์จูนเนอร์ = รุ่นของ TOYOTA ไม่ใช่ FORD)
+check("brand: ชื่อรุ่นไม่ถูกจับเป็นยี่ห้อ (ฟอร์จูนเนอร์/แอคคอร์ด/พีซีเอ็กซ์)",
+      _nb("ฟอร์จูนเนอร์") == "ฟอร์จูนเนอร์" and _nb("แอคคอร์ด") == "แอคคอร์ด"
+      and _nb("พีซีเอ็กซ์") == "พีซีเอ็กซ์")
+check("brand: TP ที่ควรเข้ายังเข้าครบ (ฮอนด้า ซิตี้ / อีซูซุ ดีแมกซ์ / สะกดเพี้ยน)",
+      _nb("ฮอนด้า ซิตี้") == "HONDA" and _nb("อีซูซุ ดีแมกซ์") == "ISUZU"
+      and _nb("อีซูสุ") == "ISUZU")
+check("brand: ไม่ map ไปป้ายที่ EMCS ไม่มี (GWM ถูกถอด)",
+      "GWM" not in set(__import__("autokey.car_brand", fromlist=["x"]).THAI_TO_EMCS.values()))
+
+check("placeholder: '-- ระบุ --' / '--เลือก--' / '- กรุณาเลือก -' = ตัวเลือกหลอก",
+      _isph("-- ระบุ --") and _isph("--เลือก--") and _isph("- กรุณาเลือก -"))
+check("placeholder: ยี่ห้อจริงไม่ถูกมองเป็น placeholder",
+      not _isph("MG") and not _isph("NISSAN") and not _isph("LYNK CO"))
+
+# ตัวเลือกจริงจากดัมพ์หน้า EMCS (ddlCMFG ของ 'เก๋งเอเชีย')
+_EMCS_BRANDS = ["-- ระบุ --", "AION", "-ALL-", "BYD", "FORD", "HONDA", "ISUZU",
+                "MAZDA", "MG", "MITSUBISHI", "NISSAN", "TOYOTA"]
+_bad = _pc.extractOne("เอ็มจี", _EMCS_BRANDS, scorer=_fz.WRatio)
+check("regress: ไทยดิบเทียบตัวเลือกอังกฤษ → ได้ placeholder + คะแนนต่ำกว่าเกณฑ์ (ต้องไม่เลือก)",
+      _isph(_bad[0]) and _bad[1] < _MINSC)
+for _th, _en in (("เอ็มจี", "MG"), ("นิสสัน", "NISSAN"), ("โตโยต้า", "TOYOTA")):
+    _ok = _pc.extractOne(_nb(_th), _EMCS_BRANDS, scorer=_fz.WRatio)
+    check(f"fix: '{_th}' → normalize → เลือก '{_en}' ได้ (score {_ok[1]:.0f})",
+          _ok[0] == _en and _ok[1] >= _MINSC)
+
+# เกณฑ์ยี่ห้อ (BRAND_MIN_SCORE=90): ลิสต์ถูกกรองตามประเภทรถ ยี่ห้อที่ไม่มีในลิสต์
+# ต้องไม่ไป "เกาะ" ยี่ห้ออื่น — ค่าถูกได้ ≥90 เสมอ ค่ามั่วสูงสุด 80
+from autokey.car_brand import BRAND_MIN_SCORE as _BMS  # noqa: E402
+_fp = _pc.extractOne("TRIUMPH", _EMCS_BRANDS + ["TRUMPCHI"], scorer=_fz.WRatio)
+check("brand-score: ยี่ห้อที่ไม่มีในลิสต์ (TRIUMPH) ได้ < 90 → ไม่ถูกเลือก",
+      _fp[1] < _BMS)
+check("brand-score: ค่าที่ถูกต้องยังผ่านเกณฑ์ 90 (TOYOTA / 'MG 3')",
+      _pc.extractOne("TOYOTA", _EMCS_BRANDS, scorer=_fz.WRatio)[1] >= _BMS
+      and _pc.extractOne("MG 3", _EMCS_BRANDS, scorer=_fz.WRatio)[1] >= _BMS)
+
+# ---- 22d. fuzzy_select guard (end-to-end ด้วย dropdown ปลอม) ----
+# placeholder ของ EMCS ไม่ได้ชื่อ '-- ระบุ --' เหมือนกันทุกช่อง ('-- จังหวัด --',
+# '-- เขต --', '- คำนำหน้า -') → ตัดสินจาก value="0"/"" ของ option ตัวแรกแทน
+import autokey.browser as _br  # noqa: E402
+
+
+class _FOpt:
+    def __init__(self, text, value):
+        self.text, self._v = text, value
+
+    def get_attribute(self, _k):
+        return self._v
+
+
+class _FSel:
+    def __init__(self, opts):
+        self.options = [_FOpt(t, v) for t, v in opts]
+        self.picked = None
+
+    def select_by_visible_text(self, t):
+        self.picked = t
+
+
+def _run_fuzzy(opts, value, **kw):
+    """เรียก fuzzy_select จริงกับ dropdown ปลอม → คืน (ที่เลือก, ถูกถามให้กรอกเองไหม)"""
+    fake, asked = _FSel(opts), []
+    _o = (_br.Select, _br.wait_present, _br.wait_for_manual_fill,
+          _br._current_select_text)
+    _br.Select = lambda _e: fake
+    _br.wait_present = lambda *a, **k: None
+    _br.wait_for_manual_fill = lambda *a, **k: asked.append(a[0]) or False
+    _br._current_select_text = lambda *a, **k: fake.picked or ""
+    _drv = _types.SimpleNamespace(find_element=lambda *a, **k: None)
+    try:
+        _br.fuzzy_select(_drv, "ddlX", value, wait_options=False, **kw)
+    finally:
+        (_br.Select, _br.wait_present, _br.wait_for_manual_fill,
+         _br._current_select_text) = _o
+    return fake.picked, bool(asked)
+
+
+_DISTRICTS = [("-- เขต --", "0"), ("เขตวัฒนา", "221"), ("เขตบึงกุ่ม", "227")]
+_pick, _ask = _run_fuzzy(_DISTRICTS, "เขตวัฒนา")
+check("guard: ค่าตรง → เลือกปกติ ไม่ถามคน", _pick == "เขตวัฒนา" and not _ask)
+_pick, _ask = _run_fuzzy(_DISTRICTS, "-")
+check("guard: '-' (ไม่มีข้อมูล) → ไม่เลือก '-- เขต --' แต่หยุดถามคน",
+      _pick is None and _ask)
+_pick, _ask = _run_fuzzy([("- คำนำหน้า -", "0"), ("นาย", "1"), ("นาง", "2")], "-")
+check("guard: placeholder ชื่ออื่น ('- คำนำหน้า -') ก็ไม่ถูกเลือก", _pick is None and _ask)
+_pick, _ask = _run_fuzzy([("-- ระบุ --", "0"), ("MG", "515A"), ("NISSAN", "70A")],
+                         "เอ็มจี")
+check("guard: ยี่ห้อไทยดิบ (บั๊ก #104) → ไม่เลือก placeholder แต่หยุดถามคน",
+      _pick is None and _ask)
+_pick, _ask = _run_fuzzy([("-- ระบุ --", "0"), ("TRUMPCHI", "1"), ("MG", "2")],
+                         "TRIUMPH", min_score=_BMS)
+check("guard: min_score=90 กันยี่ห้อเกาะผิด (TRIUMPH ไม่กลายเป็น TRUMPCHI)",
+      _pick is None and _ask)
+
 # ---- 23. webui._build_cmd: โหมดเคลม (dry = เคลมแห้ง / fresh = เคลมสด) ----
 import webui as _webui  # noqa: E402
 _cmd, _e = _webui._build_cmd({"claims": "2026013041465", "claimmode": "dry"})

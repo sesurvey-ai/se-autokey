@@ -36,6 +36,7 @@ from .browser import (
     wait_present,
     wait_visible,
 )
+from .car_brand import BRAND_MIN_SCORE, normalize_brand
 from .claim_data import ClaimData
 from .images import list_images
 
@@ -269,8 +270,11 @@ def fill_third_parties(driver, data: ClaimData):
             log(f"   - ไม่มีประเภทรถคู่กรณี {n + 1} จาก ISURVEY — เลือกเองตอนตรวจ")
         # ยี่ห้อ — มีตัวเลือกหลังเลือกประเภทรถ; ถ้ายังว่าง (ไม่มี veh_type) ข้าม
         if _select_has_options(driver, p + "ddlCmfg"):
-            fuzzy_select(driver, p + "ddlCmfg", tp.get("car_brand", ""),
-                         label=f"ยี่ห้อรถคู่กรณี {n + 1}", timeout=5)
+            # ไทย→อังกฤษ: ตัวเลือกยี่ห้อของ EMCS เป็นอังกฤษล้วน แต่ se-survey ส่งไทยมา
+            fuzzy_select(driver, p + "ddlCmfg",
+                         normalize_brand(tp.get("car_brand", "")),
+                         label=f"ยี่ห้อรถคู่กรณี {n + 1}", timeout=5,
+                         min_score=BRAND_MIN_SCORE)
         else:
             log(f"   - ข้ามยี่ห้อรถคู่กรณี {n + 1} (เลือกประเภทรถก่อน ตัวเลือกยี่ห้อถึงจะขึ้น)")
         set_text(driver, p + "txtCModel", tp.get("car_model", ""))
@@ -1148,7 +1152,12 @@ def _select_car_brand(driver, car_brand, label="ยี่ห้อรถ"):
     ตัวเลือกยี่ห้อถูกโหลดจาก onchange postback ของ ddlCType ซึ่งบางครั้ง commit ไม่ทัน
     presleep เดิม → ddlCMFG ว่าง (มีแต่ '-- ระบุ --'). แก้แบบเดียวกับที่คนต้องกดประเภทรถ
     ซ้ำเองบนหน้าเว็บ: รอ list โหลด → ถ้ายังว่างให้ยิง onchange ของ ddlCType ซ้ำแล้วรอ
-    → ค่อย fuzzy_select. list ไม่ขึ้นจริง = หยุดรอคน (required)"""
+    → ค่อย fuzzy_select. list ไม่ขึ้นจริง = หยุดรอคน (required)
+
+    ยี่ห้อใช้เกณฑ์เข้ม (min_score=90): ลิสต์ยี่ห้อถูกกรองตามประเภทรถ ยี่ห้อที่ไม่มีใน
+    ลิสต์นั้นจะไป "เกาะ" ยี่ห้ออื่นแบบเงียบ ๆ ได้ (TRIUMPH→TRUMPCHI 80) — ค่าที่ถูกต้อง
+    ได้ ≥90 เสมอ (TOYOTA 100 / 'MG 3'→MG 90) จึงตัดที่ 90 แล้วให้คนเลือกเองถ้าไม่ถึง"""
+    car_brand = normalize_brand(car_brand)   # ไทย→อังกฤษ: ตัวเลือก EMCS เป็นอังกฤษล้วน
     time.sleep(2)   # รอ postback ประเภทรถ โหลดตัวเลือกยี่ห้อ (เท่าจังหวะฝั่งคู่กรณี)
     if not _select_has_options(driver, "ddlCMFG"):
         try:   # ยิง onchange ของ ddlCType ซ้ำ (this.value = ประเภทรถเดิม) ให้ repopulate ยี่ห้อ
@@ -1164,7 +1173,7 @@ def _select_car_brand(driver, car_brand, label="ยี่ห้อรถ"):
             pass
     if _select_has_options(driver, "ddlCMFG"):
         fuzzy_select(driver, "ddlCMFG", car_brand, label=label,
-                     required=True, timeout=5)
+                     required=True, timeout=5, min_score=BRAND_MIN_SCORE)
     else:
         wait_for_manual_fill(
             label, "ตัวเลือกยี่ห้อยังไม่โหลด (postback ประเภทรถ ไม่สมบูรณ์)",
@@ -1190,6 +1199,8 @@ def fill_car(driver, data: ClaimData):
     fuzzy_select(driver, "ddlCar_Province", data.plate_province, presleep=1,
                  label="จังหวัดรถ", required=True)
     # verify-stuck: เผื่อ postback จังหวัดรีเซ็ตยี่ห้อกลับเป็น placeholder → เลือกยี่ห้อซ้ำ
+    # (เงื่อนไข "ช่องยังว่าง" กันอยู่แล้ว — อย่าไปผูกกับผลรอบแรก เพราะรอบแรกที่ล้มจาก
+    # race ของ cascade คือเคสที่ต้องใช้รอบสองกู้พอดี เช่น 'HONDA' ก็เคยได้ 0 คะแนน)
     if str(data.car_brand or "").strip() and \
             _current_select_text(driver, "ddlCMFG").strip() in ("", "-- ระบุ --"):
         _select_car_brand(driver, data.car_brand, label="ยี่ห้อรถ (เลือกซ้ำ)")

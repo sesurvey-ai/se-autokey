@@ -21,6 +21,17 @@ from selenium.webdriver.support.ui import Select, WebDriverWait
 
 # คะแนน fuzzy match ต่ำกว่านี้จะเตือนให้คนตรวจ (0-100)
 FUZZY_WARN_SCORE = 60
+# ต่ำกว่านี้ = ไม่มีตัวเลือกไหนใกล้จริง → ไม่เลือกให้ หยุดรอคนเลือกเอง
+# (กันเคส 'เอ็มจี'/'นิสสัน' ไทย เจอ dropdown อังกฤษ ได้ 0 คะแนน แล้วไปลง '-- ระบุ --')
+FUZZY_MIN_SCORE = 40
+
+# ข้อความ placeholder ของ dropdown EMCS — ห้ามเลือกเด็ดขาด (= ไม่ได้เลือกอะไรเลย)
+_PLACEHOLDER_WORDS = {"ระบุ", "กรุณาเลือก", "เลือก", "โปรดระบุ", "โปรดเลือก", ""}
+
+
+def _is_placeholder_option(text: str) -> bool:
+    """'-- ระบุ --', '--เลือก--', '- กรุณาเลือก -' ฯลฯ = ตัวเลือกหลอก ไม่ใช่ค่าจริง"""
+    return " ".join(str(text or "").replace("-", " ").split()) in _PLACEHOLDER_WORDS
 
 # โหมดหน้าเว็บ: webui.py ตั้ง env SE_WEBUI=1 ตอนเรียก main.py
 # → wait_for_manual_fill จะส่ง marker ออก stdout ให้หน้าเว็บโชว์ปุ่ม "ดำเนินการต่อ"
@@ -551,7 +562,8 @@ def _current_select_text(driver, select_id) -> str:
 
 
 def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
-                 presleep=0.0, label="", required=False):
+                 presleep=0.0, label="", required=False,
+                 min_score=FUZZY_MIN_SCORE):
     """เลือก option ใน dropdown ด้วย fuzzy matching (rapidfuzz WRatio)
 
     รวม pattern ที่ซ้ำใน notebook เดิม: รอ dropdown → รอ options โหลด →
@@ -562,6 +574,9 @@ def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
       จะ "หยุดรอให้คนกรอกเอง" แทนการข้าม/error
     required=False: ค่าว่าง → ข้าม (เหมือนเดิม); เลือกไม่ได้ → หยุดรอให้คนกรอก
       เช่นกัน (ไม่ปล่อย error จบโปรแกรม)
+    min_score: ต่ำกว่านี้ = ไม่เลือกให้ หยุดรอคน. ดรอปดาวน์ที่ป้ายเป็น "ชุดคำตายตัว"
+      (ยี่ห้อรถ — ลิสต์ถูกกรองตามประเภทรถ ยี่ห้อที่ไม่มีในลิสต์จะไปเกาะยี่ห้ออื่นได้)
+      ควรตั้งสูง (90) เพราะค่าที่ถูกต้องได้ ≥90 เสมอ ส่วนค่ามั่วเกาะไม่เกิน 80
 
     คืนค่า (ข้อความที่เลือก, คะแนน) หรือ None ถ้าค่าว่างและไม่บังคับ
     """
@@ -588,9 +603,33 @@ def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
                 )
             sel = Select(driver.find_element(By.ID, select_id))
             options = [o.text for o in sel.options]
+            # ตัวแรกที่ value="0"/"" = placeholder ของ dropdown นี้ (ตรวจทั้งหน้า EMCS
+            # 449 select แล้ว ไม่มีตัวเลือกจริงตัวไหนใช้ value 0) — เชื่อถือได้กว่าเดา
+            # จากข้อความ เพราะข้อความต่างกันไปตามช่อง: '-- ระบุ --', '-- จังหวัด --',
+            # '-- เขต --', '- คำนำหน้า -'
+            ph = None
+            try:
+                if sel.options and sel.options[0].get_attribute("value") in ("", "0"):
+                    ph = options[0]
+            except Exception:
+                pass
 
             best = process.extractOne(str(value), options, scorer=fuzz.WRatio)
             text, score = best[0], best[1]
+
+            # กันเลือก placeholder/มั่ว: extractOne คืน "ตัวที่ใกล้สุด" เสมอ แม้ไม่มี
+            # ตัวไหนใกล้จริง — เคส #104 ยี่ห้อไทย 'เอ็มจี' เจอ dropdown อังกฤษ ได้ 0
+            # คะแนน แล้วโค้ดเดิม "เลือก '-- ระบุ --'" ให้ = ช่องบังคับว่างเงียบ ๆ
+            # ('-' ที่กติกา _dash ใส่ให้ช่องบังคับ ก็ไปเกาะ '-- เขต --' ได้ 60 คะแนน)
+            # ตอนนี้ไม่แตะ dropdown แล้วหยุดรอคนเลือกแทน (webui = ปุ่มดำเนินการต่อ,
+            # ไม่มีคนเฝ้า = ไปต่อ ปล่อยให้คนตรวจแก้บนหน้าจอ)
+            if text == ph or _is_placeholder_option(text) or score < min_score:
+                log(f"   ⚠️ {name}: '{value}' ไม่ตรงกับตัวเลือกไหนเลย "
+                    f"(ใกล้สุด '{text}' score {score:.0f}) — ไม่เลือกให้")
+                wait_for_manual_fill(
+                    name, f"ไม่มีตัวเลือกที่ตรงกับ '{value}' ในดรอปดาวน์นี้",
+                    select_id=select_id)
+                return _current_select_text(driver, select_id), 0
 
             mark = "⚠️" if score < FUZZY_WARN_SCORE else "✓"
             log(f"   {mark} {name}: '{value}' → '{text}' (score {score:.0f})")
