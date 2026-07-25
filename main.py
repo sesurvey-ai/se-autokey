@@ -592,9 +592,15 @@ def _populate_third_parties_from_report(data, rep):
             "car_brand": str(o.get("car_brand") or "").strip(),
             "car_model": str(o.get("car_model") or "").strip(),
             "car_color": str(o.get("car_color") or "").strip(),
+            "car_reg_year": str(o.get("reg_year") or "").strip(),   # พ.ศ. (แปลงตอนกรอก)
+            "km_no": str(o.get("mileage") or "").strip(),
+            # ความสัมพันธ์ผู้ขับขี่กับเจ้าของรถคู่กรณี — แอปบังคับกรอก แต่เดิมไม่ถูกส่งต่อ
+            "relation": str(o.get("relation") or "").strip(),
             "chassis_no": str(o.get("vin") or o.get("chassis_no") or "").strip(),
             "drv_name": f"{first} {last}".strip(),
             "opo_name": str(o.get("owner_name") or "").strip(),
+            # ที่อยู่ "เจ้าของรถ" — เดิมไม่ map ทำให้ตกไป fallback = ที่อยู่ผู้ขับขี่ (คนละคนได้)
+            "opo_address": str(o.get("owner_address") or "").strip(),
             "gender": str(o.get("gender") or "").strip(),
             "age": str(o.get("age") or "").strip(),
             "birthdate": str(o.get("birthdate") or "").strip(),
@@ -644,6 +650,11 @@ def _populate_claim_from_report(data, rep):
     data.plate_province = gv('car_province')
     data.car_brand = gv('car_brand')
     data.car_color = gv('car_color')
+    data.car_reg_year = gv('car_reg_year')
+    data.ev_type = gv('ev_type')
+    data.ev_battery_no = gv('ev_battery_no')
+    data.ev_charger_no = gv('ev_charger_no')
+    data.ev_battery_start = gv('ev_battery_start')
     data.insure_plate = gv('license_plate')
     data.insure_model = gv('car_model')
     data.insure_chassis = gv('chassis_no')
@@ -681,6 +692,10 @@ def _populate_claim_from_report(data, rep):
     data.opo_results = gv('acc_claim_opponent')          # comma-separated จากแอป
     data.opo_pay = _money(gv('acc_claim_amount'))
     data.opo_recovery = _money(gv('acc_claim_total_amount'))
+    data.followup_type = gv('acc_followup')
+    data.followup_count = gv('acc_followup_count')
+    data.followup_detail = gv('acc_followup_detail')
+    data.followup_date = gv('acc_followup_date')
     # ความเห็น/ผลสำรวจ → EMCS หน้าหลัก (ช่องมาร์ค 'not used' แต่ user ขอให้เติม; se-survey มีข้อความครบ)
     # ยุบ \n → เว้นวรรค: txtAcc_result/txtAcc_Comment เป็น input บรรทัดเดียว — ส่ง \n ผ่าน send_keys
     # = กด Enter อาจ trigger postback ก่อนเวลา

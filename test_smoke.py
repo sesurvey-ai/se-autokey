@@ -1091,6 +1091,73 @@ _tx, _bx = _run_opo_fault(acc_fault_opponent_no='1', opo_results='รับเ�
                           opo_pay='20000', opo_recovery='17000')
 check("รับเงินจำนวน: รับเงินมากกว่ายอดเรียกร้อง → ไม่ติ๊ก (EMCS ไม่ยอม)", _bx == [])
 
+# ---- 22c-5. หน่วยปี + EV + ติดตามงาน + รหัสบริษัทประกัน ----
+check("ปีจดทะเบียน: พ.ศ. → ค.ศ. (EMCS รับแค่ 1900-2026)",
+      emcs._year_ad('2567') == '2024' and emcs._year_ad('2566') == '2023')
+check("ปีจดทะเบียน: ค.ศ. อยู่แล้ว ไม่แตะ", emcs._year_ad('2024') == '2024')
+check("ปีจดทะเบียน: ว่าง/อ่านไม่ออก → ไม่พัง",
+      emcs._year_ad('') == '' and emcs._year_ad(None) == '' and emcs._year_ad('ปี67') == 'ปี67')
+
+check("ติดตามงาน: 3 สถานะของแอปตรง radio N/W/Y",
+      emcs.FLU_TYPE_RADIO['ไม่มีการนัดหมาย'] == 'rdoFlu_Type_0'
+      and emcs.FLU_TYPE_RADIO['รอการนัดหมาย'] == 'rdoFlu_Type_1'
+      and emcs.FLU_TYPE_RADIO['มีการนัดหมาย'] == 'rdoFlu_Type_2')
+
+# EV: value ของ ddlEvType = code ตรง ๆ ที่แอปเก็บ → select_by_value ไม่ต้อง fuzzy
+_evsel = {}
+
+
+class _FakeEvSel:
+    def __init__(self, ok=True):
+        self.ok = ok
+
+    def select_by_value(self, v):
+        if not self.ok:
+            raise RuntimeError('no such option')
+        _evsel['value'] = v
+
+
+def _run_ev(code, ok=True, prefix=""):
+    _evsel.clear()
+    texts = {}
+    _o = (emcs.Select, emcs.set_text, emcs.log)
+    emcs.Select = lambda _e: _FakeEvSel(ok)
+    emcs.set_text = lambda drv, eid, val: texts.__setitem__(eid, val)
+    emcs.log = lambda *a, **k: None
+    drv = _types.SimpleNamespace(find_element=lambda *a, **k: None)
+    try:
+        emcs._fill_ev(drv, prefix, code, 'BAT-001', 'WC-002', '2026-07-01')
+    finally:
+        (emcs.Select, emcs.set_text, emcs.log) = _o
+    return _evsel.get('value'), texts
+
+
+_v, _t = _run_ev('BEV')
+check("EV: เลือกด้วย code + กรอกเลขแบต/เครื่องชาร์จ/วันเริ่มใช้",
+      _v == 'BEV' and _t.get('txtBatt_Number') == 'BAT-001'
+      and _t.get('txtWallcharge_number') == 'WC-002'
+      and _t.get('wuCale_batt_effdate_txtCalendar', '').endswith('2569'))
+_v, _t = _run_ev('')
+check("EV: ไม่ใช่รถไฟฟ้า → ไม่แตะช่องไหนเลย", _v is None and _t == {})
+_v, _t = _run_ev('HEV', ok=False)
+check("EV: เลือกประเภทไม่ได้ → ไม่กรอกช่องอื่นต่อ (ปล่อยให้คนทำ)", _v is None and _t == {})
+_v, _t = _run_ev('PHEV', prefix='dtlOpo_ctl00_wuOpo_')
+check("EV คู่กรณี: ใช้ prefix + ชื่อ dropdown ddlEv_Type",
+      _v == 'PHEV' and _t.get('dtlOpo_ctl00_wuOpo_txtBatt_Number') == 'BAT-001')
+
+from autokey.insurer_map import resolve_insurer_code as _ric  # noqa: E402
+check("บริษัทประกัน: resolve ครบทั้ง 7 บริษัทใน dropdown",
+      all(_ric(n) == c for n, c in (
+          ('ประกันภัยทดสอบ', '1'),
+          ('บริษัท เดอะ วัน ประกันภัย จำกัด (มหาชน)', '4'),
+          ('ไอโออิกรุงเทพประกันภัย', '1059'),
+          ('ฟอลคอนประกันภัย จำกัด (มหาชน)', '1232'),
+          ('บริษัท อลิอันซ์ อยุธยา ประกันภัย จำกัด (มหาชน)', '1723'),
+          ('บริษัท เจมาร์ท ประกันภัย จํากัด (มหาชน)', '2424'),
+          ('บริษัท ไทยไพบูลย์ประกันภัย จำกัด (มหาชน)', '2429'))))
+check("บริษัทประกัน: บริษัทนอกลิสต์ → None (หยุด ไม่ import เข้าบริษัทผิด)",
+      _ric('บริษัท วิริยะประกันภัย จำกัด (มหาชน)') is None)
+
 # ---- 22d. fuzzy_select guard (end-to-end ด้วย dropdown ปลอม) ----
 # placeholder ของ EMCS ไม่ได้ชื่อ '-- ระบุ --' เหมือนกันทุกช่อง ('-- จังหวัด --',
 # '-- เขต --', '- คำนำหน้า -') → ตัดสินจาก value="0"/"" ของ option ตัวแรกแทน

@@ -284,6 +284,18 @@ def fill_third_parties(driver, data: ClaimData):
             fuzzy_select(driver, p + "ddlCar_Color", tp["car_color"],
                          label=f"สีรถคู่กรณี {n + 1}", timeout=5)
         set_text(driver, p + "txtChassisNo", tp.get("chassis_no", ""))
+        set_text(driver, p + "txtKm_No", tp.get("km_no", ""))
+        # ปีจดทะเบียนคู่กรณีเป็น dropdown ค.ศ. (แอปเก็บ พ.ศ. → แปลงก่อน)
+        _yr = _year_ad(tp.get("car_reg_year", ""))
+        if _yr:
+            try:
+                Select(driver.find_element(By.ID, p + "ddlCar_RegNo_Year")
+                       ).select_by_value(_yr)
+                log(f"   ✓ ปีจดทะเบียนคู่กรณี {n + 1} = {_yr}")
+            except Exception:
+                log(f"   ⚠️ เลือกปีจดทะเบียนคู่กรณี {n + 1} ('{_yr}') ไม่ได้")
+        _fill_ev(driver, p, tp.get("ev_type", ""), tp.get("ev_battery_no", ""),
+                 tp.get("ev_charger_no", ""), tp.get("ev_battery_start", ""))
         # จังหวัดทะเบียนรถคู่กรณี (* บังคับ) — se-survey ให้ "ชื่อ" (เลือกด้วย fuzzy เหมือนรถประกัน);
         # ISURVEY เดิมให้ index → รองรับทั้งคู่ (มีชื่อใช้ชื่อก่อน ไม่มีค่อย fallback index)
         plate_prov_name = (tp.get("plate_province", "") or "").strip()
@@ -301,6 +313,10 @@ def fill_third_parties(driver, data: ClaimData):
         # ทำให้ validation ฟ้อง 'ชื่อผู้ขับขี่รถคู่กรณี')
         drv_full = (tp.get("drv_name", "") or owner).strip()
         set_text(driver, p + "txtDri_Name", _dash(drv_full))
+        # ความสัมพันธ์ผู้ขับขี่กับเจ้าของรถ — แอปบังคับให้กรอก แต่เดิมไม่เคยถูกส่งเข้า EMCS
+        if str(tp.get("relation") or "").strip():
+            fuzzy_select(driver, p + "ddlDri_Relation_ID", tp["relation"],
+                         label=f"ความสัมพันธ์คู่กรณี {n + 1}", timeout=5)
 
         # เพศ — ว่างจาก ISURVEY → อนุมานจากคำนำหน้าในชื่อผู้ขับขี่ (fallback)
         gender = resolve_gender(tp.get("gender", ""), drv_full)
@@ -1233,6 +1249,52 @@ def fill_car(driver, data: ClaimData):
             _current_select_text(driver, "ddlCMFG").strip() in ("", "-- ระบุ --"):
         _select_car_brand(driver, data.car_brand, label="ยี่ห้อรถ (เลือกซ้ำ)")
     fuzzy_select(driver, "ddlCar_Color", data.car_color, presleep=1, label="สีรถ")
+    set_text(driver, "txtCar_RegNo_Year", _year_ad(data.car_reg_year))
+    _fill_ev(driver, "", data.ev_type, data.ev_battery_no, data.ev_charger_no,
+             data.ev_battery_start)
+
+
+def _year_ad(year) -> str:
+    """ปีจดทะเบียน: แอปเก็บ พ.ศ. ('2567') แต่ EMCS รับเฉพาะ ค.ศ. (dropdown 1900-2026)
+    → ลบ 543 ให้; ถ้าเป็น ค.ศ. อยู่แล้วหรืออ่านไม่ออก คืนตามเดิม/ว่าง"""
+    s = str(year or "").strip()
+    if not s.isdigit() or len(s) != 4:
+        return "" if not s else s
+    y = int(s)
+    return str(y - 543) if y >= 2400 else s
+
+
+def _report_date(v) -> str:
+    """วันที่จาก se-survey → dd/mm/พ.ศ. ที่ช่องปฏิทิน EMCS ใช้
+    รับได้ทั้ง '2026-07-01', '2026-07-01T00:00:00.000Z' (API คืน timestamp) และ
+    '01/07/2569' ที่เป็น พ.ศ. อยู่แล้ว (iso_to_thai_date เพี้ยนถ้ามีส่วนเวลาติดมา)"""
+    s = str(v or "").strip()
+    if not s:
+        return ""
+    if len(s) > 10 and s[4] == "-":
+        s = s[:10]
+    return iso_to_thai_date(s)
+
+
+def _fill_ev(driver, prefix, ev_type, batt_no, charger_no, batt_start):
+    """รถยนต์ไฟฟ้า — value ของ ddlEvType คือ code ตรง ๆ ('BEV'/'HEV'/…) ซึ่งตรงกับที่
+    se-survey เก็บ จึง select_by_value ไม่ต้อง fuzzy (ป้ายเต็มของ EMCS มีวงเล็บ/เว้นวรรค
+    ไม่ตรงกับป้ายในแอป). ไม่ใช่ EV = ไม่แตะอะไรเลย"""
+    code = str(ev_type or "").strip().upper()
+    if not code:
+        return
+    sel_id = prefix + ("ddlEv_Type" if prefix else "ddlEvType")   # คู่กรณีใช้คนละชื่อ
+    try:
+        Select(driver.find_element(By.ID, sel_id)).select_by_value(code)
+        log(f"   ✓ ประเภทรถไฟฟ้า (EV) = {code}")
+    except Exception:
+        log(f"   ⚠️ เลือกประเภท EV '{code}' ไม่ได้ — เลือกเองบนหน้าจอ")
+        return
+    set_text(driver, prefix + "txtBatt_Number", batt_no)
+    set_text(driver, prefix + "txtWallcharge_number", charger_no)
+    if str(batt_start or "").strip():
+        set_text(driver, prefix + "wuCale_batt_effdate_txtCalendar",
+                 _report_date(batt_start))
 
 
 def fill_driver(driver, data: ClaimData):
@@ -1371,6 +1433,37 @@ def fill_verdict(driver, data: ClaimData):
     driver.find_element(By.ID, CAUSE_RADIO[label]).click()
     if CAUSE_RADIO[label] == "rdoAcc_Cause01":
         _fill_opponent_fault(driver, data)
+    _fill_followup(driver, data)
+
+
+# การติดตามงาน (rdoFlu_Type) — value ตรงกับป้ายที่ se-survey เก็บ 1:1
+FLU_TYPE_RADIO = {
+    "ไม่มีการนัดหมาย": "rdoFlu_Type_0",
+    "รอการนัดหมาย": "rdoFlu_Type_1",
+    "มีการนัดหมาย": "rdoFlu_Type_2",
+}
+
+
+def _fill_followup(driver, data: ClaimData):
+    """บล็อกติดตามงาน/นัดหมาย — se-survey บังคับให้ผู้สำรวจกรอก แต่เดิมไม่มีอะไรพาเข้า
+    EMCS เลย (backend ก็ hardcode FLU_* ว่างใน XML) → ข้อมูลหายทั้งบล็อกทุกเคส"""
+    t = str(data.followup_type or "").strip()
+    rid = FLU_TYPE_RADIO.get(t)
+    if not rid:
+        if t:
+            log(f"   ⚠️ ไม่รู้จักสถานะติดตามงาน '{t}' — เลือกเองบนหน้าจอ")
+        return
+    try:
+        driver.find_element(By.ID, rid).click()
+        log(f"   ✓ การติดตามงาน: {t}")
+    except Exception:
+        log(f"   ⚠️ เลือกการติดตามงาน '{t}' ไม่ได้ — เลือกเองบนหน้าจอ")
+        return
+    set_text(driver, "txtFlu_No", data.followup_count)
+    set_text(driver, "txtFlu_Detail", data.followup_detail)
+    if str(data.followup_date or "").strip():
+        set_text(driver, "wuCale_Flu_Date_txtCalendar",
+                 _report_date(data.followup_date))
 
 
 # การเรียกร้องค่าเสียหายจากคู่กรณี (chkOpo_Result_0..4) — ติ๊กด้วย index จึงไม่ต้องแคร์

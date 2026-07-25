@@ -94,6 +94,17 @@ class ClaimData:
     plate_province: str = ""       # จังหวัดรถ
     car_brand: str = ""            # ยี่ห้อรถ
     car_color: str = ""            # สีรถ
+    car_reg_year: str = ""         # ปีจดทะเบียน (แอปเก็บ พ.ศ. — EMCS ใช้ ค.ศ.)
+    # รถยนต์ไฟฟ้า (EV) — se-survey เก็บครบ แต่เดิมไม่มีอะไรพาเข้า EMCS
+    ev_type: str = ""              # code BEV/FCEV/HEV/MEV/PHEV (= value ของ ddlEvType)
+    ev_battery_no: str = ""        # เลขแบตเตอรี่ (txtBatt_Number)
+    ev_charger_no: str = ""        # เลขเครื่องชาร์จ (txtWallcharge_number)
+    ev_battery_start: str = ""     # วันเริ่มใช้แบต (wuCale_batt_effdate)
+    # การติดตามงาน/นัดหมาย (rdoFlu_Type + txtFlu_No/Detail/Date)
+    followup_type: str = ""        # ไม่มีการนัดหมาย / รอการนัดหมาย / มีการนัดหมาย
+    followup_count: str = ""
+    followup_detail: str = ""
+    followup_date: str = ""
     driver_title: str = ""         # คำนำหน้าผู้ขับขี่ (se-survey มี; ISURVEY ไม่มี → เดิม derive จากผู้เอาประกัน)
     driver_name: str = ""          # ชื่อผู้ขับขี่
     driver_surname: str = ""       # นามสกุลผู้ขับขี่
