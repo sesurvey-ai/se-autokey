@@ -235,6 +235,18 @@ def set_text(driver, elem_id, value):
         return
     value = str(value)
     el = driver.find_element(By.ID, elem_id)
+    # ช่องที่มี onkeypress="noTyping" ของ EMCS ยอมเฉพาะ [เว้นวรรค a-zA-Z0-9 ก-์ . -]
+    # เส้นพิมพ์ (send_keys) จะโดนตัดอักขระอื่นทิ้ง "เงียบ ๆ" ส่วนเส้น JS fallback ยัดเข้าได้
+    # แต่ onblur noTyping_paste จะล้างทั้งช่องทีหลัง → ข้อมูลชุดเดียวกันเก็บไม่เหมือนกัน
+    # แล้วแต่ว่าช่องถูกซ่อนอยู่ไหม → normalize ให้เหมือนกันทั้งสองเส้น + log ให้รู้ว่าตัดอะไร
+    try:
+        if "noTyping" in (el.get_attribute("onkeypress") or ""):
+            safe = re.sub(r"[^ a-zA-Z0-9ก-์.\-]", "", value).strip()
+            if safe != value.strip():
+                log(f"   ⚠️ {elem_id}: EMCS ไม่รับอักขระพิเศษ ตัดออก: {value!r} → {safe!r}")
+            value = safe or "-"
+    except Exception:
+        pass
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
     except Exception:

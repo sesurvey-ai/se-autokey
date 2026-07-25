@@ -88,6 +88,13 @@ PERSON_TYPE_MAP = {"DV": "01", "PV": "03", "ON": "05"}  # ผู้ขับข�
 THAI_TITLES = ["เด็กหญิง", "เด็กชาย", "นางสาว", "น.ส.", "นส.",
                "ด.ญ.", "ด.ช.", "นาง", "นาย"]
 
+# คำนำหน้าที่คนเขียนได้หลายแบบ → ป้ายจริงของ dropdown EMCS (ddl*_Title_ID มี 6 ตัว:
+# นาย/นาง/นางสาว/ด.ช./ด.ญ./คุณ) — เดิมโยนคำเต็มเข้า fuzzy แล้วได้ผิดแบบเงียบ:
+# 'เด็กชาย'→'นาย' (72), 'น.ส.'→'ด.ช.' (50) ทั้งคู่ผ่านเกณฑ์ 40 จึงไม่มีคำเตือน
+EMCS_TITLE = {"เด็กชาย": "ด.ช.", "เด็กหญิง": "ด.ญ.", "น.ส.": "นางสาว", "นส.": "นางสาว"}
+# ลิสต์ปิด 6 ตัว — ค่าที่ถูกต้องได้ 100 เสมอ จึงตัดที่ 90 (ไม่ตรง = หยุดรอคนเลือก)
+TITLE_MIN_SCORE = 90
+
 
 def split_thai_name(full: str):
     """แยก 'นายกัมปนาท เปรมกิจ' → ('นาย', 'กัมปนาท', 'เปรมกิจ')
@@ -618,16 +625,28 @@ def fill_injuries(driver, data: ClaimData):
             except Exception:
                 log(f"   ⚠️ เลือกประเภทบุคคล {n + 1} ไม่ได้")
 
-        # ชื่อ — แยกคำนำหน้า/ชื่อ/สกุล; layout มี 2 แบบ (แยกช่อง vs ช่องเดียว)
-        title, first, last = split_thai_name(inj.get("name", ""))
+        # ชื่อ — แยกคำนำหน้า/ชื่อ/สกุล; หน้านี้มี layout 3 แบบที่ server สลับให้
+        # (แยกช่อง txtInj_Name01 / ช่องเดียว txtInj_Name / แถว divAXA) → กรอกช่องที่
+        # vlidInjPerson เช็คไว้เสมอ แล้วเติมช่องของ layout ที่โผล่จริงเพิ่ม
+        # (set_text มี JS fallback เขียนช่องที่ซ่อนอยู่ได้ จึงปลอดภัยที่จะกรอกทั้งคู่)
+        full = inj.get("name", "")
+        title, first, last = split_thai_name(full)
+        set_text(driver, p + "txtInj_Name", _dash(full))
         if _is_displayed(driver, p + "txtInj_Name01"):
             if title and _select_has_options(driver, p + "ddlInj_Title_ID"):
-                fuzzy_select(driver, p + "ddlInj_Title_ID", title,
+                fuzzy_select(driver, p + "ddlInj_Title_ID", EMCS_TITLE.get(title, title),
+                             min_score=TITLE_MIN_SCORE,
                              label=f"คำนำหน้าผู้บาดเจ็บ {n + 1}")
             set_text(driver, p + "txtInj_Name01", _dash(first))
             set_text(driver, p + "txtInj_LastName01", _dash(last))
-        elif _is_displayed(driver, p + "txtInj_Name"):
-            set_text(driver, p + "txtInj_Name", _dash(inj.get("name", "")))
+        if _is_displayed(driver, p + "divAXA"):     # ฟอร์มผู้บาดเจ็บเวอร์ชัน AXA
+            if title:
+                fuzzy_select(driver, p + "ddlInj_Title_ID", EMCS_TITLE.get(title, title),
+                             min_score=TITLE_MIN_SCORE, timeout=5,
+                             label=f"คำนำหน้าผู้บาดเจ็บ {n + 1}")
+            set_text(driver, p + "txtInj_Name_AXA", _dash(first or full))
+            set_text(driver, p + "txtInj_LastName_AXA", last)
+            log(f"   ✓ ฟอร์มผู้บาดเจ็บเวอร์ชัน AXA — กรอกชื่อ/นามสกุลแยกช่อง (คนที่ {n + 1})")
 
         # เพศ (0=ชาย M / 1=หญิง F,W)
         # เพศ — ว่างจาก ISURVEY → อนุมานจากคำนำหน้าในชื่อ (fallback)
@@ -747,7 +766,8 @@ def fill_assets(driver, data: ClaimData):
         set_text(driver, p + "txtOwner", _dash(owner))
         if _is_displayed(driver, p + "divAXA"):
             if title:
-                fuzzy_select(driver, p + "ddlAsset_Title_ID", title,
+                fuzzy_select(driver, p + "ddlAsset_Title_ID", EMCS_TITLE.get(title, title),
+                             min_score=TITLE_MIN_SCORE,
                              label=f"คำนำหน้าเจ้าของ {n + 1}", timeout=5)
             set_text(driver, p + "txtAsset_Name_AXA", _dash(first or owner))
             set_text(driver, p + "txtAsset_LastName_AXA", last)   # ไม่ใช่ช่องบังคับ — ว่างได้
@@ -1335,7 +1355,8 @@ def fill_driver(driver, data: ClaimData):
 
     # คำนำหน้าผู้ขับขี่ (บังคับ)
     if title:
-        fuzzy_select(driver, "ddlDri_Title_ID", title,
+        fuzzy_select(driver, "ddlDri_Title_ID", EMCS_TITLE.get(title, title),
+                     min_score=TITLE_MIN_SCORE,
                      label=f"คำนำหน้าผู้ขับขี่ ({source})")
     else:
         log("   ⚠️ หาคำนำหน้าผู้ขับขี่ที่เชื่อถือได้ไม่ได้ (ชื่อไม่ตรงผู้เอาประกัน)")
@@ -1567,7 +1588,9 @@ def _refill_missing_fields(driver, data: ClaimData, alert_text: str) -> bool:
         # ผ่าน _select_car_type เสมอ — ห้ามเปลี่ยนทับค่าที่บันทึกแล้ว (EMCS จะลบข้อมูลทิ้ง)
         "ประเภทรถ": lambda: _select_car_type(driver, data.prb_car_type),
         "คำนำหน้าผู้ขับขี่": lambda: fuzzy_select(
-            driver, "ddlDri_Title_ID", _derive_insured_title(data)[0],
+            driver, "ddlDri_Title_ID",
+            EMCS_TITLE.get(_derive_insured_title(data)[0], _derive_insured_title(data)[0]),
+            min_score=TITLE_MIN_SCORE,
             presleep=1, label="คำนำหน้า (ซ่อม)"),
         # คู่กรณีคันที่ + การเรียกร้องค่าเสียหาย — EMCS ฟ้องคู่กันเมื่อผลคดี = คู่กรณีผิด
         "คู่กรณีคันที่": lambda: _fill_opponent_fault(driver, data),

@@ -1214,6 +1214,57 @@ check("หมวดรูป: zip export ใช้ป้ายเดียวก
       images._TP_EXPORT_LABEL['TP_PERSON'].format(n=2) == 'รูปผู้บาดเจ็บ คนที่2'
       and images._TP_EXPORT_LABEL['TP_PROP'].format(n=2) == 'รูปทรัพย์สิน รายการที่2')
 
+# ---- 22c-7. คำนำหน้า canonical + ตัดอักขระที่ EMCS ไม่รับ (noTyping) ----
+_TITLE_OPTS = ['- คำนำหน้า -', 'นาย', 'นาง', 'นางสาว', 'ด.ช.', 'ด.ญ.', 'คุณ']
+for _t in emcs.THAI_TITLES:
+    _canon = emcs.EMCS_TITLE.get(_t, _t)
+    check(f"คำนำหน้า: '{_t}' → '{_canon}' อยู่ในตัวเลือกจริงของ EMCS", _canon in _TITLE_OPTS)
+# ของเดิม: โยนคำเต็มเข้า fuzzy ได้ผิดแบบเงียบ ('เด็กชาย'→'นาย' 72 ผ่านเกณฑ์ 40)
+check("คำนำหน้า regress: คำเต็มดิบ fuzzy ไปผิดตัว (เหตุผลที่ต้อง map + ตัดที่ 90)",
+      _pc.extractOne('เด็กชาย', _TITLE_OPTS, scorer=_fz.WRatio)[0] == 'นาย'
+      and _pc.extractOne('น.ส.', _TITLE_OPTS, scorer=_fz.WRatio)[0] == 'ด.ช.')
+check("คำนำหน้า: เกณฑ์ 90 — ค่าที่ map แล้วได้ 100 ทุกตัว",
+      all(_pc.extractOne(emcs.EMCS_TITLE.get(t, t), _TITLE_OPTS, scorer=_fz.WRatio)[1] >= 90
+          for t in emcs.THAI_TITLES))
+
+
+class _FakeInput:
+    def __init__(self, onkeypress=""):
+        self._k, self.value = onkeypress, None
+
+    def get_attribute(self, k):
+        return self._k if k == "onkeypress" else None
+
+    def clear(self):
+        pass
+
+    def send_keys(self, v):
+        self.value = v
+
+
+def _run_set_text(val, onkeypress=""):
+    el = _FakeInput(onkeypress)
+    drv = _types.SimpleNamespace(find_element=lambda *a, **k: el,
+                                 execute_script=lambda *a, **k: None)
+    _o = _br.log
+    _br.log = lambda *a, **k: None
+    try:
+        _br.set_text(drv, "txtOwner", val)
+    finally:
+        _br.log = _o
+    return el.value
+
+
+check("noTyping: ช่องที่ EMCS บล็อกอักขระพิเศษ → ตัดออกก่อนส่ง (ค่าตรงกันทุก layout)",
+      _run_set_text('บริษัท ทางด่วนกรุงเทพ จำกัด (มหาชน)', 'return noTyping(event)')
+      == 'บริษัท ทางด่วนกรุงเทพ จำกัด มหาชน')
+check("noTyping: ช่องปกติไม่ถูกแตะ (วงเล็บ/ทับ ยังอยู่ครบ)",
+      _run_set_text('123/45 ซ.ทองหล่อ (ปากซอย)') == '123/45 ซ.ทองหล่อ (ปากซอย)')
+check("noTyping: ตัดแล้วเหลือว่าง → ใส่ '-' (ช่องบังคับ)",
+      _run_set_text('@#$%', 'return noTyping(event)') == '-')
+check("noTyping: จุด/ขีด เป็นอักขระที่ EMCS ยอม — ไม่ถูกตัด",
+      _run_set_text('บจก. เอ-บี', 'return noTyping(event)') == 'บจก. เอ-บี')
+
 # ---- 22d. fuzzy_select guard (end-to-end ด้วย dropdown ปลอม) ----
 # placeholder ของ EMCS ไม่ได้ชื่อ '-- ระบุ --' เหมือนกันทุกช่อง ('-- จังหวัด --',
 # '-- เขต --', '- คำนำหน้า -') → ตัดสินจาก value="0"/"" ของ option ตัวแรกแทน
