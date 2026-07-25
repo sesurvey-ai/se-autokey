@@ -173,16 +173,9 @@ def resolve_loss_type(data, requested: str) -> str:
 
 
 def _is_displayed(driver, elem_id) -> bool:
-    """element โผล่/มองเห็นจริงไหม (บาง layout คู่กรณีซ่อนช่องบางตัวไว้)"""
-    try:
-        return driver.find_element(By.ID, elem_id).is_displayed()
-    except Exception:
-        return False
-
-
-def _is_visible(driver, elem_id) -> bool:
-    """element โผล่บนหน้าจริงไหม — EMCS สลับ layout ด้วยการซ่อน/โชว์ทั้งแถว
-    (เช่นฟอร์มทรัพย์สินเวอร์ชัน AXA) การเช็ค 'มี element' อย่างเดียวไม่พอ"""
+    """element โผล่/มองเห็นจริงไหม — EMCS สลับ layout ด้วยการซ่อน/โชว์ทั้งแถว
+    (บาง layout คู่กรณีซ่อนช่องบางตัว; ฟอร์มทรัพย์สินมีเวอร์ชัน STD/AXA) การเช็คว่า
+    'มี element' อย่างเดียวไม่พอ เพราะแถวที่ซ่อนอยู่ก็ยัง find_element เจอ"""
     try:
         return driver.find_element(By.ID, elem_id).is_displayed()
     except Exception:
@@ -752,12 +745,12 @@ def fill_assets(driver, data: ClaimData):
         owner = a.get("owner_name", "")
         title, first, last = split_thai_name(owner)
         set_text(driver, p + "txtOwner", _dash(owner))
-        if _is_visible(driver, p + "divAXA"):
+        if _is_displayed(driver, p + "divAXA"):
             if title:
                 fuzzy_select(driver, p + "ddlAsset_Title_ID", title,
                              label=f"คำนำหน้าเจ้าของ {n + 1}", timeout=5)
             set_text(driver, p + "txtAsset_Name_AXA", _dash(first or owner))
-            set_text(driver, p + "txtAsset_LastName_AXA", _dash(last))
+            set_text(driver, p + "txtAsset_LastName_AXA", last)   # ไม่ใช่ช่องบังคับ — ว่างได้
             log(f"   ✓ ฟอร์มทรัพย์สินเวอร์ชัน AXA — กรอกชื่อ/นามสกุลแยกช่อง (ชิ้นที่ {n + 1})")
         set_text(driver, p + "txtAddress", a.get("owner_address", ""))
         set_text(driver, p + "txtTel_No", a.get("owner_phone", ""))
@@ -1983,6 +1976,46 @@ def _opponent_image_batches(folder, n_opponents: int, rename: bool = True):
                              rename)
 
 
+def _resolve_image_type(driver, category: str) -> str:
+    """เลือก "ป้ายประเภทรูป" ที่มีอยู่จริงบน ddlImage_Type_Html5 ตอนนี้
+
+    EMCS เพิ่ม option dynamic ต่อรายการ **หลังบันทึก section นั้น** โดยใช้ป้ายฐานคนละคำ
+    กับหมวดในแอป: 'รูปผู้บาดเจ็บ คนที่ N' / 'รูปทรัพย์สิน รายการที่ N' / 'รูปรถคู่กรณี คันที่ N'
+    ลำดับที่ลอง: ป้าย dynamic (ผูกกับรายการที่ N) → ป้ายเต็มของแอป → ป้ายฐาน
+    ไม่มีตัวไหนตรงเลย = คืนป้ายฐาน (เป็น option จริงแน่นอน) แทนที่จะปล่อยให้ fuzzy
+    ไปเกาะ 'คนที่ 1' หรือข้ามฝั่งรถประกัน/คู่กรณีแบบเงียบ ๆ"""
+    cat = (category or "").strip()
+    try:
+        opts = [o.text.strip()
+                for o in Select(driver.find_element(By.ID, "ddlImage_Type_Html5")).options]
+    except Exception:
+        return cat
+    m = re.search(r"\s*(คันที่|คนที่|ชิ้นที่|รายการที่)\s*(\d+)\s*$", cat)
+    base = re.sub(r"\s*(คันที่|คนที่|ชิ้นที่|รายการที่)\s*\d+\s*$", "", cat).strip()
+    cands = []
+    if m:
+        n = m.group(2)
+        if base.startswith("รูปผู้บาดเจ็บ"):
+            cands.append(f"รูปผู้บาดเจ็บ คนที่ {n}")
+        elif base.startswith("รูปทรัพย์สิน"):
+            cands.append(f"รูปทรัพย์สิน รายการที่ {n}")
+        elif base.startswith("รูปรถคู่กรณี"):
+            cands.append(f"รูปรถคู่กรณี คันที่ {n}")
+    cands += [cat, base]
+    for c in cands:
+        if c and c in opts:
+            if c != cat:
+                log(f"   ↪ ประเภทรูป '{cat}' → ใช้ '{c}' (ตัวเลือกที่มีจริงบนหน้า)")
+            return c
+    if m and base in opts:
+        return base
+    if m:
+        log(f"   ⚠️ ไม่มีตัวเลือก '{cat}' บนหน้า (ยังไม่บันทึก{base[3:] or 'รายการ'}?) — "
+            f"ใช้ '{base}' แทน รูปจะไม่ผูกกับรายการที่ {m.group(2)}")
+        return base
+    return cat
+
+
 def _upload_one_batch(driver, paths, image_type: str, html5_ui: bool):
     """[อยู่หน้ารูปแล้ว] เลือกประเภท image_type → ส่ง paths → อัปโหลด → ปิดกล่องผล
     **ไม่ navigate** — ฟอร์มอัปโหลด (ddlImage_Type_Html5) คงอยู่บนหน้ารูปหลังอัป
@@ -1998,8 +2031,8 @@ def _upload_one_batch(driver, paths, image_type: str, html5_ui: bool):
         # หน้าอาจเพิ่ง refresh จากชุดก่อน — รอ dropdown พร้อมก่อน (กัน stale)
         wait_present(driver, By.ID, "ddlImage_Type_Html5", 15)
         # 1) เลือกประเภทรูป → ระบบ enable ช่องเลือกไฟล์ให้
-        fuzzy_select(driver, "ddlImage_Type_Html5", image_type,
-                     label="ประเภทรูป")
+        fuzzy_select(driver, "ddlImage_Type_Html5",
+                     _resolve_image_type(driver, image_type), label="ประเภทรูป")
         WebDriverWait(driver, 10).until(
             lambda d: d.find_element(By.ID, "selectedFile").is_enabled()
         )
@@ -2064,18 +2097,16 @@ def _se_cat_to_emcs(category):
         return cat
     m = re.search(r"\s*(คันที่|คนที่|ชิ้นที่|รายการที่)\s*(\d+)\s*$", cat)
     base = re.sub(r"\s*(คันที่|คนที่|ชิ้นที่|รายการที่)\s*\d+\s*$", "", cat).strip()
+    # ป้าย canonical ของ EMCS เอง ('รูปผู้บาดเจ็บ คนที่ 2' / 'รูปทรัพย์สิน รายการที่ 2')
+    # — มาจากเส้น zip export — ต้องผ่านได้ ไม่ใช่ถูกตีตกเป็น 'รูปประกอบ'
+    if m and base in ("รูปผู้บาดเจ็บ", "รูปทรัพย์สิน"):
+        return cat
     if base in _EMCS_IMAGE_TYPES:
-        # option dynamic ของ EMCS ใช้ "ป้ายฐานคนละคำ" กับหมวดในแอป (ยืนยันหน้าจริง
-        # 2026-06-18): ผู้บาดเจ็บ = 'รูปผู้บาดเจ็บ คนที่ N' (ไม่ใช่ '...รถคู่กรณี คนที่ N')
-        # ทรัพย์สิน = 'รูปทรัพย์สิน รายการที่ N' (ไม่ใช่ '...อื่นๆของคู่กรณี ชิ้นที่ N')
-        # ไม่แปลง = ทุกใบตกไปกองที่ตัวฐาน ไม่ผูกกับคน/ชิ้นที่ N
-        if m:
-            n = m.group(2)
-            if base.startswith("รูปผู้บาดเจ็บ"):
-                return f"รูปผู้บาดเจ็บ คนที่ {n}"
-            if base.startswith("รูปทรัพย์สิน"):
-                return f"รูปทรัพย์สิน รายการที่ {n}"
-        return cat   # คงคำเต็ม — fuzzy จับตัวเลือก 'คันที่ N' ได้ ถ้าไม่มีก็ตกไปตัวฐาน
+        # ⚠️ คงป้ายเต็มของแอปไว้เสมอ — ห้ามเขียนทับเป็นป้าย dynamic ที่นี่ เพราะฟังก์ชันนี้
+        # ไม่เห็น dropdown จริง ถ้า option dynamic ยังไม่โผล่ (section ยังไม่บันทึก) การทิ้ง
+        # คำแยก 'รถประกัน/รถคู่กรณี' จะทำให้ fallback ตกผิดถัง — การเลือกป้าย dynamic ทำที่
+        # _resolve_image_type() ตอนอัปจริง ซึ่งอ่าน option ที่มีอยู่บนหน้าได้
+        return cat
     log(f"   ⚠️ หมวดรูป '{cat}' ไม่ตรงประเภท EMCS — ใช้ '{_EMCS_DEFAULT_IMAGE_TYPE}'")
     return _EMCS_DEFAULT_IMAGE_TYPE
 

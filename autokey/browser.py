@@ -653,6 +653,14 @@ def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
             best = process.extractOne(str(value), options, scorer=fuzz.WRatio)
             text, score = best[0], best[1]
 
+            # ป้ายที่ลงท้ายด้วย "เลขลำดับ" (… คนที่ N / คันที่ N / รายการที่ N) = คนละรายการ
+            # กัน — WRatio ให้ 'คนที่ 12' เกาะ 'คนที่ 1' ได้ถึง 98 → รูปติดผิดคนแบบเงียบ
+            # เลขไม่ตรง = ตัดคะแนนทิ้ง ให้ตกเข้า guard ข้างล่าง (ไม่เลือกให้ หยุดรอคน)
+            _want = re.search(r"(\d+)\s*$", str(value))
+            _got = re.search(r"(\d+)\s*$", text)
+            if _want and (not _got or _got.group(1) != _want.group(1)):
+                score = 0
+
             # กันเลือก placeholder/มั่ว: extractOne คืน "ตัวที่ใกล้สุด" เสมอ แม้ไม่มี
             # ตัวไหนใกล้จริง — เคส #104 ยี่ห้อไทย 'เอ็มจี' เจอ dropdown อังกฤษ ได้ 0
             # คะแนน แล้วโค้ดเดิม "เลือก '-- ระบุ --'" ให้ = ช่องบังคับว่างเงียบ ๆ
