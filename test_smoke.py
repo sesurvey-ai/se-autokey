@@ -956,6 +956,70 @@ _main._populate_third_parties_from_report(_cd2, {"opposing_parties": [{"plate": 
 check("คู่กรณี: ไม่มี kfk/ค่าเสียหาย → ว่าง (ไม่ติ๊ก ไม่กรอก)",
       _cd2.third_parties[0]["has_kfk"] == "" and _cd2.third_parties[0]["cost_damage"] == "")
 
+# ---- 22c-3. ห้ามกด 'ตกลง' กับ confirm ที่ลบข้อมูล + ห้ามเปลี่ยนประเภทรถทับของเดิม ----
+# ของจริงจาก eclaim3 (2026-07-25): เปลี่ยน 'ประเภทรถ' บนเรื่องที่บันทึกแล้ว เด้ง confirm
+# "การแก้ไขต่อไปนี้ จะทำให้ข้อมูลที่เคยบันทึกไว้แล้ว ถูกลบออกทั้งหมด" — กดตกลง = งานหาย
+import autokey.browser as _br  # noqa: E402
+_DESTRUCTIVE_TXT = ("การแก้ไขต่อไปนี้ จะทำให้ข้อมูลที่เคยบันทึกไว้แล้ว ถูกลบออกทั้งหมด "
+                    "คุณต้องการจะแก้ไขข้อมูลหรือไม่?")
+
+
+class _FakeAlert:
+    def __init__(self, text):
+        self.text, self.done = text, None
+
+    def accept(self):
+        self.done = "accept"
+
+    def dismiss(self):
+        self.done = "dismiss"
+
+
+def _run_alert(text):
+    al = _FakeAlert(text)
+    drv = _types.SimpleNamespace(switch_to=_types.SimpleNamespace(alert=al))
+    _o = _br.WebDriverWait
+    _br.WebDriverWait = lambda *a, **k: _types.SimpleNamespace(until=lambda f: True)
+    try:
+        _br.accept_alert(drv, timeout=1)
+        return al.done, None
+    except _br.DestructiveAlert as e:
+        return al.done, e
+    finally:
+        _br.WebDriverWait = _o
+
+
+_d, _exc = _run_alert(_DESTRUCTIVE_TXT)
+check("alert: confirm ที่ลบข้อมูล → กด 'ยกเลิก' + โยน DestructiveAlert (ไม่กดตกลง)",
+      _d == "dismiss" and isinstance(_exc, _br.DestructiveAlert))
+_d2, _exc2 = _run_alert("บันทึกการแก้ไขเรียบร้อยแล้ว")
+check("alert: alert ปกติยังกด 'ตกลง' ตามเดิม", _d2 == "accept" and _exc2 is None)
+_d3, _ = _run_alert("กรุณาระบุ ยี่ห้อรถ")
+check("alert: คำเตือน validation ยังกด 'ตกลง' (ไม่ใช่ข้อความทำลายข้อมูล)", _d3 == "accept")
+
+
+def _run_ctype(current, want):
+    """เรียก _select_car_type จริง โดยปลอมค่าที่อยู่ในช่อง — คืน (เรียก fuzzy_select ไหม)"""
+    called = []
+    _o = (emcs._current_select_text, emcs.fuzzy_select)
+    emcs._current_select_text = lambda *a, **k: current
+    emcs.fuzzy_select = lambda *a, **k: called.append(a[2]) or (a[2], 100)
+    try:
+        emcs._select_car_type(object(), want)
+    finally:
+        (emcs._current_select_text, emcs.fuzzy_select) = _o
+    return called
+
+
+check("ประเภทรถ: ช่องว่าง → เลือกให้ตามปกติ", _run_ctype("", "กระบะ") == ["กระบะ"])
+check("ประเภทรถ: placeholder → เลือกให้ตามปกติ",
+      _run_ctype("-- ระบุ --", "กระบะ") == ["กระบะ"])
+check("ประเภทรถ: ค่าเดิมตรงอยู่แล้ว → ไม่แตะ (ไม่ยิง onchange = ไม่มี confirm)",
+      _run_ctype("กระบะ", "กระบะ") == [])
+check("ประเภทรถ: ค่าเดิมไม่ตรง → ⛔ ไม่เปลี่ยนทับ (EMCS จะลบข้อมูลที่บันทึกไว้)",
+      _run_ctype("เก๋งเอเชีย", "เก๋งยุโรป") == [])
+check("ประเภทรถ: มีค่าเดิม แต่ต้นทางว่าง → ไม่แตะ", _run_ctype("รถตู้", "") == [])
+
 # ---- 22d. fuzzy_select guard (end-to-end ด้วย dropdown ปลอม) ----
 # placeholder ของ EMCS ไม่ได้ชื่อ '-- ระบุ --' เหมือนกันทุกช่อง ('-- จังหวัด --',
 # '-- เขต --', '- คำนำหน้า -') → ตัดสินจาก value="0"/"" ของ option ตัวแรกแทน

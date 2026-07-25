@@ -1,6 +1,7 @@
 """Chrome driver + helper กลางที่ใช้ร่วมกันทั้งฝั่ง ISURVEY และ EMCS"""
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -181,14 +182,38 @@ def wait_loading_gone(driver, timeout=30):
     WebDriverWait(driver, timeout).until(_gone)
 
 
+# confirm ที่ "กดตกลงแล้วข้อมูลหาย" — ห้ามกดตกลงอัตโนมัติเด็ดขาด ให้กดยกเลิกแทน
+# ของจริงจาก eclaim3 (เจอตอนเปลี่ยน 'ประเภทรถ' บนเรื่องที่บันทึกแล้ว 2026-07-25):
+#   "การแก้ไขต่อไปนี้ จะทำให้ข้อมูลที่เคยบันทึกไว้แล้ว ถูกลบออกทั้งหมด
+#    คุณต้องการจะแก้ไขข้อมูลหรือไม่?"
+_DESTRUCTIVE_ALERT = re.compile(
+    r"ถูกลบออกทั้งหมด|ข้อมูล.{0,20}(จะ)?ถูกลบ|ลบข้อมูล.{0,20}ทั้งหมด|จะถูกลบ")
+
+
+class DestructiveAlert(Exception):
+    """เจอ confirm ที่กดตกลงแล้วข้อมูลหาย — กดยกเลิกไปแล้ว ให้คนตัดสินใจเอง"""
+
+    def __init__(self, text):
+        super().__init__(text)
+        self.text = text
+
+
 def accept_alert(driver, timeout=30) -> str:
     """รอ alert ขึ้น กดตกลง และคืนข้อความใน alert (พร้อม log)
-    — ข้อความนี้สำคัญ: ถ้าเป็นคำเตือน validation จะบอกว่ากรอกอะไรไม่ครบ"""
+    — ข้อความนี้สำคัญ: ถ้าเป็นคำเตือน validation จะบอกว่ากรอกอะไรไม่ครบ
+
+    ⛔ ถ้าเป็น confirm แนว "ข้อมูลที่บันทึกไว้จะถูกลบทั้งหมด" จะ **กดยกเลิก**
+    แล้วโยน DestructiveAlert — บอทไม่มีสิทธิ์ทำลายงานที่คนกรอกไว้"""
     WebDriverWait(driver, timeout).until(EC.alert_is_present())
     alert = driver.switch_to.alert
     text = (alert.text or "").strip()
     if text:
         log(f"   [alert] {text[:400]}")
+    if _DESTRUCTIVE_ALERT.search(text):
+        alert.dismiss()
+        log("   ⛔ confirm นี้กดตกลงแล้วข้อมูลที่บันทึกไว้จะหาย — กด 'ยกเลิก' แทน "
+            "(ให้คนตัดสินใจเองบนหน้าจอ)")
+        raise DestructiveAlert(text)
     alert.accept()
     return text
 

@@ -20,6 +20,7 @@ from selenium.webdriver.support.ui import Select, WebDriverWait
 
 from .browser import (
     _current_select_text,
+    _is_placeholder_option,
     accept_alert,
     click_retry,
     fuzzy_select,
@@ -1151,6 +1152,30 @@ def fill_policy(driver, data: ClaimData):
     set_text(driver, "txtPolicy_Type", data.insure_type)
 
 
+def _select_car_type(driver, car_type):
+    """เลือก 'ประเภทรถ' (ddlCType) — แต่ห้ามเปลี่ยนทับค่าที่บันทึกไว้แล้ว
+
+    ⛔ ของจริงจาก eclaim3: เปลี่ยนประเภทรถบนเรื่องที่บันทึกแล้ว จะเด้ง confirm
+    "การแก้ไขต่อไปนี้ จะทำให้ข้อมูลที่เคยบันทึกไว้แล้ว ถูกลบออกทั้งหมด" — กดตกลง =
+    งานที่หัวหน้ากรอกไว้หายหมด. บอทจึงเลือกได้เฉพาะตอนช่องยัง "ว่าง/placeholder"
+    เท่านั้น; ถ้ามีค่าอยู่แล้วและไม่ตรง = แจ้งให้คนแก้เอง (เป็นช่องบังคับที่คนตรวจอยู่แล้ว)
+    ที่ผ่านมารอดเพราะค่ามักตรงกันพอดี (เลือกค่าเดิม = ไม่ยิง onchange = ไม่มี confirm)"""
+    cur = _current_select_text(driver, "ddlCType").strip()
+    want = str(car_type or "").strip()
+    if cur and not _is_placeholder_option(cur):
+        if not want:
+            log(f"   - ประเภทรถ: มีค่าอยู่แล้ว ('{cur}') และต้นทางว่าง — ไม่แตะ")
+            return
+        if cur == want:
+            log(f"   ✓ ประเภทรถ: '{cur}' ตรงกับข้อมูลอยู่แล้ว — ไม่ต้องเปลี่ยน")
+            return
+        log(f"   ⛔ ประเภทรถบนเรื่องเป็น '{cur}' แต่ข้อมูลว่า '{want}' — "
+            "ไม่เปลี่ยนให้ (EMCS จะลบข้อมูลที่บันทึกไว้ทั้งหมด) แก้เองบนหน้าจอถ้าจำเป็น")
+        return
+    fuzzy_select(driver, "ddlCType", want, presleep=1,
+                 label="ประเภทรถ", required=True)
+
+
 def _select_car_brand(driver, car_brand, label="ยี่ห้อรถ"):
     """เลือก 'ยี่ห้อรถ' (ddlCMFG) ให้ทน race ของ cascade ประเภทรถ→ยี่ห้อ:
     ตัวเลือกยี่ห้อถูกโหลดจาก onchange postback ของ ddlCType ซึ่งบางครั้ง commit ไม่ทัน
@@ -1197,8 +1222,7 @@ def fill_car(driver, data: ClaimData):
     # ประเภทรถ + รอ list โหลดจริง ก่อนแตะจังหวัด (เลียนแบบฝั่งคู่กรณีที่ทำงานถูก emcs.py:260-287);
     # ลำดับเดิม (จังหวัดคั่นกลาง + presleep=1) ทำ postback ยี่ห้อ commit ไม่ทัน → ยี่ห้อว่าง
     # ประเภทรถ/จังหวัดรถ/ยี่ห้อรถ = field บังคับ (required) → ว่าง/เลือกไม่ได้ หยุดรอคน
-    fuzzy_select(driver, "ddlCType", data.prb_car_type, presleep=1,
-                 label="ประเภทรถ", required=True)
+    _select_car_type(driver, data.prb_car_type)
     _select_car_brand(driver, data.car_brand)   # รอ+guard+ยิง onchange ซ้ำถ้า list ยังว่าง
     fuzzy_select(driver, "ddlCar_Province", data.plate_province, presleep=1,
                  label="จังหวัดรถ", required=True)
