@@ -1369,6 +1369,83 @@ def fill_verdict(driver, data: ClaimData):
     label, score = best[0], best[1]
     log(f"   ✓ ผลคดี: '{data.acc_result}' → '{label}' (score {score:.0f})")
     driver.find_element(By.ID, CAUSE_RADIO[label]).click()
+    if CAUSE_RADIO[label] == "rdoAcc_Cause01":
+        _fill_opponent_fault(driver, data)
+
+
+# การเรียกร้องค่าเสียหายจากคู่กรณี (chkOpo_Result_0..4) — ติ๊กด้วย index จึงไม่ต้องแคร์
+# ว่าป้ายฝั่งแอปกับ EMCS สะกดต่างกัน (รับได้ทั้งคำเก่าของแอปและป้าย EMCS)
+OPO_RESULT_IDX = {
+    "คัดประจำวัน": 0,
+    "รับหลักฐานจากคู่กรณีผิด": 1, "รับหลักฐานจากคู่กรณี": 1,
+    "บันทึกยอมรับผิด": 2,
+    "บัตรติดต่อ": 3,
+    "รับเงิน": 4, "รับเงินจำนวน": 4,
+}
+
+
+def _fill_opponent_fault(driver, data: ClaimData):
+    """ผลคดี = 'รถคู่กรณีเป็นฝ่ายผิด' → EMCS บังคับ (vlidSurvey) 2 อย่างพร้อมกัน:
+    'คู่กรณีคันที่' (txtAcc_Cause_No) + ติ๊ก 'การเรียกร้องค่าเสียหายจากคู่กรณี'
+    อย่างน้อย 1 ใน 5 (chkOpo_Result_0..4) — ไม่ครบ = กดบันทึกไม่ผ่าน คนต้องมาเติมเอง
+
+    ⚠️ ต้อง .click() จริง (ห้าม set .checked ผ่าน JS) เพราะ onclick ของ EMCS เป็นตัว
+    ปลดล็อกช่อง txtOpo_Pay/txtOpo_Recovery_Amount ถ้าไม่ยิง set_text จะไม่เข้า"""
+    # 1) คู่กรณีคันที่ — ใช้ค่าจากรายงานถ้ามี; ไม่มีแต่มีคู่กรณีคันเดียว = คันที่ 1 แน่นอน
+    no = str(getattr(data, "acc_fault_opponent_no", "") or "").strip()
+    if not no and len(data.third_parties or []) == 1:
+        no = "1"
+    if no:
+        set_text(driver, "txtAcc_Cause_No", no)
+        log(f"   ✓ คู่กรณีคันที่ = {no}")
+    else:
+        log(f"   ⚠️ ไม่รู้ว่าคู่กรณีคันไหนผิด (มี {len(data.third_parties or [])} คัน) — "
+            "กรอก 'คู่กรณีคันที่' เองบนหน้าจอ (EMCS บังคับ)")
+
+    # 2) การเรียกร้องค่าเสียหายจากคู่กรณี
+    picked = [s.strip() for s in str(data.opo_results or "").split(",") if s.strip()]
+    if not picked:
+        log("   ⚠️ ไม่มีข้อมูล 'การเรียกร้องค่าเสียหายจากคู่กรณี' — ติ๊กเองบนหน้าจอ "
+            "(EMCS บังคับอย่างน้อย 1 ข้อ; บอทไม่ติ๊กมั่วแทนเซอร์เวย์)")
+        return
+    for t in picked:
+        idx = OPO_RESULT_IDX.get(t)
+        if idx is None:
+            log(f"   ⚠️ ไม่รู้จักตัวเลือก '{t}' — ข้าม (ติ๊กเองถ้าจำเป็น)")
+            continue
+        if idx == 4 and not _opo_amounts_ok(data):
+            continue
+        try:
+            cb = driver.find_element(By.ID, f"chkOpo_Result_{idx}")
+            if not cb.is_selected():
+                cb.click()
+            log(f"   ☑ {t}")
+        except Exception as e:
+            log(f"   ⚠️ ติ๊ก '{t}' ไม่ได้ ({type(e).__name__}) — ติ๊กเองบนหน้าจอ")
+            continue
+        if idx == 4:      # ติ๊ก 'รับเงินจำนวน' แล้ว EMCS บังคับ 2 ช่องเงินนี้
+            set_text(driver, "txtOpo_Pay", data.opo_pay)
+            set_text(driver, "txtOpo_Recovery_Amount", data.opo_recovery)
+            log(f"   ✓ รับเงิน {data.opo_pay} จากเรียกร้องทั้งหมด {data.opo_recovery}")
+
+
+def _opo_amounts_ok(data: ClaimData) -> bool:
+    """ติ๊ก 'รับเงินจำนวน' ได้ต่อเมื่อมีเงินครบทั้ง 2 ช่องและ รับ ≤ เรียกร้องทั้งหมด
+    (EMCS validate ข้อนี้ — ติ๊กแล้วเงินไม่ผ่าน = บันทึก draft ไม่ได้เลย)"""
+    pay, total = str(data.opo_pay or "").strip(), str(data.opo_recovery or "").strip()
+    if not pay or not total:
+        log("   ⚠️ ข้าม 'รับเงินจำนวน' — ไม่มีตัวเลขรับเงิน/เรียกร้องทั้งหมด "
+            "(ติ๊กแล้ว EMCS จะบล็อกการบันทึก)")
+        return False
+    try:
+        if float(pay) > float(total):
+            log(f"   ⚠️ ข้าม 'รับเงินจำนวน' — รับเงิน {pay} มากกว่าเรียกร้องทั้งหมด {total} "
+                "(EMCS ไม่ยอม) ตรวจตัวเลขแล้วติ๊กเอง")
+            return False
+    except ValueError:
+        log(f"   ⚠️ ข้าม 'รับเงินจำนวน' — ตัวเลขอ่านไม่ออก ({pay!r}/{total!r})")
+        return False
+    return True
 
 
 def _refill_missing_fields(driver, data: ClaimData, alert_text: str) -> bool:
@@ -1384,12 +1461,14 @@ def _refill_missing_fields(driver, data: ClaimData, alert_text: str) -> bool:
         "เขต/อำเภอ ที่เกิดเหตุ": lambda: fuzzy_select(
             driver, "ddlAcc_DistrictID", data.acc_amphur,
             presleep=1, label="อำเภอเกิดเหตุ (ซ่อม)"),
-        "ประเภทรถ": lambda: fuzzy_select(
-            driver, "ddlCType", data.prb_car_type,
-            presleep=1, label="ประเภทรถ (ซ่อม)"),
+        # ผ่าน _select_car_type เสมอ — ห้ามเปลี่ยนทับค่าที่บันทึกแล้ว (EMCS จะลบข้อมูลทิ้ง)
+        "ประเภทรถ": lambda: _select_car_type(driver, data.prb_car_type),
         "คำนำหน้าผู้ขับขี่": lambda: fuzzy_select(
             driver, "ddlDri_Title_ID", _derive_insured_title(data)[0],
             presleep=1, label="คำนำหน้า (ซ่อม)"),
+        # คู่กรณีคันที่ + การเรียกร้องค่าเสียหาย — EMCS ฟ้องคู่กันเมื่อผลคดี = คู่กรณีผิด
+        "คู่กรณีคันที่": lambda: _fill_opponent_fault(driver, data),
+        "การเรียกร้องค่าเสียหายจากคู่กรณี": lambda: _fill_opponent_fault(driver, data),
     }
     fixed = False
     for keyword, fixer in fixers.items():

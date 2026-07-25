@@ -676,6 +676,11 @@ def _populate_claim_from_report(data, rep):
     data.acc_date = gv('acc_date')
     data.acc_time = gv('acc_time')
     data.acc_result = gv('acc_fault')
+    # EMCS บังคับ 2 อย่างนี้เมื่อผลคดี = "รถคู่กรณีเป็นฝ่ายผิด" — ไม่มี = save draft ไม่ผ่าน
+    data.acc_fault_opponent_no = gv('acc_fault_opponent_no')
+    data.opo_results = gv('acc_claim_opponent')          # comma-separated จากแอป
+    data.opo_pay = _money(gv('acc_claim_amount'))
+    data.opo_recovery = _money(gv('acc_claim_total_amount'))
     # ความเห็น/ผลสำรวจ → EMCS หน้าหลัก (ช่องมาร์ค 'not used' แต่ user ขอให้เติม; se-survey มีข้อความครบ)
     # ยุบ \n → เว้นวรรค: txtAcc_result/txtAcc_Comment เป็น input บรรทัดเดียว — ส่ง \n ผ่าน send_keys
     # = กด Enter อาจ trigger postback ก่อนเวลา

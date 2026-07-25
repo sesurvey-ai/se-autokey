@@ -1020,6 +1020,77 @@ check("ประเภทรถ: ค่าเดิมไม่ตรง → ⛔
       _run_ctype("เก๋งเอเชีย", "เก๋งยุโรป") == [])
 check("ประเภทรถ: มีค่าเดิม แต่ต้นทางว่าง → ไม่แตะ", _run_ctype("รถตู้", "") == [])
 
+# ---- 22c-4. ผลคดี 'คู่กรณีผิด' → คู่กรณีคันที่ + การเรียกร้องค่าเสียหาย (EMCS บังคับ) ----
+# vlidSurvey(): rdoAcc_Cause01 ติ๊ก → ต้องมี txtAcc_Cause_No + chkOpo_Result_ อย่างน้อย 1/5
+class _FakeCb:
+    def __init__(self, sel=False):
+        self.sel, self.clicks = sel, 0
+
+    def is_selected(self):
+        return self.sel
+
+    def click(self):
+        self.clicks += 1
+        self.sel = not self.sel
+
+
+def _run_opo_fault(**kw):
+    """เรียก _fill_opponent_fault จริง — คืน (ข้อความที่พิมพ์ลงช่อง, checkbox ที่ถูกติ๊ก)"""
+    texts, boxes = {}, {i: _FakeCb() for i in range(5)}
+    d = claim_data.ClaimData()
+    for k, v in kw.items():
+        setattr(d, k, v)
+    _o = (emcs.set_text, emcs.log)
+    emcs.set_text = lambda drv, eid, val: texts.__setitem__(eid, val)
+    emcs.log = lambda *a, **k: None
+    drv = _types.SimpleNamespace(
+        find_element=lambda by, eid: boxes[int(eid.rsplit('_', 1)[1])])
+    try:
+        emcs._fill_opponent_fault(drv, d)
+    finally:
+        (emcs.set_text, emcs.log) = _o
+    return texts, [i for i, b in boxes.items() if b.sel]
+
+
+# ค่า 'ฝ่ายประมาท' ทั้ง 7 ตัวของแอป ต้อง fuzzy ไปลง radio ที่ถูกต้อง (โดยเฉพาะ
+# 'คู่กรณีผิด' ต้องไม่ไปลง 'รถประกันเป็นฝ่ายผิด' ซึ่งหน้าตาใกล้กันมาก)
+for _v, _rid in (('ฝ่ายผิด', 'rdoAcc_Cause00'), ('คู่กรณีผิด', 'rdoAcc_Cause01'),
+                 ('ประมาทร่วม', 'rdoAcc_Cause02'), ('รอสรุปผลคดี', 'rdoAcc_Cause03'),
+                 ('ฝ่ายถูกและผิด', 'rdoAcc_Cause04'), ('ยกเลิกการเคลม', 'rdoAcc_Cause05'),
+                 ('ไปถึงแล้วไม่พบ', 'rdoAcc_Cause06')):
+    _hit = _pc.extractOne(_v, list(emcs.CAUSE_RADIO.keys()), scorer=_fz.WRatio)
+    check(f"ผลคดี: '{_v}' → {_rid}", emcs.CAUSE_RADIO[_hit[0]] == _rid)
+
+_tx, _bx = _run_opo_fault(acc_fault_opponent_no='2', opo_results='คัดประจำวัน,บัตรติดต่อ')
+check("คู่กรณีผิด: กรอก 'คู่กรณีคันที่' ตามข้อมูล + ติ๊กตรง index",
+      _tx.get('txtAcc_Cause_No') == '2' and _bx == [0, 3])
+_tx, _bx = _run_opo_fault(third_parties=[{'plate_no': '1กก1'}], opo_results='บันทึกยอมรับผิด')
+check("คู่กรณีผิด: ไม่มีเลขคัน แต่มีคู่กรณีคันเดียว → เติม '1' ให้เอง",
+      _tx.get('txtAcc_Cause_No') == '1' and _bx == [2])
+_tx, _bx = _run_opo_fault(third_parties=[{'plate_no': 'ก'}, {'plate_no': 'ข'}],
+                          opo_results='คัดประจำวัน')
+check("คู่กรณีผิด: คู่กรณีหลายคัน + ไม่รู้เลขคัน → ไม่เดา (ปล่อยให้คนกรอก)",
+      'txtAcc_Cause_No' not in _tx and _bx == [0])
+_tx, _bx = _run_opo_fault(acc_fault_opponent_no='1', opo_results='')
+check("คู่กรณีผิด: ไม่มีข้อมูลติ๊ก → ไม่ติ๊กมั่วแทนเซอร์เวย์", _bx == [])
+# ป้ายฝั่งแอปกับ EMCS สะกดต่างกัน 2 ตัว — ติ๊กด้วย index จึงต้องเข้าได้ทั้งคู่
+_, _bx1 = _run_opo_fault(acc_fault_opponent_no='1', opo_results='รับหลักฐานจากคู่กรณีผิด')
+_, _bx2 = _run_opo_fault(acc_fault_opponent_no='1', opo_results='รับหลักฐานจากคู่กรณี')
+check("คู่กรณีผิด: รับได้ทั้งป้ายแอปและป้าย EMCS (index เดียวกัน)", _bx1 == [1] and _bx2 == [1])
+
+# 'รับเงินจำนวน' (index 4) — EMCS บังคับ 2 ช่องเงิน และ รับเงิน <= เรียกร้องทั้งหมด
+_tx, _bx = _run_opo_fault(acc_fault_opponent_no='1', opo_results='รับเงิน',
+                          opo_pay='5000', opo_recovery='17000')
+check("รับเงินจำนวน: เงินครบและไม่เกิน → ติ๊ก + กรอก 2 ช่องเงิน",
+      _bx == [4] and _tx.get('txtOpo_Pay') == '5000'
+      and _tx.get('txtOpo_Recovery_Amount') == '17000')
+_tx, _bx = _run_opo_fault(acc_fault_opponent_no='1', opo_results='รับเงิน', opo_pay='5000')
+check("รับเงินจำนวน: ขาดยอดเรียกร้องทั้งหมด → ไม่ติ๊ก (กันบันทึก draft ไม่ผ่าน)",
+      _bx == [] and 'txtOpo_Pay' not in _tx)
+_tx, _bx = _run_opo_fault(acc_fault_opponent_no='1', opo_results='รับเงิน',
+                          opo_pay='20000', opo_recovery='17000')
+check("รับเงินจำนวน: รับเงินมากกว่ายอดเรียกร้อง → ไม่ติ๊ก (EMCS ไม่ยอม)", _bx == [])
+
 # ---- 22d. fuzzy_select guard (end-to-end ด้วย dropdown ปลอม) ----
 # placeholder ของ EMCS ไม่ได้ชื่อ '-- ระบุ --' เหมือนกันทุกช่อง ('-- จังหวัด --',
 # '-- เขต --', '- คำนำหน้า -') → ตัดสินจาก value="0"/"" ของ option ตัวแรกแทน

@@ -80,6 +80,12 @@ class ClaimData:
     acc_type_desc: str = ""        # สาเหตุการเกิดเหตุ
     acc_detail: str = ""           # รายละเอียดการเกิดเหตุ
     acc_result: str = ""           # ผลคดี
+    # ── กลุ่มที่ EMCS "บังคับ" เมื่อผลคดี = รถคู่กรณีเป็นฝ่ายผิด (rdoAcc_Cause01) ──
+    # vlidSurvey(): ต้องมี txtAcc_Cause_No + ติ๊ก chkOpo_Result_ อย่างน้อย 1 ใน 5
+    acc_fault_opponent_no: str = ""  # คู่กรณีคันที่ (txtAcc_Cause_No)
+    opo_results: str = ""          # การเรียกร้องค่าเสียหายจากคู่กรณี (คั่นด้วย , )
+    opo_pay: str = ""              # รับเงินจำนวน (txtOpo_Pay)
+    opo_recovery: str = ""         # จากจำนวนเงินเรียกร้องทั้งหมด (txtOpo_Recovery_Amount)
 
     # ---- Tab 3: Insurance info ----
     insure_plate: str = ""         # ทะเบียนรถ
