@@ -527,9 +527,22 @@ def run_import_xml(cfg, args):
         raise
 
 
-# ประเภทรถ code (se-survey) → ชื่อไทย (fuzzy_select กับ ddlCType ของ EMCS ใช้ชื่อไทย ไม่ใช่ code)
-_CAR_TYPE_TH = {'A': 'เก๋ง', 'E': 'เก๋ง', 'M': 'รถจักรยานยนต์', 'O': 'อื่นๆ',
+# ประเภทรถ code (se-survey) → ป้าย ddlCType ของ EMCS แบบ verbatim (fuzzy_select ใช้ชื่อไทย ไม่ใช่ code)
+# ⚠️ ห้ามย่อ: เดิม A และ E เป็น 'เก๋ง' เหมือนกัน → WRatio ได้ 90 เท่ากันเป๊ะทั้ง 'เก๋งเอเชีย' และ
+# 'เก๋งยุโรป' → extractOne คืนตัวแรกเสมอ = รถยุโรปกลายเป็นเก๋งเอเชียทุกคัน แล้วลิสต์ยี่ห้อที่
+# cascade มาก็เป็นของเอเชีย (ไม่มี BENZ/BMW/AUDI) → ช่องยี่ห้อ (บังคับ) ว่างต้องรอคนเลือก
+_CAR_TYPE_TH = {'A': 'เก๋งเอเชีย', 'E': 'เก๋งยุโรป', 'M': 'รถจักรยานยนต์', 'O': 'รถอื่นๆ',
                 'T': 'กระบะ', 'V': 'รถตู้', 'W': 'รถบรรทุก'}
+
+
+def _money(v) -> str:
+    """ค่าเงินจาก se-survey → รูปแบบที่ EMCS รับ (num() ใช้ regex ^\\d+$ | ^\\d+\\.\\d+$
+    ไม่ผ่าน = EMCS ล้างช่องทิ้งเงียบ ๆ, maxlength=10). กู้ไม่ได้ → '' (set_text ข้ามให้)"""
+    s = str(v or "").replace(",", "").replace(" ", "").strip().rstrip(".")
+    if not s or not re.fullmatch(r"\d+(\.\d+)?", s):
+        return ""
+    s = s.rstrip("0").rstrip(".") if "." in s else s     # 8000.00 → 8000
+    return s if len(s) <= 10 else ""
 
 # ── ความเสียหาย (แผนภาพมือถือ) → รายการที่ fill_damage_list/fill_opponent_damage กรอกได้ ──
 _DMG_POS_TH = {'L': 'ซ้าย', 'R': 'ขวา', 'A': ''}          # pos → ต่อท้ายชื่อชิ้นส่วน (ให้ EMCS อ่านซ้าย/ขวา)
@@ -597,6 +610,11 @@ def _populate_third_parties_from_report(data, rep):
             # ความเสียหายคู่กรณี (แผนภาพมือถือ) → fill_opponent_damage (ต่อคัน ≤ MAX_DAMAGE_ITEMS)
             # เดิมไม่ใส่ key นี้ → tp.get('damages') ว่าง → ฟอร์มความเสียหายคู่กรณีเปล่าทุกคัน
             "damages": [{"part": p, "level": r} for p, r in _report_damage_items(o.get("damage"))],
+            # ค่าเสียหายประมาณ + เข้าสัญญา KFK — มือถือเก็บครบและ XML ก็มี (COST_DAMAGE/HAS_KFK)
+            # แต่ dict นี้เขียนทับ third_parties ที่ enrich จาก XML → เดิมตกไปทั้งคู่
+            # (emcs.py:374/377 อ่าน cost_damage / has_kfk) = ช่องเงินว่าง + ไม่เคยติ๊ก KFK
+            "cost_damage": _money(o.get("estimated_cost")),
+            "has_kfk": "1" if o.get("kfk") is True else "",
         }
         # คงรหัสจากXML: จังหวัด/อำเภอ (ddlDri_*ID) + ประเภทใบขับขี่ (ddlEmcs_License_Type)
         # — fill_third_parties เลือกด้วยรหัส ไม่ใช่ชื่อไทย; report ให้ label ตัดออก ต้องดึงจาก XML

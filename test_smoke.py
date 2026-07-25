@@ -917,6 +917,45 @@ check("brand-score: ค่าที่ถูกต้องยังผ่าน
       _pc.extractOne("TOYOTA", _EMCS_BRANDS, scorer=_fz.WRatio)[1] >= _BMS
       and _pc.extractOne("MG 3", _EMCS_BRANDS, scorer=_fz.WRatio)[1] >= _BMS)
 
+# ---- 22c-2. ประเภทรถ + ค่าเสียหาย/KFK คู่กรณี (จากผลตรวจฟิลด์เทียบ master EMCS) ----
+# ป้ายจริงของ ddlCType (สกัดจากหน้า EMCS ที่เซฟไว้) — code ฝั่งแอปต้อง map มาให้ตรง verbatim
+_EMCS_CTYPE = ['เก๋งเอเชีย', 'เก๋งยุโรป', 'รถจักรยานยนต์', 'รถอื่นๆ', 'กระบะ', 'รถตู้', 'รถบรรทุก']
+check("car_type: map ครบ 7 code และเป็นป้าย EMCS verbatim",
+      sorted(_main._CAR_TYPE_TH.values()) == sorted(_EMCS_CTYPE))
+# เดิม A/E = 'เก๋ง' ทั้งคู่ → WRatio 90 เท่ากันเป๊ะ → extractOne คืนตัวแรก = เก๋งเอเชียเสมอ
+_tie = _pc.extractOne('เก๋ง', _EMCS_CTYPE, scorer=_fz.WRatio)
+check("car_type regress: 'เก๋ง' ย่อ ๆ แยกเอเชีย/ยุโรปไม่ออก (คะแนนเท่ากัน)",
+      _fz.WRatio('เก๋ง', 'เก๋งเอเชีย') == _fz.WRatio('เก๋ง', 'เก๋งยุโรป') and _tie[0] == 'เก๋งเอเชีย')
+for _c, _lbl in _main._CAR_TYPE_TH.items():
+    _m = _pc.extractOne(_lbl, _EMCS_CTYPE, scorer=_fz.WRatio)
+    check(f"car_type: '{_c}' → '{_lbl}' เลือกได้ตรงตัว (score {_m[1]:.0f})",
+          _m[0] == _lbl and _m[1] >= 99)
+
+check("money: ทศนิยม/คอมมา/จุดท้าย → รูปแบบที่ EMCS รับ",
+      _main._money("17,000") == "17000" and _main._money("8000.00") == "8000"
+      and _main._money("8000.") == "8000" and _main._money("1234.5") == "1234.5")
+check("money: ค่าพัง/ยาวเกิน maxlength 10 → '' (ดีกว่าโดน EMCS ล้างทิ้งเงียบ ๆ)",
+      _main._money("1.2.3") == "" and _main._money("abc") == ""
+      and _main._money(None) == "" and _main._money("12345678901") == "")
+
+# คู่กรณี: ค่าเสียหายประมาณ + KFK เคยตกหายเพราะ dict นี้เขียนทับ third_parties ที่ enrich จาก XML
+_cd = claim_data.ClaimData()
+_cd.third_parties = [{"province_id": "2", "district_id": "227", "lic_type": "10"}]
+_main._populate_third_parties_from_report(_cd, {"opposing_parties": [{
+    "plate": "6กย5970", "car_type": "เก๋งเอเชีย", "car_brand": "นิสสัน",
+    "estimated_cost": "17,000", "kfk": True, "first_name": "สมเกียรติ"}]})
+_tp0 = _cd.third_parties[0]
+check("คู่กรณี: ค่าเสียหายประมาณถูกส่งต่อ (estimated_cost → cost_damage)",
+      _tp0["cost_damage"] == "17000")
+check("คู่กรณี: KFK ติ๊กได้ (kfk=True → has_kfk ที่ emcs.py รับ)",
+      str(_tp0["has_kfk"]).upper() in ("Y", "YES", "1", "TRUE"))
+check("คู่กรณี: ไม่ติ๊ก KFK ถ้าไม่ได้เลือก + ยังคงรหัสจังหวัด/อำเภอจาก XML",
+      _tp0["province_id"] == "2" and _tp0["district_id"] == "227")
+_cd2 = claim_data.ClaimData()
+_main._populate_third_parties_from_report(_cd2, {"opposing_parties": [{"plate": "1กก1"}]})
+check("คู่กรณี: ไม่มี kfk/ค่าเสียหาย → ว่าง (ไม่ติ๊ก ไม่กรอก)",
+      _cd2.third_parties[0]["has_kfk"] == "" and _cd2.third_parties[0]["cost_damage"] == "")
+
 # ---- 22d. fuzzy_select guard (end-to-end ด้วย dropdown ปลอม) ----
 # placeholder ของ EMCS ไม่ได้ชื่อ '-- ระบุ --' เหมือนกันทุกช่อง ('-- จังหวัด --',
 # '-- เขต --', '- คำนำหน้า -') → ตัดสินจาก value="0"/"" ของ option ตัวแรกแทน
