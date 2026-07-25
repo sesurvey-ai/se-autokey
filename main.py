@@ -591,6 +591,7 @@ def _populate_third_parties_from_report(data, rep):
             "veh_type": str(o.get("car_type") or "").strip(),
             "car_brand": str(o.get("car_brand") or "").strip(),
             "car_model": str(o.get("car_model") or "").strip(),
+            "car_color": str(o.get("car_color") or "").strip(),
             "chassis_no": str(o.get("vin") or o.get("chassis_no") or "").strip(),
             "drv_name": f"{first} {last}".strip(),
             "opo_name": str(o.get("owner_name") or "").strip(),

@@ -278,6 +278,10 @@ def fill_third_parties(driver, data: ClaimData):
         else:
             log(f"   - ข้ามยี่ห้อรถคู่กรณี {n + 1} (เลือกประเภทรถก่อน ตัวเลือกยี่ห้อถึงจะขึ้น)")
         set_text(driver, p + "txtCModel", tp.get("car_model", ""))
+        # สีรถคู่กรณี — เดิมไม่เคยแตะช่องนี้ (มีแต่ฝั่งรถประกัน) ทั้งที่มือถือเก็บให้แล้ว
+        if str(tp.get("car_color") or "").strip():
+            fuzzy_select(driver, p + "ddlCar_Color", tp["car_color"],
+                         label=f"สีรถคู่กรณี {n + 1}", timeout=5)
         set_text(driver, p + "txtChassisNo", tp.get("chassis_no", ""))
         # จังหวัดทะเบียนรถคู่กรณี (* บังคับ) — se-survey ให้ "ชื่อ" (เลือกด้วย fuzzy เหมือนรถประกัน);
         # ISURVEY เดิมให้ index → รองรับทั้งคู่ (มีชื่อใช้ชื่อก่อน ไม่มีค่อย fallback index)

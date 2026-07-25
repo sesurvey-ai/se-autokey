@@ -614,6 +614,17 @@ def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
             except Exception:
                 pass
 
+            # ตรงเป๊ะมาก่อน (กันเหนียว ไม่ใช่แก้บั๊กที่เกิดแล้ว): ตอนนี้ทุก master ที่ดัมพ์มา
+            # exact ชนะ fuzzy อยู่แล้ว 45/45 dropdown — แต่ WRatio ให้ "สตริงสั้นที่เป็น
+            # คำนำหน้า" ได้ถึง 100 เช่นกัน ถ้าวันหนึ่งเสมอกัน extractOne จะคืนตัวแรกในลิสต์
+            # (= ตัวสั้น) แทนตัวที่ตรงเป๊ะ. ค่าที่ลอก master มาแล้วต้องเลือกได้แน่นอน
+            _v = str(value).strip()
+            _exact = next((o for o in options if o.strip() == _v), None)
+            if _exact is not None:
+                log(f"   ✓ {name}: '{value}' → '{_exact}' (ตรงเป๊ะ)")
+                Select(driver.find_element(By.ID, select_id)).select_by_visible_text(_exact)
+                return _exact, 100
+
             best = process.extractOne(str(value), options, scorer=fuzz.WRatio)
             text, score = best[0], best[1]
 
