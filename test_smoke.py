@@ -324,7 +324,7 @@ check("PERSON_TYPE_MAP: DV→01 / PV→03 / ON→05",
 check("INJ/ASSET prefix + count cap",
       emcs.INJ_PREFIX.format(n=0) == "dtlInj_ctl00_wuInj_"
       and emcs.ASSET_PREFIX.format(n=1) == "dtlAsset_ctl01_wuAsset_"
-      and emcs.MAX_INJURIES == 5 and emcs.MAX_ASSETS == 5)
+      and emcs.MAX_INJURIES == 32 and emcs.MAX_ASSETS == 30)
 check("fill_injuries/fill_assets + _save_section generic มีจริง",
       all(hasattr(emcs, f) for f in
           ("fill_injuries", "fill_assets", "_save_section")))
@@ -1157,6 +1157,24 @@ check("บริษัทประกัน: resolve ครบทั้ง 7 บ
           ('บริษัท ไทยไพบูลย์ประกันภัย จำกัด (มหาชน)', '2429'))))
 check("บริษัทประกัน: บริษัทนอกลิสต์ → None (หยุด ไม่ import เข้าบริษัทผิด)",
       _ric('บริษัท วิริยะประกันภัย จำกัด (มหาชน)') is None)
+
+# ---- 22c-6. หมวดรูปต่อรายการ: แปลงป้ายแอป → option dynamic ของ EMCS ----
+_c = emcs._se_cat_to_emcs
+check("หมวดรูป: ผู้บาดเจ็บ 'รูปผู้บาดเจ็บรถคู่กรณี คนที่ 2' → 'รูปผู้บาดเจ็บ คนที่ 2'",
+      _c('รูปผู้บาดเจ็บรถคู่กรณี คนที่ 2') == 'รูปผู้บาดเจ็บ คนที่ 2'
+      and _c('รูปผู้บาดเจ็บรถประกัน คนที่ 1') == 'รูปผู้บาดเจ็บ คนที่ 1')
+check("หมวดรูป: ทรัพย์สิน 'ชิ้นที่ N' → 'รูปทรัพย์สิน รายการที่ N'",
+      _c('รูปทรัพย์สินอื่นๆของคู่กรณี ชิ้นที่ 3') == 'รูปทรัพย์สิน รายการที่ 3')
+check("หมวดรูป: คู่กรณี 'คันที่ N' ถูกอยู่แล้ว ไม่แตะ",
+      _c('รูปรถคู่กรณี คันที่ 2') == 'รูปรถคู่กรณี คันที่ 2')
+check("หมวดรูป: หมวดฐานไม่มีเลข → คงเดิม",
+      _c('รูปรถประกัน') == 'รูปรถประกัน'
+      and _c('รูปผู้บาดเจ็บรถคู่กรณี') == 'รูปผู้บาดเจ็บรถคู่กรณี')
+check("หมวดรูป: ว่าง/ไม่รู้จัก → 'รูปประกอบ'",
+      _c('') == 'รูปประกอบ' and _c('รูปอะไรไม่รู้') == 'รูปประกอบ')
+check("หมวดรูป: zip export ใช้ป้ายเดียวกับ EMCS",
+      images._TP_EXPORT_LABEL['TP_PERSON'].format(n=2) == 'รูปผู้บาดเจ็บ คนที่2'
+      and images._TP_EXPORT_LABEL['TP_PROP'].format(n=2) == 'รูปทรัพย์สิน รายการที่2')
 
 # ---- 22d. fuzzy_select guard (end-to-end ด้วย dropdown ปลอม) ----
 # placeholder ของ EMCS ไม่ได้ชื่อ '-- ระบุ --' เหมือนกันทุกช่อง ('-- จังหวัด --',

@@ -76,8 +76,9 @@ MAX_OPPONENTS = 20
 # Tab 5/6 (ปลดล็อกหลังบันทึกหน้าหลัก เหมือนคู่กรณี): เลือกจำนวน → กรอกบล็อก → บันทึก
 INJ_PREFIX = "dtlInj_ctl{n:02d}_wuInj_"      # imbInjure_Person / ddlInj_Count / btnSave_InjurePerson
 ASSET_PREFIX = "dtlAsset_ctl{n:02d}_wuAsset_"  # imbAsset / ddlAsset_Count / btnSave_Asset
-MAX_INJURIES = 5
-MAX_ASSETS = 5
+# ขนาด repeater จริงของ EMCS (บล็อก render ไว้แบบ static แค่ซ่อนด้วย showInj/showAsset)
+MAX_INJURIES = 32   # dtlInj_ctl00..ctl31 (ddlInj_Count มีถึง 32)
+MAX_ASSETS = 30     # dtlAsset_ctl00..ctl29 (ddlAsset_Count มีถึง 30)
 # ประเภทบุคคล: code XML (PERSON_TYPE) → value ของ ddlPerson_Type
 PERSON_TYPE_MAP = {"DV": "01", "PV": "03", "ON": "05"}  # ผู้ขับขี่ / ผู้โดยสาร / บุคคลภายนอก
 
@@ -173,6 +174,15 @@ def resolve_loss_type(data, requested: str) -> str:
 
 def _is_displayed(driver, elem_id) -> bool:
     """element โผล่/มองเห็นจริงไหม (บาง layout คู่กรณีซ่อนช่องบางตัวไว้)"""
+    try:
+        return driver.find_element(By.ID, elem_id).is_displayed()
+    except Exception:
+        return False
+
+
+def _is_visible(driver, elem_id) -> bool:
+    """element โผล่บนหน้าจริงไหม — EMCS สลับ layout ด้วยการซ่อน/โชว์ทั้งแถว
+    (เช่นฟอร์มทรัพย์สินเวอร์ชัน AXA) การเช็ค 'มี element' อย่างเดียวไม่พอ"""
     try:
         return driver.find_element(By.ID, elem_id).is_displayed()
     except Exception:
@@ -734,14 +744,21 @@ def fill_assets(driver, data: ClaimData):
         set_text(driver, p + "txtAsset_Damage_Cause", _dash(a.get("damage_cause", "")))
         set_text(driver, p + "txtCost_Damage", a.get("damage_cost", ""))
 
-        # เจ้าของ — คำนำหน้าแยกจากชื่อ (ถ้ามี), ที่เหลือชื่อเต็มลง txtOwner
-        title, first, last = split_thai_name(a.get("owner_name", ""))
-        if title and _select_has_options(driver, p + "ddlAsset_Title_ID"):
-            fuzzy_select(driver, p + "ddlAsset_Title_ID", title,
-                         label=f"คำนำหน้าเจ้าของ {n + 1}")
-            set_text(driver, p + "txtOwner", _dash(f"{first} {last}".strip()))
-        else:
-            set_text(driver, p + "txtOwner", _dash(a.get("owner_name", "")))
+        # เจ้าของ — EMCS มีฟอร์ม 2 เวอร์ชันที่ server สลับให้ตามบริษัทประกัน:
+        #   ปกติ  = แถว divSTD: ช่องเดียว txtOwner
+        #   AXA   = แถว divAXA: คำนำหน้า (ddlAsset_Title_ID) + ชื่อ + นามสกุล แยกช่อง
+        # เดิมเช็คแค่ "dropdown มี options ไหม" ซึ่งเป็นจริงแม้แถว AXA ถูกซ่อน → เคส AXA
+        # ที่มีทรัพย์สินเสียหาย กดบันทึกแล้ว EMCS ฟ้อง 'กรุณาใส่ชื่อเจ้าของทรัพย์สิน' ค้าง
+        owner = a.get("owner_name", "")
+        title, first, last = split_thai_name(owner)
+        set_text(driver, p + "txtOwner", _dash(owner))
+        if _is_visible(driver, p + "divAXA"):
+            if title:
+                fuzzy_select(driver, p + "ddlAsset_Title_ID", title,
+                             label=f"คำนำหน้าเจ้าของ {n + 1}", timeout=5)
+            set_text(driver, p + "txtAsset_Name_AXA", _dash(first or owner))
+            set_text(driver, p + "txtAsset_LastName_AXA", _dash(last))
+            log(f"   ✓ ฟอร์มทรัพย์สินเวอร์ชัน AXA — กรอกชื่อ/นามสกุลแยกช่อง (ชิ้นที่ {n + 1})")
         set_text(driver, p + "txtAddress", a.get("owner_address", ""))
         set_text(driver, p + "txtTel_No", a.get("owner_phone", ""))
 
@@ -2045,8 +2062,19 @@ def _se_cat_to_emcs(category):
         return _EMCS_DEFAULT_IMAGE_TYPE
     if cat in _EMCS_IMAGE_TYPES:
         return cat
+    m = re.search(r"\s*(คันที่|คนที่|ชิ้นที่|รายการที่)\s*(\d+)\s*$", cat)
     base = re.sub(r"\s*(คันที่|คนที่|ชิ้นที่|รายการที่)\s*\d+\s*$", "", cat).strip()
     if base in _EMCS_IMAGE_TYPES:
+        # option dynamic ของ EMCS ใช้ "ป้ายฐานคนละคำ" กับหมวดในแอป (ยืนยันหน้าจริง
+        # 2026-06-18): ผู้บาดเจ็บ = 'รูปผู้บาดเจ็บ คนที่ N' (ไม่ใช่ '...รถคู่กรณี คนที่ N')
+        # ทรัพย์สิน = 'รูปทรัพย์สิน รายการที่ N' (ไม่ใช่ '...อื่นๆของคู่กรณี ชิ้นที่ N')
+        # ไม่แปลง = ทุกใบตกไปกองที่ตัวฐาน ไม่ผูกกับคน/ชิ้นที่ N
+        if m:
+            n = m.group(2)
+            if base.startswith("รูปผู้บาดเจ็บ"):
+                return f"รูปผู้บาดเจ็บ คนที่ {n}"
+            if base.startswith("รูปทรัพย์สิน"):
+                return f"รูปทรัพย์สิน รายการที่ {n}"
         return cat   # คงคำเต็ม — fuzzy จับตัวเลือก 'คันที่ N' ได้ ถ้าไม่มีก็ตกไปตัวฐาน
     log(f"   ⚠️ หมวดรูป '{cat}' ไม่ตรงประเภท EMCS — ใช้ '{_EMCS_DEFAULT_IMAGE_TYPE}'")
     return _EMCS_DEFAULT_IMAGE_TYPE
