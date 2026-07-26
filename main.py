@@ -725,6 +725,15 @@ def _populate_claim_from_report(data, rep):
     return gv('acc_damage_type') or 'auto'
 
 
+def _is_arrival_photo(name: str) -> bool:
+    """รูป "ยืนยันถึงที่เกิดเหตุ" ที่แอปบังคับถ่ายก่อนเริ่มสำรวจ — เป็นหลักฐานภายในของ
+    se-survey (พิสูจน์ว่าผู้สำรวจไปถึงจริง) **ไม่ใช่รูปประกอบสำนวนของประกัน**
+    กติกา user 2026-07-26: ห้ามส่งเข้า EMCS. ชื่อไฟล์จาก backend = arrival.jpg
+    (case_<id>/job_<id>/arrival.jpg); เผื่ออนาคตมีหลายใบ arrival_1.jpg ฯลฯ"""
+    stem = str(name or "").rsplit(".", 1)[0].strip().lower()
+    return stem == "arrival" or stem.startswith("arrival_")
+
+
 def _images_from_zip_drop(cfg, claim_no, img_dir, quiet: bool = False):
     """เคสไม่มีรูปในแอป → ใช้ zip export ของเคลมที่วางไว้ใน SESURVEY_ZIP_DIR เป็นแหล่งรูป
 
@@ -782,10 +791,14 @@ def _download_case_photos(cfg, case_id, hdrs, claim_no):
     got = 0
     names = []     # ชื่อไฟล์ทั้งหมด (ไว้จับคู่หมวดจาก zip export ถ้า API ไม่มี category)
     cat_map = {}   # ชื่อไฟล์ → หมวดไทย (ประเภทรูป EMCS) สำหรับ upload_images จัดกลุ่ม
+    skipped_arrival = 0
     for ph in photos:
         rel = str(ph.get("file_path") or "")
         name = rel.split("/")[-1]
         if not name:
+            continue
+        if _is_arrival_photo(name):
+            skipped_arrival += 1
             continue
         names.append(name)
         cat = str(ph.get("category") or "").strip()
@@ -838,7 +851,10 @@ def _download_case_photos(cfg, case_id, hdrs, claim_no):
                 json.dumps(cat_map, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
             log(f"   ⚠️ เขียน _categories.json ไม่ได้: {e}")
-    log(f"✓ รูปเคส {got}/{len(photos)} ไฟล์ → {img_dir} (มีหมวด {len(cat_map)} รูป)")
+    if skipped_arrival:
+        log(f"   – ข้ามรูปยืนยันถึงที่เกิดเหตุ {skipped_arrival} ใบ (ไม่ต้องส่งเข้า EMCS)")
+    log(f"✓ รูปเคส {got}/{len(photos) - skipped_arrival} ไฟล์ → {img_dir} "
+        f"(มีหมวด {len(cat_map)} รูป)")
     return str(img_dir)
 
 

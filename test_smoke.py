@@ -1210,6 +1210,15 @@ check("หมวดรูป: หมวดฐานไม่มีเลข → 
       and _c('รูปผู้บาดเจ็บรถคู่กรณี') == 'รูปผู้บาดเจ็บรถคู่กรณี')
 check("หมวดรูป: ว่าง/ไม่รู้จัก → 'รูปประกอบ'",
       _c('') == 'รูปประกอบ' and _c('รูปอะไรไม่รู้') == 'รูปประกอบ')
+# รูป "ยืนยันถึงที่เกิดเหตุ" = หลักฐานภายในของ se-survey ห้ามส่งเข้า EMCS (กติกา user 2026-07-26)
+check("arrival: arrival.jpg = รูปยืนยันถึงที่เกิดเหตุ → ข้าม",
+      _main._is_arrival_photo('arrival.jpg') and _main._is_arrival_photo('ARRIVAL.JPG')
+      and _main._is_arrival_photo('arrival_2.jpg'))
+check("arrival: รูปสำนวนปกติต้องไม่ถูกข้าม",
+      not _main._is_arrival_photo('insured_car_1784940691177_0.jpg')
+      and not _main._is_arrival_photo('arrivalcar.jpg')
+      and not _main._is_arrival_photo('รูปรถประกัน_1.jpg'))
+
 # zip export = "แหล่งรูป" ได้ด้วย ไม่ใช่แค่แหล่งหมวด — เคสที่ข้อมูลมาจาก XML export ล้วน
 # (พนักงานไม่ได้ถ่ายผ่านแอป) เดิมไม่มีรูปขึ้น EMCS เลยเพราะ API คืนรูป 0 ใบ
 import zipfile as _zf  # noqa: E402
@@ -1231,6 +1240,14 @@ check("zip เป็นแหล่งรูป: เขียนหมวดใ�
                                         'รูปแผนที่เกิดเหตุ', 'รูปประกอบ']))
 check("zip เป็นแหล่งรูป: ไม่มี zip ของเคลมนั้น → None (ไม่พัง)",
       _main._images_from_zip_drop(_zcfg, "NO-SUCH-CLAIM", _zout) is None)
+# แตก zip ซ้ำ (dry-run หลายรอบก่อน live) ต้องไม่งอกไฟล์ _2/_3 → ไม่งั้นอัปรูปซ้ำเข้า EMCS
+_main._images_from_zip_drop(_zcfg, "TEST-CLAIM-9", _zout)
+_main._images_from_zip_drop(_zcfg, "TEST-CLAIM-9", _zout)
+check("zip เป็นแหล่งรูป: แตกซ้ำ 3 รอบ = ไฟล์เท่าเดิม (idempotent ไม่งอก _2/_3)",
+      len(list(_zout.glob("*.jpg"))) == 4
+      and len(list((_zout / "tp_veh").rglob("*.jpg"))) == 1
+      and not list(_zout.rglob("*_2.jpg")),
+      str(sorted(p.name for p in _zout.glob("*.jpg"))))
 
 check("หมวดรูป zip: ACC_MAP → 'รูปแผนที่เกิดเหตุ' (เดิมตกไป 'รูปประกอบ')",
       images.ZIP_CAT_TO_EMCS.get('ACC_MAP') == 'รูปแผนที่เกิดเหตุ')

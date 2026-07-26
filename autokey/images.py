@@ -306,12 +306,16 @@ def extract_zip_images(zip_path: Path, folder: Path) -> dict:
             else:
                 target = folder / name
 
-            stem, ext = os.path.splitext(target.name)
-            k = 2
-            while target.exists():
-                target = target.parent / f"{stem}_{k}{ext}"
-                k += 1
-            target.write_bytes(zf.read(info))
+            data = zf.read(info)
+            # แตก zip ซ้ำ (dry-run หลายรอบแล้วค่อย live) ต้อง idempotent — ไฟล์เดิม ขนาดเท่ากัน
+            # = ใบเดียวกัน ใช้ตัวเดิม. ถ้าไล่ตั้ง _2/_3 จะได้รูปซ้ำอัปเข้า EMCS รอบละชุด
+            if not (target.exists() and target.stat().st_size == len(data)):
+                stem, ext = os.path.splitext(target.name)
+                k = 2
+                while target.exists():
+                    target = target.parent / f"{stem}_{k}{ext}"
+                    k += 1
+                target.write_bytes(data)
             # รูป flat (INS/REPORTS/OTHERS) → จำประเภทรูป EMCS ไว้ให้ _group_flat_by_category
             # แยกกลุ่ม (INS→รูปรถประกัน, OTHERS→รูปประกอบ) + ตั้งชื่อไทยตามหมวด แทนกองประเภทเดียว
             if not category.startswith("TP_"):
