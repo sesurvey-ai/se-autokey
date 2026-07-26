@@ -1072,6 +1072,22 @@ def _resolve_case_id_by_survey(cfg, hdrs, survey_no):
     return cid
 
 
+def _mark_emcs_imported(cfg, case_id, hdrs, esurvey: str):
+    """แจ้ง se-survey ว่าเคสนี้มี draft ใน EMCS แล้ว (ปิด loop กันกดนำเข้าซ้ำ)"""
+    import requests
+    try:
+        mr = requests.post(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/emcs-imported",
+                           headers=hdrs, json={"esurvey_no": esurvey or ""}, timeout=20)
+        if mr.ok:
+            d = mr.json().get("data") or {}
+            log("✓ แจ้ง se-survey ว่านำเข้าแล้ว" + (" (mark ไว้ก่อนแล้ว)" if d.get("already") else ""))
+        else:
+            log(f"⚠️ แจ้ง se-survey (emcs-imported) ไม่สำเร็จ: HTTP {mr.status_code} — "
+                "mark ด้วยมือภายหลัง กันปุ่มนำเข้าถูกกดซ้ำ")
+    except Exception as e:
+        log(f"⚠️ แจ้ง se-survey (emcs-imported) ไม่ได้: {e} — mark ด้วยมือภายหลัง")
+
+
 def run_emcs_images(cfg, args):
     """ดู (และลบ) รูปที่แนบไว้ในเรื่องเดิมของ EMCS — ไม่แตะข้อมูลส่วนอื่นเลย
 
@@ -1258,22 +1274,21 @@ def run_sesurvey_import(cfg, args):
                                   severity=severity)
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"sesurvey_{case_id}")
+        # draft อาจถูกสร้างไปแล้วก่อนพัง (ลบใน EMCS ไม่ได้) — ต้อง mark ฝั่ง se-survey
+        # ให้ตรงความจริง ไม่งั้น --sesurvey-fill-existing จะปฏิเสธว่า "ยังไม่เคย import"
+        # แล้วคนต้องมา mark มือเอง / หรือเผลอกด import ซ้ำจนได้ draft สองใบ
+        partial = getattr(emcs.fill_imported, "last_draft_esurvey", "")
+        if partial:
+            log(f"⚠️ draft {partial} ถูกสร้างใน EMCS แล้วก่อนงานจะพัง — mark ฝั่ง se-survey ให้ตรงความจริง")
+            _mark_emcs_imported(cfg, case_id, hdrs, partial)
+            log(f"   → แก้ต้นเหตุแล้วรันต่อด้วย: --sesurvey-case {case_id} "
+                f"--sesurvey-fill-existing --esurvey {partial}")
         raise
 
     # ── mark กลับ se-survey ทันทีที่ draft สร้างสำเร็จ (ปิด loop กันซ้ำ) ──
     # draft ถูกสร้างใน EMCS แล้ว = เลขเคลมนี้ถือว่า "นำเข้าแล้ว" ต่อให้คนยังไม่กดส่ง
     # (กัน import รอบสองมาสร้าง draft ซ้ำที่เลขเคลมเดิม)
-    try:
-        mr = requests.post(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/emcs-imported",
-                           headers=hdrs, json={"esurvey_no": esurvey or ""}, timeout=20)
-        if mr.ok:
-            d = mr.json().get("data") or {}
-            log(f"✓ แจ้ง se-survey ว่านำเข้าแล้ว" + (" (mark ไว้ก่อนแล้ว)" if d.get("already") else ""))
-        else:
-            log(f"⚠️ แจ้ง se-survey (emcs-imported) ไม่สำเร็จ: HTTP {mr.status_code} — "
-                "mark ด้วยมือภายหลัง กันปุ่มนำเข้าถูกกดซ้ำ")
-    except Exception as e:
-        log(f"⚠️ แจ้ง se-survey (emcs-imported) ไม่ได้: {e} — mark ด้วยมือภายหลัง")
+    _mark_emcs_imported(cfg, case_id, hdrs, esurvey)
 
     banner(f"LIVE: สร้าง draft ใน EMCS สำเร็จ"
            + (f" (e-Survey {esurvey})" if esurvey else "")

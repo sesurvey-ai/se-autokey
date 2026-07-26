@@ -3102,6 +3102,10 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
 
     # นำเข้า XML → สร้าง draft + เติมฟอร์มหลัก ~90% → frmSurvey โหมดแก้
     esurvey = import_xml_report(driver, cfg, data, insurer_code=insurer_code)
+    # ตั้งแต่บรรทัดนี้ draft มีอยู่จริงใน EMCS แล้ว (ลบไม่ได้) — ถ้าขั้นถัดไปพัง
+    # ผู้เรียกต้องรู้เลข e-Survey เพื่อ mark ฝั่ง se-survey ให้ตรงความจริง ไม่งั้น
+    # --sesurvey-fill-existing จะไม่ยอมทำงาน ("ยังไม่เคย import") ทั้งที่ draft เกิดแล้ว
+    fill_imported.last_draft_esurvey = esurvey
     main_window = driver.current_window_handle
     resolved_loss = resolve_loss_type(data, loss_type)
 
