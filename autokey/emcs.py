@@ -1218,8 +1218,57 @@ def _select_car_type(driver, car_type):
         log(f"   ⛔ ประเภทรถบนเรื่องเป็น '{cur}' แต่ข้อมูลว่า '{want}' — "
             "ไม่เปลี่ยนให้ (EMCS จะลบข้อมูลที่บันทึกไว้ทั้งหมด) แก้เองบนหน้าจอถ้าจำเป็น")
         return
-    fuzzy_select(driver, "ddlCType", want, presleep=1,
-                 label="ประเภทรถ", required=True)
+    if not _set_ctype_via_postback(driver, want):
+        fuzzy_select(driver, "ddlCType", want, presleep=1,
+                     label="ประเภทรถ", required=True)
+
+
+def _ctype_value(driver, label: str) -> str:
+    """หา option value ของประเภทรถจากชื่อไทย (A/E/M/O/T/V/W) — '' ถ้าไม่เจอ"""
+    want = str(label or "").strip()
+    try:
+        for o in Select(driver.find_element(By.ID, "ddlCType")).options:
+            if o.text.strip() == want:
+                return (o.get_attribute("value") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _set_ctype_via_postback(driver, label: str) -> bool:
+    """ตั้งประเภทรถแล้วยิง __doPostBack('ddlCType','') ตรง ๆ — **ไม่เรียก checkChangeCType**
+
+    ยืนยันบน draft จริง 2026-07-26 (S68426076666, ทำซ้ำ 2 รอบ): วิธีนี้ทำให้ cascade
+    โหลดลิสต์ยี่ห้อครบ 71 ตัว โดย **ไม่มี popup 'ข้อมูลที่เคยบันทึกไว้จะถูกลบทั้งหมด'**
+    และตรวจ 11 ช่องแล้วไม่มีข้อมูลไหนหาย (ต่างจาก select_by_visible_text ที่ยิง onchange
+    เต็ม รวม checkChangeCType ซึ่งเป็นตัวเด้ง popup แล้วทำให้บอทค้าง)
+
+    ⚠️ ผู้เรียกต้องกันไว้แล้วว่า "ช่องยังว่าง/placeholder" เท่านั้น — เคสเปลี่ยนทับค่าเดิม
+    ห้ามใช้ทางนี้ เพราะเท่ากับข้ามคำเตือนของระบบ (ดู _select_car_type)
+    คืน True ถ้าตั้งค่าได้จริง"""
+    val = _ctype_value(driver, label)
+    if not val:
+        return False
+    try:
+        driver.execute_script(
+            "var e=document.getElementById('ddlCType');"
+            "if(!e)return;e.value=arguments[0];"
+            "setTimeout(function(){__doPostBack('ddlCType','');},50);", val)
+    except Exception as e:
+        log(f"   ⚠️ ยิง postback ประเภทรถไม่ได้ ({type(e).__name__}) — ใช้วิธีเลือกปกติแทน")
+        return False
+    try:    # รอ postback จบ (ยี่ห้อโหลด = สัญญาณว่า cascade มาแล้ว)
+        WebDriverWait(driver, 15).until(
+            lambda d: _select_has_options(d, "ddlCMFG")
+            or _current_select_text(d, "ddlCType").strip() == label)
+    except TimeoutException:
+        pass
+    got = _current_select_text(driver, "ddlCType").strip()
+    if got == label:
+        log(f"   ✓ ประเภทรถ: '{label}' (postback ตรง — ไม่ผ่าน checkChangeCType)")
+        return True
+    log(f"   ⚠️ ตั้งประเภทรถด้วย postback แล้วได้ '{got}' — ลองวิธีเลือกปกติ")
+    return False
 
 
 def _select_car_brand(driver, car_brand, label="ยี่ห้อรถ"):
@@ -1235,14 +1284,16 @@ def _select_car_brand(driver, car_brand, label="ยี่ห้อรถ"):
     car_brand = normalize_brand(car_brand)   # ไทย→อังกฤษ: ตัวเลือก EMCS เป็นอังกฤษล้วน
     time.sleep(2)   # รอ postback ประเภทรถ โหลดตัวเลือกยี่ห้อ (เท่าจังหวะฝั่งคู่กรณี)
     if not _select_has_options(driver, "ddlCMFG"):
-        try:   # ยิง onchange ของ ddlCType ซ้ำ (this.value = ประเภทรถเดิม) ให้ repopulate ยี่ห้อ
+        # repopulate ยี่ห้อ: ยิง __doPostBack ของ ddlCType ตรง ๆ ด้วยค่าที่เลือกอยู่
+        # (เดิม dispatchEvent('change') → วิ่งผ่าน checkChangeCType = เด้ง popup ทำลายข้อมูล
+        #  แล้วบอทค้าง; postback ตรงให้ผลเดียวกันแต่ไม่มี popup — ยืนยันบน draft จริง)
+        try:
             driver.execute_script(
-                "var e=document.getElementById('ddlCType');"
-                "if(e){e.dispatchEvent(new Event('change'));}")
+                "setTimeout(function(){__doPostBack('ddlCType','');},50);")
         except Exception:
             pass
         try:
-            WebDriverWait(driver, 8).until(
+            WebDriverWait(driver, 12).until(
                 lambda d: _select_has_options(d, "ddlCMFG"))
         except TimeoutException:
             pass
@@ -1613,6 +1664,45 @@ def _parse_missing_fields(alert_text: str) -> str:
         return ""
     items = re.findall(r"\d+\.\s*(.+)", alert_text)
     return ", ".join(s.strip() for s in items if s.strip())
+
+
+def verify_car_saved(driver, data: ClaimData, save_fn=None) -> bool:
+    """อ่านค่ากลับมาตรวจว่า 'ประเภทรถ + ยี่ห้อ' ติดจริงหลังบันทึก
+
+    ทำไมต้องมี: บน draft จริง (S68426076666) บอทเคย log '✓ ประเภทรถ 90' และ
+    '✓ ยี่ห้อ' แต่พอเปิดเรื่องใหม่วันถัดมา ทั้งสองช่องเป็น '-- ระบุ --' — คือ
+    เลือกได้บนหน้าจอแต่ค่าไม่ commit ตอนกดบันทึก (postback ของ cascade ไม่ทัน)
+    รายงานว่าสำเร็จทั้งที่ข้อมูลไม่ติด = อันตรายกว่าล้มเห็น ๆ
+
+    ไม่ติด → กรอกซ้ำ 1 รอบ (+ save_fn ถ้าส่งมา) แล้วตรวจอีกครั้ง; ยังไม่ติด = ฟ้อง
+    คืน True เมื่อครบทั้งสองช่อง"""
+    want_type = str(data.prb_car_type or "").strip()
+    want_brand = normalize_brand(data.car_brand)
+    for rnd in (1, 2):
+        ctype = _current_select_text(driver, "ddlCType").strip()
+        brand = _current_select_text(driver, "ddlCMFG").strip()
+        ok_t = bool(ctype) and not _is_placeholder_option(ctype)
+        ok_b = bool(brand) and not _is_placeholder_option(brand)
+        if (ok_t or not want_type) and (ok_b or not want_brand):
+            log(f"   ✓ ตรวจหลังบันทึก: ประเภทรถ='{ctype}' ยี่ห้อ='{brand}' ติดครบ")
+            return True
+        miss = ", ".join(n for n, ok in (("ประเภทรถ", ok_t), ("ยี่ห้อ", ok_b)) if not ok)
+        if rnd == 2:
+            log(f"   ⚠️ หลังบันทึกแล้ว {miss} ยังว่างอยู่ — เลือก/บันทึกเองบนหน้าจอ "
+                "(ค่าไม่ commit ผ่าน postback)")
+            return False
+        log(f"   ↻ หลังบันทึก {miss} ยังว่าง — กรอกซ้ำอีกรอบ")
+        if want_type and not ok_t:
+            _select_car_type(driver, want_type)
+        if want_brand and not ok_b:
+            _select_car_brand(driver, data.car_brand, label="ยี่ห้อรถ (ซ่อมหลังบันทึก)")
+        if save_fn is not None:
+            try:
+                save_fn()
+            except Exception as e:
+                log(f"   ⚠️ บันทึกซ้ำไม่สำเร็จ ({type(e).__name__})")
+                return False
+    return False
 
 
 def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
@@ -2800,6 +2890,9 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
     fill_verdict(driver, data)
 
     esurvey = save_main_form(driver, data)
+    verify_car_saved(driver, data,
+                     lambda: save_main_form(driver, data, button_id="btnUpdate",
+                                            is_new=False))
     # เคลมสด: ส่วนคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน ปลดล็อกหลังบันทึกหน้าหลักเท่านั้น
     # ลำดับสำคัญ: คู่กรณี + ความเสียหาย ทำบนแท็บ "ข้อมูลทั่วไป" ให้จบก่อน แล้วค่อย
     # ผู้บาดเจ็บ/ทรัพย์สิน (กดเมนู imbInjure_Person/imbAsset นำทางไปแท็บอื่น —
@@ -2912,6 +3005,9 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
     _set_or_clear_claim_ref(driver, data.notify_value)
 
     saved = save_main_form(driver, data, button_id="btnUpdate", is_new=False)
+    verify_car_saved(driver, data,
+                     lambda: save_main_form(driver, data, button_id="btnUpdate",
+                                            is_new=False))
     esurvey = esurvey or saved
     if not esurvey:
         try:

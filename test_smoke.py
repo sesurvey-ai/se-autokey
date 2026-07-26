@@ -1265,6 +1265,44 @@ check("noTyping: ตัดแล้วเหลือว่าง → ใส่ 
 check("noTyping: จุด/ขีด เป็นอักขระที่ EMCS ยอม — ไม่ถูกตัด",
       _run_set_text('บจก. เอ-บี', 'return noTyping(event)') == 'บจก. เอ-บี')
 
+# ---- 22c-8. verify หลังบันทึก: ประเภทรถ/ยี่ห้อ ต้องติดจริง ----
+# ยืนยันบน draft จริง 2026-07-26: บอท log '✓ ประเภทรถ 90' แต่วันถัดมาเปิดเรื่อง
+# ทั้งประเภทรถและยี่ห้อเป็น '-- ระบุ --' = เลือกได้บนจอ แต่ไม่ commit ตอนบันทึก
+def _run_verify(seq, want_type='เก๋งเอเชีย', want_brand='MG'):
+    """seq = ค่าที่อ่านได้แต่ละรอบ [(ctype, cmfg), ...] — คืน (ผลลัพธ์, กรอกซ้ำกี่ครั้ง, บันทึกซ้ำกี่ครั้ง)"""
+    state = {'i': 0, 'refill': 0, 'saves': 0}
+    d = claim_data.ClaimData()
+    d.prb_car_type, d.car_brand = want_type, want_brand
+    _o = (emcs._current_select_text, emcs._select_car_type, emcs._select_car_brand, emcs.log)
+    def cur(_drv, eid):
+        i = min(state['i'], len(seq) - 1)
+        return seq[i][0] if eid == 'ddlCType' else seq[i][1]
+    emcs._current_select_text = cur
+    emcs._select_car_type = lambda *a, **k: state.__setitem__('refill', state['refill'] + 1)
+    emcs._select_car_brand = lambda *a, **k: state.__setitem__('refill', state['refill'] + 1)
+    emcs.log = lambda *a, **k: None
+    def save():
+        state['saves'] += 1
+        state['i'] += 1
+    try:
+        ok = emcs.verify_car_saved(object(), d, save)
+    finally:
+        (emcs._current_select_text, emcs._select_car_type,
+         emcs._select_car_brand, emcs.log) = _o
+    return ok, state['refill'], state['saves']
+
+
+check("verify: ค่าติดครบตั้งแต่รอบแรก → ผ่าน ไม่กรอกซ้ำ",
+      _run_verify([('เก๋งเอเชีย', 'MG')]) == (True, 0, 0))
+check("verify: ยี่ห้อว่าง → กรอกซ้ำ+บันทึกซ้ำ แล้วผ่าน",
+      _run_verify([('เก๋งเอเชีย', '-- ระบุ --'), ('เก๋งเอเชีย', 'MG')]) == (True, 1, 1))
+check("verify: ว่างทั้งคู่ → กรอกซ้ำ 2 ช่อง แล้วผ่าน",
+      _run_verify([('-- ระบุ --', '-- ระบุ --'), ('เก๋งเอเชีย', 'MG')]) == (True, 2, 1))
+check("verify: ซ่อมแล้วยังไม่ติด → คืน False (ฟ้อง ไม่รายงานสำเร็จลวง)",
+      _run_verify([('-- ระบุ --', '-- ระบุ --'), ('-- ระบุ --', '-- ระบุ --')])[0] is False)
+check("verify: ต้นทางไม่มีข้อมูลยี่ห้อ → ไม่บังคับ (ผ่าน)",
+      _run_verify([('เก๋งเอเชีย', '-- ระบุ --')], want_brand='') == (True, 0, 0))
+
 # ---- 22d. fuzzy_select guard (end-to-end ด้วย dropdown ปลอม) ----
 # placeholder ของ EMCS ไม่ได้ชื่อ '-- ระบุ --' เหมือนกันทุกช่อง ('-- จังหวัด --',
 # '-- เขต --', '- คำนำหน้า -') → ตัดสินจาก value="0"/"" ของ option ตัวแรกแทน
