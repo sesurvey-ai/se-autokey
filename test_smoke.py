@@ -1210,6 +1210,28 @@ check("หมวดรูป: หมวดฐานไม่มีเลข → 
       and _c('รูปผู้บาดเจ็บรถคู่กรณี') == 'รูปผู้บาดเจ็บรถคู่กรณี')
 check("หมวดรูป: ว่าง/ไม่รู้จัก → 'รูปประกอบ'",
       _c('') == 'รูปประกอบ' and _c('รูปอะไรไม่รู้') == 'รูปประกอบ')
+# zip export = "แหล่งรูป" ได้ด้วย ไม่ใช่แค่แหล่งหมวด — เคสที่ข้อมูลมาจาก XML export ล้วน
+# (พนักงานไม่ได้ถ่ายผ่านแอป) เดิมไม่มีรูปขึ้น EMCS เลยเพราะ API คืนรูป 0 ใบ
+import zipfile as _zf  # noqa: E402
+_zdir = pathlib.Path(tempfile.mkdtemp())
+_zp = _zdir / "export_TEST-CLAIM-9_202607.zip"
+with _zf.ZipFile(_zp, "w") as _z:
+    for _p in ("PICTURES/INS/a.jpg", "PICTURES/ACC_MAP/m1.jpg", "PICTURES/ACC_MAP/m2.jpg",
+               "PICTURES/TP_VEH/1/t.jpg", "PICTURES/OTHERS/o.jpg", "PICTURES/INS/skip.pdf"):
+        _z.writestr(_p, b"\xff\xd8\xff\xe0jpegdata")
+_zcfg = _types.SimpleNamespace(sesurvey_zip_dir=str(_zdir), base_dir=_zdir)
+_zout = pathlib.Path(tempfile.mkdtemp()) / "imgs"
+_zres = _main._images_from_zip_drop(_zcfg, "TEST-CLAIM-9", _zout)
+check("zip เป็นแหล่งรูป: เจอ zip ของเคลม → แตกรูปลงโฟลเดอร์", _zres == str(_zout))
+check("zip เป็นแหล่งรูป: รูปรถประกัน/แผนที่/ประกอบ อยู่โฟลเดอร์หลัก + คู่กรณีแยก tp_veh",
+      len(list(_zout.glob("*.jpg"))) == 4 and len(list((_zout / "tp_veh").rglob("*.jpg"))) == 1)
+_zcat = _json.loads((_zout / "_categories.json").read_text(encoding="utf-8"))
+check("zip เป็นแหล่งรูป: เขียนหมวดให้ครบ (ACC_MAP → รูปแผนที่เกิดเหตุ)",
+      sorted(_zcat.values()) == sorted(['รูปรถประกัน', 'รูปแผนที่เกิดเหตุ',
+                                        'รูปแผนที่เกิดเหตุ', 'รูปประกอบ']))
+check("zip เป็นแหล่งรูป: ไม่มี zip ของเคลมนั้น → None (ไม่พัง)",
+      _main._images_from_zip_drop(_zcfg, "NO-SUCH-CLAIM", _zout) is None)
+
 check("หมวดรูป zip: ACC_MAP → 'รูปแผนที่เกิดเหตุ' (เดิมตกไป 'รูปประกอบ')",
       images.ZIP_CAT_TO_EMCS.get('ACC_MAP') == 'รูปแผนที่เกิดเหตุ')
 check("หมวดรูป zip: INS/OTHERS/REPORTS ยังเหมือนเดิม",

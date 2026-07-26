@@ -38,6 +38,7 @@ from autokey.images import (
     archive_old_images,
     categories_from_export,
     download_xml_export,
+    extract_zip_images,
     images_from_zip,
     list_images,
     prepare_images,
@@ -724,6 +725,37 @@ def _populate_claim_from_report(data, rep):
     return gv('acc_damage_type') or 'auto'
 
 
+def _images_from_zip_drop(cfg, claim_no, img_dir):
+    """เคสไม่มีรูปในแอป → ใช้ zip export ของเคลมที่วางไว้ใน SESURVEY_ZIP_DIR เป็นแหล่งรูป
+
+    ทำไม: เคสที่ข้อมูลมาจาก XML export ของพอร์ทัลล้วน (พนักงานไม่ได้ถ่ายผ่านแอป) รูปจะอยู่
+    ในไฟล์ zip ที่โหลดมาจากพอร์ทัล ซึ่งแยกโฟลเดอร์ตามหมวดมาให้แล้ว (PICTURES/INS, /TP_VEH,
+    /ACC_MAP, ...) — เดิม zip ถูกใช้เป็นแค่ "แหล่งหมวด" ของรูปที่ดึงมาจาก API เท่านั้น
+    ไม่มีรูปจาก API = ไม่มีรูปขึ้น EMCS เลย
+
+    extract_zip_images() แตกรูป + เขียน _categories.json ให้ครบในตัว
+    คืน path โฟลเดอร์รูป (None ถ้าไม่เจอ zip)"""
+    if not claim_no:
+        return None
+    zip_dir = Path(str(getattr(cfg, "sesurvey_zip_dir", "") or (cfg.base_dir / "zip_import")))
+    cands = sorted(zip_dir.glob(f"*{claim_no}*.zip")) +         sorted(zip_dir.glob(f"*/*{claim_no}*.zip"))
+    if not cands:
+        log(f"   (ไม่พบ zip export ของเคลมนี้ใน {zip_dir} → ไม่มีรูปส่งขึ้น EMCS)")
+        return None
+    zp = cands[0]
+    try:
+        counts = extract_zip_images(zp, img_dir)
+    except Exception as e:
+        log(f"   ⚠️ แตก zip {zp.name} ไม่ได้ ({type(e).__name__}: {e})")
+        return None
+    if not counts:
+        log(f"   ⚠️ zip {zp.name} ไม่มีไฟล์รูป")
+        return None
+    log(f"✓ ใช้รูปจาก zip export {zp.name} → {img_dir} "
+        f"({', '.join(f'{k}:{v}' for k, v in sorted(counts.items()))})")
+    return str(img_dir)
+
+
 def _download_case_photos(cfg, case_id, hdrs, claim_no):
     """โหลดรูปของเคสจาก se-survey ลง downloaded_images/<เลขเคลม>/ — คืน path โฟลเดอร์ (None ถ้าไม่มีรูป)
 
@@ -739,10 +771,12 @@ def _download_case_photos(cfg, case_id, hdrs, claim_no):
     except Exception as e:
         log(f"⚠️ ดึงรายการรูปไม่ได้: {e} — ข้ามขั้นโหลดรูป")
         return None
+    img_dir = cfg.download_dir / (claim_no or f"sesurvey_{case_id}")
     if not photos:
         log("(เคสนี้ไม่มีรูปบน server)")
-        return None
-    img_dir = cfg.download_dir / (claim_no or f"sesurvey_{case_id}")
+        # ไม่มีรูปในแอป → ใช้ zip export ของเคลมเป็น "แหล่งรูป" (ไม่ใช่แค่แหล่งหมวด)
+        # เคสที่ข้อมูลมาจาก XML export ล้วน (ไม่ได้ถ่ายผ่านแอป) จะได้รูปครบพร้อมหมวด
+        return _images_from_zip_drop(cfg, claim_no, img_dir)
     img_dir.mkdir(parents=True, exist_ok=True)
     got = 0
     names = []     # ชื่อไฟล์ทั้งหมด (ไว้จับคู่หมวดจาก zip export ถ้า API ไม่มี category)
