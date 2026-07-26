@@ -715,6 +715,8 @@ def _populate_claim_from_report(data, rep):
     data.prb_number = gv('prb_number')
     data.notify_value = gv('claim_ref_no')   # เลขที่รับแจ้ง (บังคับ * — se-survey มีรูปแบบถูก)
     data.noti_date, data.noti_time = split_dt('acc_insurance_notify_date')
+    # ลูกค้าแจ้ง บ.ประกัน = คนละเวลากับ บ.ประกันแจ้งสำรวจ (se-survey เก็บแยก, XML ส่งแยกถูกแล้ว)
+    data.call_date, data.call_time = split_dt('acc_customer_report_date')
     data.arrive_date, data.arrive_time = split_dt('acc_survey_arrive_date')
     data.finish_date, data.finish_time = split_dt('acc_survey_complete_date')
     # คู่กรณี: เขียนทับ third_parties ด้วยค่าไทยจาก report (XML ให้ code — fill_third_parties เลือก dropdown ไม่ได้)
@@ -910,7 +912,11 @@ def _run_fill_existing(cfg, args, case_id, hdrs, meta):
     except Exception as e:
         log(f"⚠️ ดึง report มาเติม ClaimData ไม่ได้ ({e}) — fill_* อาจหยุดรอบางช่อง")
 
-    img_folder = _download_case_photos(cfg, case_id, hdrs, claim_no)
+    # --skip-images: กรณีกลับมาแก้ฟิลด์บน draft ที่อัปรูปไปแล้ว — อัปซ้ำ = รูปซ้ำทั้งชุด
+    # (EMCS ไม่ dedupe ชื่อไฟล์) ต้องสั่งข้ามเอง
+    img_folder = None if getattr(args, "skip_images", False) else         _download_case_photos(cfg, case_id, hdrs, claim_no)
+    if img_folder is None and getattr(args, "skip_images", False):
+        log("--skip-images: ข้ามการอัปรูป (draft นี้มีรูปอยู่แล้ว)")
 
     per_run_dl = cfg.download_dir / "_dl" / str(os.getpid())
     driver = make_driver(detach=True, download_dir=per_run_dl)

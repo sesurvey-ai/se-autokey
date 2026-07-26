@@ -146,8 +146,12 @@ class ClaimData:
     insure_engine: str = ""        # เลขเครื่อง
 
     # ---- Tab 8: Notify info ----
-    noti_date: str = ""            # วันที่รับแจ้ง
+    noti_date: str = ""            # วันที่รับแจ้ง (= บ.ประกันแจ้งพนักงานสำรวจ)
     noti_time: str = ""            # เวลารับแจ้ง
+    # วัน-เวลาที่ "ลูกค้าแจ้ง บ.ประกัน" — คนละจังหวะกับที่ประกันแจ้งสำรวจ (EMCS มี 2 ช่องแยก)
+    # ISURVEY ไม่มีข้อมูลนี้ → ว่าง แล้ว fill_accident จะ fallback ไปใช้ noti_* เหมือนเดิม
+    call_date: str = ""
+    call_time: str = ""
 
     # ---- อื่นๆ ----
     xml_file: str = ""             # path ไฟล์ SURV_REPORT XML ที่ดาวน์โหลดไว้

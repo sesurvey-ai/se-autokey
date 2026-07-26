@@ -1210,6 +1210,22 @@ check("หมวดรูป: หมวดฐานไม่มีเลข → 
       and _c('รูปผู้บาดเจ็บรถคู่กรณี') == 'รูปผู้บาดเจ็บรถคู่กรณี')
 check("หมวดรูป: ว่าง/ไม่รู้จัก → 'รูปประกอบ'",
       _c('') == 'รูปประกอบ' and _c('รูปอะไรไม่รู้') == 'รูปประกอบ')
+# EMCS แยก "ลูกค้าแจ้ง บ.ประกัน" กับ "บ.ประกันแจ้งสำรวจ" — เดิมบอทยัดค่าเดียวกันทั้งคู่
+# (เจอตอนตรวจ draft S68426076667: ได้ 14:27 ทั้งที่ต้นทาง 14:10) → เวลาตอบสนองเพี้ยน
+_d_two = claim_data.ClaimData()
+_main._populate_claim_from_report(_d_two, {
+    'acc_customer_report_date': '26/05/2569|14:10',
+    'acc_insurance_notify_date': '26/05/2569|14:27'})
+check("เวลาแจ้ง: ลูกค้าแจ้ง ≠ ประกันแจ้งสำรวจ (ไม่ยัดค่าเดียวกัน)",
+      (_d_two.call_date, _d_two.call_time) == ('26/05/2569', '14:10')
+      and (_d_two.noti_date, _d_two.noti_time) == ('26/05/2569', '14:27'),
+      f"{_d_two.call_time} vs {_d_two.noti_time}")
+_d_one = claim_data.ClaimData()
+_main._populate_claim_from_report(_d_one, {'acc_insurance_notify_date': '26/05/2569|14:27'})
+check("เวลาแจ้ง: ไม่มีเวลาลูกค้าแจ้ง (ISURVEY) → call_* ว่าง ให้ fill_accident fallback",
+      (_d_one.call_date, _d_one.call_time) == ('', '')
+      and _d_one.noti_time == '14:27')
+
 # รูป "ยืนยันถึงที่เกิดเหตุ" = หลักฐานภายในของ se-survey ห้ามส่งเข้า EMCS (กติกา user 2026-07-26)
 check("arrival: arrival.jpg = รูปยืนยันถึงที่เกิดเหตุ → ข้าม",
       _main._is_arrival_photo('arrival.jpg') and _main._is_arrival_photo('ARRIVAL.JPG')

@@ -1460,12 +1460,19 @@ def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห�
     set_text(driver, "txtAcc_Comment", data.review_comment)
     set_text(driver, "txtAcc_Surv", data.surveyor_name)
 
-    # วัน-เวลาลูกค้าแจ้ง และบริษัทแจ้งพนักงานสำรวจ (ใช้ค่าเดียวกันตามเดิม)
+    # EMCS แยก 2 จังหวะ: "ลูกค้าแจ้ง บ.ประกัน" (Acc_Call) → "บ.ประกันแจ้งพนักงานสำรวจ"
+    # (Ins_Calling_Surv) — ใช้วัดเวลาตอบสนอง จึงห้ามยัดค่าเดียวกันทั้งคู่
+    # se-survey เก็บแยก (acc_customer_report_date / acc_insurance_notify_date) และ XML ส่งแยกถูกแล้ว
+    # ISURVEY ไม่มีค่าแรก → ว่าง แล้ว fallback มาใช้ noti_* เหมือนพฤติกรรมเดิม
     noti_date = to_buddhist_date(data.noti_date)
     nh, nm = split_hhmm(data.noti_time)
-    set_text(driver, "wuCale_Acc_Call_Date_txtCalendar", noti_date)
-    set_text(driver, "txtAcc_Call_Date_Hour", nh)
-    set_text(driver, "txtAcc_Call_Date_Minute", nm)
+    call_date = to_buddhist_date(data.call_date) or noti_date
+    ch, cm = split_hhmm(data.call_time)
+    if not (ch or cm):
+        ch, cm = nh, nm
+    set_text(driver, "wuCale_Acc_Call_Date_txtCalendar", call_date)
+    set_text(driver, "txtAcc_Call_Date_Hour", ch)
+    set_text(driver, "txtAcc_Call_Date_Minute", cm)
     set_text(driver, "wuCale_Ins_Calling_Surv_Date_txtCalendar", noti_date)
     set_text(driver, "txtIns_Calling_Surv_Date_Hour", nh)
     set_text(driver, "txtIns_Calling_Surv_Date_Minute", nm)
