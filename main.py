@@ -725,7 +725,7 @@ def _populate_claim_from_report(data, rep):
     return gv('acc_damage_type') or 'auto'
 
 
-def _images_from_zip_drop(cfg, claim_no, img_dir):
+def _images_from_zip_drop(cfg, claim_no, img_dir, quiet: bool = False):
     """เคสไม่มีรูปในแอป → ใช้ zip export ของเคลมที่วางไว้ใน SESURVEY_ZIP_DIR เป็นแหล่งรูป
 
     ทำไม: เคสที่ข้อมูลมาจาก XML export ของพอร์ทัลล้วน (พนักงานไม่ได้ถ่ายผ่านแอป) รูปจะอยู่
@@ -740,7 +740,8 @@ def _images_from_zip_drop(cfg, claim_no, img_dir):
     zip_dir = Path(str(getattr(cfg, "sesurvey_zip_dir", "") or (cfg.base_dir / "zip_import")))
     cands = sorted(zip_dir.glob(f"*{claim_no}*.zip")) +         sorted(zip_dir.glob(f"*/*{claim_no}*.zip"))
     if not cands:
-        log(f"   (ไม่พบ zip export ของเคลมนี้ใน {zip_dir} → ไม่มีรูปส่งขึ้น EMCS)")
+        if not quiet:
+            log(f"   (ไม่พบ zip export ของเคลมนี้ใน {zip_dir} → ไม่มีรูปส่งขึ้น EMCS)")
         return None
     zp = cands[0]
     try:
@@ -815,6 +816,20 @@ def _download_case_photos(cfg, case_id, hdrs, claim_no):
             log(f"   API ไม่มีหมวด → เติมจาก zip export {len(cat_map)}/{got} รูป (drop: {zip_dir})")
         else:
             log(f"   API ไม่มีหมวด + ไม่พบ zip export ({zip_dir}) → อัปเป็น 'รูปประกอบ'")
+
+    # zip export ของเคลม = "แหล่งรูปเพิ่ม" ด้วย ไม่ใช่แค่แหล่งหมวด — เคสที่พนักงานไม่ได้ถ่าย
+    # ผ่านแอป (งานที่รับมาเป็น zip+xml จากพอร์ทัล) API จะมีแค่รูปยืนยันถึงที่เกิดเหตุใบเดียว
+    # ถ้ารอเงื่อนไข "ไม่มีรูปเลย" จะไม่มีวันเข้าเงื่อนไข → รวมรูปจาก zip เสมอเมื่อมี zip วางไว้
+    # (หมวดจาก API ชนะเสมอ; zip เติมเฉพาะไฟล์ที่ API ไม่มี)
+    zres = _images_from_zip_drop(cfg, claim_no, img_dir, quiet=True)
+    if zres:
+        try:
+            zcat = json.loads((img_dir / "_categories.json").read_text(encoding="utf-8"))
+        except Exception:
+            zcat = {}
+        added = {k: v for k, v in zcat.items() if k not in cat_map}
+        cat_map = {**added, **cat_map}      # ของ API ทับของ zip
+        log(f"   + รวมรูปจาก zip export อีก {len(added)} ใบ (พร้อมหมวด)")
 
     # sidecar หมวดรูป (ให้ upload_images จัดกลุ่มตามประเภท); ไม่มีหมวดเลย = ไม่เขียน (flow เดิมยังทำงาน)
     if cat_map:
