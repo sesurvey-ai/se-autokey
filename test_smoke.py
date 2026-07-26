@@ -1210,6 +1210,12 @@ check("หมวดรูป: หมวดฐานไม่มีเลข → 
       and _c('รูปผู้บาดเจ็บรถคู่กรณี') == 'รูปผู้บาดเจ็บรถคู่กรณี')
 check("หมวดรูป: ว่าง/ไม่รู้จัก → 'รูปประกอบ'",
       _c('') == 'รูปประกอบ' and _c('รูปอะไรไม่รู้') == 'รูปประกอบ')
+check("หมวดรูป zip: ACC_MAP → 'รูปแผนที่เกิดเหตุ' (เดิมตกไป 'รูปประกอบ')",
+      images.ZIP_CAT_TO_EMCS.get('ACC_MAP') == 'รูปแผนที่เกิดเหตุ')
+check("หมวดรูป zip: INS/OTHERS/REPORTS ยังเหมือนเดิม",
+      images.ZIP_CAT_TO_EMCS['INS'] == 'รูปรถประกัน'
+      and images.ZIP_CAT_TO_EMCS['OTHERS'] == 'รูปประกอบ'
+      and images.ZIP_CAT_TO_EMCS['REPORTS'] == 'รูปประกอบ')
 check("หมวดรูป: zip export ใช้ป้ายเดียวกับ EMCS",
       images._TP_EXPORT_LABEL['TP_PERSON'].format(n=2) == 'รูปผู้บาดเจ็บ คนที่2'
       and images._TP_EXPORT_LABEL['TP_PROP'].format(n=2) == 'รูปทรัพย์สิน รายการที่2')
