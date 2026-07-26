@@ -10,6 +10,7 @@ from pathlib import Path
 
 from rapidfuzz import fuzz, process
 from selenium.common.exceptions import (
+    StaleElementReferenceException,
     TimeoutException,
     UnexpectedAlertPresentException,
 )
@@ -2326,6 +2327,119 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
         _upload_one_batch(driver, paths, label, html5_ui)
 
     log("EMCS: อัปโหลดรูปเสร็จ")
+
+
+def list_report_images(driver) -> list:
+    """อ่านตารางรูปที่แนบไว้แล้ว (#dgvImageList) — ต้องอยู่หน้ารูป (frmImageUpload) แล้ว
+
+    1 แถว = 10 คอลัมน์: ลำดับ | checkbox | รายการ(ชื่อไฟล์) | ดูรูป | ครั้งที่ |
+    สถานะ(ประเภทรูป) | IMAGEID | MEM_TYPE | วันที่แนบรูป | ผู้แนบรูป
+    IMAGEID/MEM_TYPE ซ่อนด้วย .txtHide → ต้องอ่าน textContent ไม่ใช่ .text"""
+    def _txt(el):
+        return " ".join((el.get_attribute("textContent") or "").split())
+
+    out = []
+    for tr in driver.find_elements(By.CSS_SELECTOR, "#dgvImageList tr"):
+        tds = tr.find_elements(By.TAG_NAME, "td")
+        if len(tds) < 6:
+            continue                      # แถวหัวตาราง (th) / แถว pager
+        chk = tds[1].find_elements(By.CSS_SELECTOR, "input[type=checkbox]")
+        if not chk:
+            continue                      # แถวหัวตารางที่ใช้ td (chkAll) ถูกกรองด้วย id ข้างล่าง
+        cid = chk[0].get_attribute("id") or ""
+        if cid.endswith("_chkAll"):
+            continue                      # ⛔ ห้ามแตะ "ติ๊กทั้งหมด"
+        out.append({
+            "seq": _txt(tds[0]),
+            "chk": chk[0],
+            "chk_id": cid,
+            "name": _txt(tds[2]),                       # คอลัมน์ "รายการ" = ชื่อไฟล์
+            "round": _txt(tds[4]) if len(tds) > 4 else "",
+            "type": _txt(tds[5]) if len(tds) > 5 else "",   # คอลัมน์ "สถานะ" = ประเภทรูป
+            "image_id": _txt(tds[6]) if len(tds) > 6 else "",
+            "added": _txt(tds[8]) if len(tds) > 8 else "",
+        })
+    return out
+
+
+def delete_report_images(driver, names) -> list:
+    """ลบรูปที่แนบไว้แล้ว ตาม "ชื่อไฟล์เป๊ะ ๆ" (คอลัมน์ รายการ) — ต้องอยู่หน้ารูปแล้ว
+
+    ใช้ตอนมีรูปหลุดขึ้น EMCS ไปแล้ว (เช่นรูปยืนยันถึงที่เกิดเหตุก่อน fix 727411f)
+    EMCS ไม่มีปุ่มลบรายแถว มีแต่ "ติ๊กแล้วกดลบ" → ต้องระวังเป็นพิเศษ
+
+    guard (ล้มทั้งชุดถ้าไม่ผ่าน — ยอมไม่ลบ ดีกว่าลบผิดใบ):
+    - ทุกชื่อต้องเจอ "พอดี 1 แถว" (0 หรือ >1 = หยุด)
+    - ติ๊กเฉพาะแถวเป้าหมาย + ตรวจซ้ำว่าที่ติ๊กจริงตรงเป๊ะ ก่อนกดลบ
+    - ห้ามแตะ chkAll (list_report_images กรองออกแล้ว)
+    - ลบเสร็จอ่านตารางใหม่ ยืนยันว่าหายเฉพาะเป้าหมาย ใบอื่นครบเท่าเดิม
+    คืน list ของแถวที่ลบไป"""
+    want = [str(n).strip() for n in (names or []) if str(n).strip()]
+    if not want:
+        raise RuntimeError("delete_report_images: ไม่ได้ระบุชื่อไฟล์ที่จะลบ")
+
+    before = list_report_images(driver)
+    if not before:
+        raise RuntimeError("ไม่พบตารางรูป (#dgvImageList) หรือเรื่องนี้ยังไม่มีรูปแนบ")
+
+    targets = []
+    for n in want:
+        hit = [r for r in before if r["name"] == n]
+        if len(hit) != 1:
+            raise RuntimeError(
+                f"หยุด: ชื่อไฟล์ '{n}' เจอ {len(hit)} แถว (ต้องเจอพอดี 1) — "
+                f"รูปในเรื่องนี้: {[r['name'] for r in before]}")
+        targets.append(hit[0])
+
+    for r in targets:
+        log(f"   จะลบ: [{r['seq']}] {r['name']}  (ประเภท '{r['type']}', "
+            f"IMAGEID {r['image_id']}, แนบ {r['added']})")
+        if not r["chk"].is_selected():
+            r["chk"].click()
+
+    # ตรวจซ้ำหน้างาน: ที่ติ๊กอยู่จริง ต้องเท่ากับเป้าหมายเป๊ะ ๆ
+    ticked = [r["name"] for r in list_report_images(driver) if r["chk"].is_selected()]
+    if sorted(ticked) != sorted(r["name"] for r in targets):
+        raise RuntimeError(
+            f"หยุด: ติ๊กไม่ตรงเป้า — ติ๊กอยู่ {ticked} แต่ตั้งใจลบ "
+            f"{[r['name'] for r in targets]}")
+
+    log(f"EMCS: ลบรูป {len(targets)} ใบ (จากทั้งหมด {len(before)} ใบ)")
+    # ปุ่มลบตัวจริง (submit id=btnDelete_Image) อยู่ในตาราง #oldBtn ที่ display:none →
+    # Selenium คลิกไม่ได้. ปุ่มที่เห็นคือ btnDelete_Image2 ซึ่ง jQuery ผูกไว้ให้ยิง
+    # $("#btnDelete_Image").click() ต่อ (= ผ่าน handler confirm แล้ว submit จริง)
+    btn = next((b for b in (driver.find_elements(By.ID, "btnDelete_Image2")
+                            + driver.find_elements(By.ID, "btnDelete_Image"))
+                if b.is_displayed()), None)
+    if btn is None:
+        raise RuntimeError(
+            "ไม่พบปุ่มลบรูปที่กดได้ (btnDelete_Image2/btnDelete_Image ถูกซ่อนทั้งคู่) — "
+            "มักแปลว่าเรื่องนี้ส่งงานแล้ว/หน้าเป็นอ่านอย่างเดียว ลบไม่ได้")
+    btn.click()
+    accept_alert(driver)                            # confirm("คุณต้องการลบรูปภาพที่เลือกไว้ใช่หรือไม่?")
+    time.sleep(2)
+
+    # หลัง postback ตารางถูก render ใหม่ — อ่านเร็วไปจะเจอ StaleElementReference/แถวยังไม่ครบ
+    after = []
+    for attempt in range(5):
+        try:
+            after = list_report_images(driver)
+            if after:
+                break
+        except StaleElementReferenceException:
+            pass
+        time.sleep(1)
+    if not after:
+        raise RuntimeError(
+            "ลบไปแล้วแต่อ่านตารางรูปหลังลบไม่ได้ — เปิด EMCS ตรวจด้วยตาว่าลบถูกใบไหม")
+    gone = {r["name"] for r in before} - {r["name"] for r in after}
+    want_set = {r["name"] for r in targets}
+    if gone != want_set:
+        raise RuntimeError(
+            f"⚠️ ผลลบไม่ตรงที่สั่ง: หายไป {sorted(gone)} แต่สั่งลบ {sorted(want_set)} "
+            f"(ก่อน {len(before)} → หลัง {len(after)} ใบ) — ตรวจ EMCS ด้วยมือทันที")
+    log(f"✓ ลบเรียบร้อย — เหลือรูป {len(after)} ใบ")
+    return targets
 
 
 def _pick_draft_report(reports, esurvey: str = "") -> str:

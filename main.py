@@ -145,12 +145,19 @@ def parse_args():
                    help="เปิด draft เดิม แล้วเติม 'เฉพาะบล็อกผู้บาดเจ็บ' + บันทึก (re-save หน้าหลักเพื่อ "
                         "ปลดล็อกเมนู) — ไม่แตะคู่กรณี/ความเสียหาย/ทรัพย์สิน/รูป/ค่าใช้จ่าย (กันเพิ่ม row "
                         "ซ้ำ+อัปรูปซ้ำ) ไม่กดส่งงาน. ใช้เมื่อผู้บาดเจ็บ save ไม่ผ่านตอน import (เช่น รพ.ว่าง)")
+    p.add_argument("--emcs-images", default="",
+                   help="เปิดเรื่องเดิมใน EMCS แล้ว 'ดูรายการรูปที่แนบไว้' (อ่านอย่างเดียว) — "
+                        "ใส่เลขเคลม; ระบุเรื่องด้วย --esurvey (ไม่ระบุ = เลือก draft อัตโนมัติ). "
+                        "ใช้คู่กับ --emcs-delete-image เพื่อลบรูปที่หลุดขึ้นไป")
+    p.add_argument("--emcs-delete-image", default="",
+                   help="ใช้กับ --emcs-images: ลบรูปตาม 'ชื่อไฟล์เป๊ะ ๆ' ในคอลัมน์ 'รายการ' "
+                        "(หลายใบคั่นด้วย ,). ต้องเจอชื่อละพอดี 1 แถว ไม่งั้นหยุดไม่ลบเลย")
     args = p.parse_args()
 
     if not (args.claim or args.claims or args.claims_file or args.data_json
-            or args.sesurvey_case):
+            or args.sesurvey_case or args.emcs_images):
         p.error("ต้องระบุ --claim / --claims / --claims-file / --data-json / "
-                "--sesurvey-case อย่างน้อยหนึ่งอย่าง")
+                "--sesurvey-case / --emcs-images อย่างน้อยหนึ่งอย่าง")
     return args
 
 
@@ -1065,6 +1072,41 @@ def _resolve_case_id_by_survey(cfg, hdrs, survey_no):
     return cid
 
 
+def run_emcs_images(cfg, args):
+    """ดู (และลบ) รูปที่แนบไว้ในเรื่องเดิมของ EMCS — ไม่แตะข้อมูลส่วนอื่นเลย
+
+    ไม่ระบุ --emcs-delete-image = อ่านอย่างเดียว (list ชื่อไฟล์/ประเภท/วันที่แนบ)
+    ใช้ลบรูปที่หลุดขึ้นไป เช่นรูปยืนยันถึงที่เกิดเหตุก่อน fix 727411f"""
+    claim = args.emcs_images.strip()
+    names = [n.strip() for n in (args.emcs_delete_image or "").split(",") if n.strip()]
+    banner(f"EMCS รูปแนบ: เคลม {claim}" + (f" — ลบ {len(names)} ใบ" if names else " (อ่านอย่างเดียว)"))
+    driver = make_driver(detach=True,
+                         download_dir=cfg.download_dir / "_dl" / str(os.getpid()))
+    try:
+        emcs.login(driver, cfg)
+        reports = emcs.find_existing_reports(driver, claim)
+        if not reports:
+            raise SystemExit(f"ไม่พบเรื่องของเคลม {claim} ใน EMCS")
+        target = emcs._pick_draft_report(reports, args.esurvey)
+        log(f"EMCS: เปิดเรื่อง {target} → หน้ารูป")
+        emcs.open_report_images(driver, claim, target)
+        emcs.click_retry(driver, emcs.By.ID, "wuMenuPage1_imbImage")
+        emcs.time.sleep(2)
+        rows = emcs.list_report_images(driver)
+        log(f"รูปที่แนบไว้ {len(rows)} ใบ:")
+        for r in rows:
+            log(f"   [{r['seq']:>3}] {r['name']:<32} | {r['type']:<24} | ครั้งที่ {r['round']} | {r['added']}")
+        if not names:
+            log("(อ่านอย่างเดียว — ใส่ --emcs-delete-image \"ชื่อไฟล์\" เพื่อลบ)")
+            return
+        emcs.delete_report_images(driver, names)
+    except Exception:
+        save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"emcsimg_{claim}")
+        raise
+    finally:
+        driver.quit()
+
+
 def run_sesurvey_import(cfg, args):
     """โหมดงานจาก se-survey: ดึง SURV_REPORT XML ของเคสจาก api.sesurvey.cloud
     (แอปสำรวจของเราเอง — ข้อมูลครบกว่า XML ของ ISURVEY) → ตรวจ/parse → นำเข้า EMCS
@@ -1353,6 +1395,10 @@ def main():
     set_log_file(cfg.runs_dir / "logs"
                  / f"run_{datetime.now():%Y%m%d_%H%M%S}_{os.getpid()}.log")
 
+    # --emcs-images: ดู/ลบรูปที่แนบไว้ในเรื่องเดิม (ไม่แตะข้อมูลอื่นเลย) แล้วจบ
+    if args.emcs_images:
+        run_emcs_images(cfg, args)
+        return
     # --sesurvey-case: ดึงงานจากระบบ se-survey → นำเข้า EMCS (default dry-run; --sesurvey-live = จริง) แล้วจบ
     if args.sesurvey_case:
         run_sesurvey_import(cfg, args)
