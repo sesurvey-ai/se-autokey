@@ -1210,6 +1210,42 @@ check("หมวดรูป: หมวดฐานไม่มีเลข → 
       and _c('รูปผู้บาดเจ็บรถคู่กรณี') == 'รูปผู้บาดเจ็บรถคู่กรณี')
 check("หมวดรูป: ว่าง/ไม่รู้จัก → 'รูปประกอบ'",
       _c('') == 'รูปประกอบ' and _c('รูปอะไรไม่รู้') == 'รูปประกอบ')
+# ชื่อชิ้นส่วนบนแผนภาพมี ซ้าย/ขวา ในตัวแล้ว — ต่อท้ายซ้ำได้ 'ประตูหน้าซ้ายซ้าย' (12/19 ชิ้นโดน)
+_dmg = _main._report_damage_items([
+    {'part': 'ประตูหน้าซ้าย', 'pos': 'L', 'level': 'M'},
+    {'part': 'บังโคลนหลังขวา', 'pos': 'R', 'level': 'L'},
+    {'part': 'กันชนหน้า', 'pos': 'A', 'level': 'H'},
+    {'part': 'กระจกมองข้าง', 'pos': 'L', 'level': 'L'},   # ชื่อไม่มีข้าง → ต้องต่อให้
+])
+check("ความเสียหาย: ไม่ต่อ ซ้าย/ขวา ซ้ำเมื่อชื่อมีอยู่แล้ว",
+      [x[0] for x in _dmg] == ['ประตูหน้าซ้าย', 'บังโคลนหลังขวา', 'กันชนหน้า', 'กระจกมองข้างซ้าย'],
+      str([x[0] for x in _dmg]))
+check("ความเสียหาย: ระดับ → rank A-D ยังถูก",
+      [x[1] for x in _dmg] == ['B', 'A', 'C', 'A'])
+
+# 4 ช่องที่แอปเก็บ + EMCS มีช่อง แต่เดิมไม่มีอะไรพาไป
+_d4 = claim_data.ClaimData()
+_main._populate_claim_from_report(_d4, {
+    'mileage': '45000', 'model_no': 'MDL-9', 'driver_by_policy': 'สมชาย ใจดี',
+    'acc_surveyor_phone': '0812345678'})
+check("พาไป EMCS: เลข กม./Model/ผู้ขับตามกรมธรรม์/โทรผู้สำรวจ",
+      (_d4.mileage, _d4.model_no, _d4.driver_by_policy, _d4.surveyor_phone)
+      == ('45000', 'MDL-9', 'สมชาย ใจดี', '0812345678'),
+      f"{_d4.mileage}/{_d4.model_no}/{_d4.driver_by_policy}/{_d4.surveyor_phone}")
+
+# ผลคดี: ทุกค่าที่แอปเก็บจริงต้อง exact-match — ห้ามตกไป fuzzy
+# ('ฝ่ายผิด' ได้ WRatio 90 เท่ากันทั้ง 'รถประกันเป็นฝ่ายผิด'/'รถคู่กรณีเป็นฝ่ายผิด' = พลิกฝ่ายได้)
+_APP_FAULT = {'ฝ่ายผิด': 'rdoAcc_Cause00', 'ฝ่ายถูกและผิด': 'rdoAcc_Cause04',
+              'คู่กรณีผิด': 'rdoAcc_Cause01', 'ประมาทร่วม': 'rdoAcc_Cause02',
+              'รอสรุปผลคดี': 'rdoAcc_Cause03', 'ยกเลิกการเคลม': 'rdoAcc_Cause05',
+              'ไปถึงแล้วไม่พบ': 'rdoAcc_Cause06'}
+for _v, _rid in _APP_FAULT.items():
+    check(f"ผลคดี (ค่าจริงจากแอป): '{_v}' → {_rid} แบบ exact",
+          emcs.CAUSE_RADIO.get(_v) == _rid, str(emcs.CAUSE_RADIO.get(_v)))
+from rapidfuzz import fuzz as _fz
+_amb = {emcs.CAUSE_RADIO[k] for k in emcs.CAUSE_RADIO if _fz.WRatio('ฝ่ายผิด', k) >= 89}
+check("ผลคดี: 'ฝ่ายผิด' ยังคลุมเครือถ้าใช้ fuzzy (เหตุผลที่ต้อง exact)", len(_amb) > 1, str(_amb))
+
 # EMCS แยก "ลูกค้าแจ้ง บ.ประกัน" กับ "บ.ประกันแจ้งสำรวจ" — เดิมบอทยัดค่าเดียวกันทั้งคู่
 # (เจอตอนตรวจ draft S68426076667: ได้ 14:27 ทั้งที่ต้นทาง 14:10) → เวลาตอบสนองเพี้ยน
 _d_two = claim_data.ClaimData()

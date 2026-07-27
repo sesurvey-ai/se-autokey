@@ -569,7 +569,11 @@ def _report_damage_items(raw):
             continue
         pos = str(it.get('pos') or '').strip().upper()
         rank = _DMG_LVL_RANK.get(str(it.get('level') or '').strip().upper(), '')
-        out.append((part + _DMG_POS_TH.get(pos, ''), rank))
+        # ชื่อชิ้นส่วนบนแผนภาพมีคำว่า ซ้าย/ขวา อยู่ในตัวแล้ว ('ประตูหน้าซ้าย') และ pos
+        # ก็ถูก derive จากชื่อนั้นอีกที → ต่อท้ายดื้อ ๆ จะได้ 'ประตูหน้าซ้ายซ้าย'
+        # (12 จาก 19 ชิ้นบนแผนภาพโดนหมด) ต่อเฉพาะตอนชื่อยังไม่มีคำนั้น
+        side = _DMG_POS_TH.get(pos, '')
+        out.append((part if (not side or side in part) else part + side, rank))
     return out
 
 
@@ -715,6 +719,10 @@ def _populate_claim_from_report(data, rep):
     data.surveyor_comment = " ".join(
         (str(gv('surveyor_comment') or "").strip() or str(gv('notes') or "")).split())
     data.surveyor_name = gv('acc_surveyor') or gv('surveyor_name')
+    data.surveyor_phone = gv('acc_surveyor_phone') or gv('surveyor_phone')
+    data.mileage = gv('mileage')
+    data.model_no = gv('model_no')
+    data.driver_by_policy = gv('driver_by_policy')
     data.damage_estimate = gv('estimated_cost')
     data.prb_number = gv('prb_number')
     data.notify_value = gv('claim_ref_no')   # เลขที่รับแจ้ง (บังคับ * — se-survey มีรูปแบบถูก)

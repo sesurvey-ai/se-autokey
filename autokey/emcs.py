@@ -63,6 +63,13 @@ CAUSE_RADIO = {
     "รถประกันเป็นฝ่ายถูกและผิด": "rdoAcc_Cause04",
     "ยกเลิกการเคลม": "rdoAcc_Cause05",
     "ไปถึงแล้วไม่พบ": "rdoAcc_Cause06",
+    # ค่าสั้นที่แอปมือถือเก็บจริง (survey_form_screen.dart _faultDropdown เก็บ key ไม่ใช่ label)
+    # ต้อง map ตรงตัว ห้ามพึ่ง fuzzy: 'ฝ่ายผิด' ได้ WRatio 90 เท่ากันทั้ง 'รถประกันเป็นฝ่ายผิด'
+    # และ 'รถคู่กรณีเป็นฝ่ายผิด' → extractOne ตัดสินด้วยลำดับ dict = เสี่ยงพลิกฝ่ายทั้งสำนวน
+    "ฝ่ายผิด": "rdoAcc_Cause00",
+    "รถประกันฝ่ายผิด": "rdoAcc_Cause00",
+    "คู่กรณีผิด": "rdoAcc_Cause01",
+    "ฝ่ายถูกและผิด": "rdoAcc_Cause04",
 }
 
 # ความเสียหายกรอกได้สูงสุด 8 รายการ (คอลัมน์ A 4 + คอลัมน์ B 4 ตาม layout หน้าเว็บ)
@@ -408,8 +415,13 @@ def fill_third_parties(driver, data: ClaimData):
             set_text(driver, p + "txtCost_Damage", cost)
         if str(tp.get("has_kfk", "")).strip().upper() in ("Y", "YES", "1", "TRUE"):
             try:
-                driver.find_element(By.ID, p + "chkHas_KFK").click()
-                log(f"   ✓ ติ๊กเข้าสัญญา KFK คันที่ {n + 1}")
+                # click() สลับสถานะ — ถ้าติ๊กไว้แล้ว (เติม draft รอบสอง) จะกลายเป็นปลดติ๊ก
+                el = driver.find_element(By.ID, p + "chkHas_KFK")
+                if el.is_selected():
+                    log(f"   – KFK คันที่ {n + 1} ติ๊กไว้แล้ว ไม่กดซ้ำ")
+                else:
+                    el.click()
+                    log(f"   ✓ ติ๊กเข้าสัญญา KFK คันที่ {n + 1}")
             except Exception:
                 log(f"   ⚠️ ติ๊ก KFK คันที่ {n + 1} ไม่ได้")
 
@@ -1332,6 +1344,9 @@ def fill_car(driver, data: ClaimData):
         _select_car_brand(driver, data.car_brand, label="ยี่ห้อรถ (เลือกซ้ำ)")
     fuzzy_select(driver, "ddlCar_Color", data.car_color, presleep=1, label="สีรถ")
     set_text(driver, "txtCar_RegNo_Year", _year_ad(data.car_reg_year))
+    # เดิมกรอกให้เฉพาะคู่กรณี (emcs.py:298) ของรถประกันตกหล่น — แอปเก็บมาแล้วต้องพาไป
+    set_text(driver, "txtKm_No", data.mileage)
+    set_text(driver, "txtModelNo", data.model_no)
     _fill_ev(driver, "", data.ev_type, data.ev_battery_no, data.ev_charger_no,
              data.ev_battery_start)
 
@@ -1459,6 +1474,7 @@ def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห�
     set_text(driver, "txtAcc_result", data.accident_summary)
     set_text(driver, "txtAcc_Comment", data.review_comment)
     set_text(driver, "txtAcc_Surv", data.surveyor_name)
+    set_text(driver, "txtAcc_Tel", data.surveyor_phone)   # ช่องติดกับผู้สำรวจภัย เดิมว่างทุกเคส
 
     # EMCS แยก 2 จังหวะ: "ลูกค้าแจ้ง บ.ประกัน" (Acc_Call) → "บ.ประกันแจ้งพนักงานสำรวจ"
     # (Ins_Calling_Surv) — ใช้วัดเวลาตอบสนอง จึงห้ามยัดค่าเดียวกันทั้งคู่
@@ -1515,11 +1531,23 @@ def fill_verdict(driver, data: ClaimData):
         log("   ⚠️ ไม่มีข้อมูลผลคดีจาก ISURVEY — ข้าม (เลือกเองบนหน้าเว็บ)")
         return
 
-    best = process.extractOne(
-        data.acc_result, list(CAUSE_RADIO.keys()), scorer=fuzz.WRatio
-    )
-    label, score = best[0], best[1]
-    log(f"   ✓ ผลคดี: '{data.acc_result}' → '{label}' (score {score:.0f})")
+    # ผลคดีเลือกผิด = สลับฝ่ายผิดทั้งสำนวน → ห้ามพึ่ง fuzzy ล้วน
+    # ('ฝ่ายผิด' ได้ 90 เท่ากันทั้ง 'รถประกันเป็นฝ่ายผิด' และ 'รถคู่กรณีเป็นฝ่ายผิด'
+    #  extractOne จึงตัดสินด้วยลำดับใน dict = เสี่ยงพลิกฝ่าย)
+    _res = " ".join(str(data.acc_result).split())
+    if _res in CAUSE_RADIO:
+        label, score = _res, 100
+    else:
+        best = process.extractOne(_res, list(CAUSE_RADIO.keys()), scorer=fuzz.WRatio)
+        label, score = best[0], best[1]
+        _tie = [k for k in CAUSE_RADIO
+                if fuzz.WRatio(_res, k) >= score - 1 and CAUSE_RADIO[k] != CAUSE_RADIO[label]]
+        if _tie:
+            log(f"   ⚠️ ผลคดี '{_res}' คลุมเครือ (คะแนนเท่ากับ {_tie}) — ไม่เดา ข้ามให้คนเลือกเอง")
+            wait_for_manual_fill("ผลคดี (ฝ่ายประมาท)",
+                                 f"ข้อความ '{_res}' ตรงได้หลายตัวเลือก เลือกเองบนหน้า EMCS")
+            return
+    log(f"   ✓ ผลคดี: '{_res}' → '{label}' (score {score:.0f})")
     driver.find_element(By.ID, CAUSE_RADIO[label]).click()
     if CAUSE_RADIO[label] == "rdoAcc_Cause01":
         _fill_opponent_fault(driver, data)

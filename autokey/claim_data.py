@@ -95,6 +95,11 @@ class ClaimData:
     car_brand: str = ""            # ยี่ห้อรถ
     car_color: str = ""            # สีรถ
     car_reg_year: str = ""         # ปีจดทะเบียน (แอปเก็บ พ.ศ. — EMCS ใช้ ค.ศ.)
+    # 4 ช่องที่แอปมือถือให้พนักงานกรอก + EMCS มีช่องรองรับ แต่เดิมไม่มีอะไรพาไป
+    mileage: str = ""              # เลข กม. รถประกัน → txtKm_No (ของคู่กรณีส่งอยู่แล้ว)
+    model_no: str = ""             # หมายเลข Model → txtModelNo
+    driver_by_policy: str = ""     # ชื่อผู้ขับขี่ตามกรมธรรม์ → txtDriver_By_Policy
+    surveyor_phone: str = ""       # โทรศัพท์ผู้สำรวจ → txtAcc_Tel (อยู่ติดกับ txtAcc_Surv)
     # รถยนต์ไฟฟ้า (EV) — se-survey เก็บครบ แต่เดิมไม่มีอะไรพาเข้า EMCS
     ev_type: str = ""              # code BEV/FCEV/HEV/MEV/PHEV (= value ของ ddlEvType)
     ev_battery_no: str = ""        # เลขแบตเตอรี่ (txtBatt_Number)
