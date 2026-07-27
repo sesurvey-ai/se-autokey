@@ -1210,6 +1210,26 @@ check("หมวดรูป: หมวดฐานไม่มีเลข → 
       and _c('รูปผู้บาดเจ็บรถคู่กรณี') == 'รูปผู้บาดเจ็บรถคู่กรณี')
 check("หมวดรูป: ว่าง/ไม่รู้จัก → 'รูปประกอบ'",
       _c('') == 'รูปประกอบ' and _c('รูปอะไรไม่รู้') == 'รูปประกอบ')
+# ประเภทผู้บาดเจ็บ: EMCS มี 5 ตัว แต่ XML มีรหัสแค่ 3 (DV/PV/ON) → ต้องพาป้ายไทยจากแอปไปเอง
+_d_inj = claim_data.ClaimData()
+_main._populate_claim_from_report(_d_inj, {'injured_persons': [
+    {'name': 'นาย พาสกรณ์ มากพูน', 'cid': '3140500344748',
+     'person_type': 'ผู้ขับขี่ - รถคู่กรณี', 'gender': 'ชาย'},
+    {'name': 'น.ส. อุมาพร รื่นภาคลาภ', 'cid': '3100201875903',
+     'person_type': 'ผู้ขับขี่ - รถประกัน', 'gender': 'หญิง'}]})
+check("ผู้บาดเจ็บ: ดึงจาก report ได้ (เดิมมาจาก XML ทางเดียว)", len(_d_inj.injuries) == 2)
+check("ผู้บาดเจ็บ: key ตรงกับที่ fill_injuries อ่าน (citizen_id/injure/car_regno)",
+      'citizen_id' in _d_inj.injuries[0] and 'gender' in _d_inj.injuries[0])
+check("ผู้บาดเจ็บ: ป้ายไทยฝั่งคู่กรณี → 02 (XML ยุบเป็น ON แยกไม่ได้)",
+      emcs.PERSON_TYPE_LABEL[_d_inj.injuries[0]['person_type']] == '02')
+check("ผู้บาดเจ็บ: ครบทั้ง 5 ตัวเลือกของ ddlPerson_Type",
+      sorted({emcs.PERSON_TYPE_LABEL[k] for k in
+              ['ผู้ขับขี่ - รถประกัน', 'ผู้ขับขี่ - รถคู่กรณี', 'ผู้โดยสาร - รถประกัน',
+               'ผู้โดยสาร - รถคู่กรณี', 'บุคคลภายนอกรถ']})
+      == ['01', '02', '03', '04', '05'])
+check("ผู้บาดเจ็บ: รหัส XML เดิม (ISURVEY) ยังใช้ได้",
+      emcs.PERSON_TYPE_MAP == {'DV': '01', 'PV': '03', 'ON': '05'})
+
 # EMCS ฝั่งคู่กรณีไม่มี dropdown คำนำหน้าที่ใช้จริง — งานจริงใส่ในชื่อ ('นาย พาสกรณ์ มากพูน')
 _d_tp = claim_data.ClaimData()
 _main._populate_third_parties_from_report(_d_tp, {'opposing_parties': [

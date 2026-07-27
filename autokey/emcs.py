@@ -90,6 +90,16 @@ MAX_INJURIES = 32   # dtlInj_ctl00..ctl31 (ddlInj_Count มีถึง 32)
 MAX_ASSETS = 30     # dtlAsset_ctl00..ctl29 (ddlAsset_Count มีถึง 30)
 # ประเภทบุคคล: code XML (PERSON_TYPE) → value ของ ddlPerson_Type
 PERSON_TYPE_MAP = {"DV": "01", "PV": "03", "ON": "05"}  # ผู้ขับขี่ / ผู้โดยสาร / บุคคลภายนอก
+# ป้ายไทยจากแอปมือถือ (kPersonTypes) → value ของ ddlPerson_Type โดยตรง
+# XML มีรหัสแค่ DV/PV/ON (3 จาก 5) จึงแยก "ฝั่งคู่กรณี" ไม่ได้ — ป้ายจากแอปแยกได้
+# งานจริงของพนักงานใช้ '02 ผู้ขับขี่ - รถคู่กรณี' จริง (เคลมไอโออิ 2026013058298)
+PERSON_TYPE_LABEL = {
+    "ผู้ขับขี่ - รถประกัน": "01", "ผู้ขับขี่รถประกัน": "01",
+    "ผู้ขับขี่ - รถคู่กรณี": "02", "ผู้ขับขี่คู่กรณี": "02",
+    "ผู้โดยสาร - รถประกัน": "03", "ผู้โดยสารรถประกัน": "03",
+    "ผู้โดยสาร - รถคู่กรณี": "04", "ผู้โดยสารคู่กรณี": "04",
+    "บุคคลภายนอกรถ": "05", "บุคคลภายนอก": "05",
+}
 
 # คำนำหน้าชื่อ (เรียงยาว→สั้น เพื่อให้ 'นางสาว' จับก่อน 'นาง')
 # เรียงยาว→สั้น (จับ 'นางสาว' ก่อน 'นาง'); รวมตัวย่อ น.ส./นส. ที่ ISURVEY มักติดมากับชื่อ
@@ -587,8 +597,10 @@ def fill_injuries(driver, data: ClaimData):
         if nm and opo_drivers and max(
                 (fuzz.WRatio(nm, o) for o in opo_drivers), default=0) >= 85:
             return "02"
-        return PERSON_TYPE_MAP.get(
-            (inj.get("person_type", "") or "").strip().upper(), "")
+        raw = (inj.get("person_type", "") or "").strip()
+        # ป้ายไทยจากแอป (แม่นกว่า — แยกฝั่งคู่กรณีได้) มาก่อนรหัส XML
+        return (PERSON_TYPE_LABEL.get(" ".join(raw.split()))
+                or PERSON_TYPE_MAP.get(raw.upper(), ""))
 
     # ปลดล็อก + เลือกจำนวนก่อน เพื่อให้บล็อก render → อ่านตัวเลือก ddlPerson_Type จริง
     # (ต้องมีบล็อกก่อนถึงจะอ่านตัวเลือก dynamic ได้) — แล้วค่อยให้ผู้ใช้ยืนยันบน webui

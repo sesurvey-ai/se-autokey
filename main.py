@@ -651,6 +651,49 @@ def _populate_third_parties_from_report(data, rep):
         data.third_parties = tps
 
 
+def _populate_injuries_from_report(data, rep):
+    """เขียนทับ data.injuries ด้วยค่าจาก report ของ se-survey (ป้ายไทยจากแอป)
+
+    เดิมผู้บาดเจ็บมาจาก XML ทางเดียว (surv_xml) ซึ่ง PERSON_TYPE มีแค่ 3 รหัส DV/PV/ON
+    → แยก "ฝั่งคู่กรณี" (02/04) ไม่ได้ ทั้งที่ EMCS มี 5 ตัวเลือกและงานจริงใช้ 02
+    ทำแบบเดียวกับคู่กรณี (_populate_third_parties_from_report) ที่เขียนทับด้วยป้ายไทย
+    key ต้องตรงกับที่ fill_injuries อ่าน (citizen_id / job / car_regno / tel_no /
+    cost / injure / wounded_type) ไม่ใช่ชื่อคอลัมน์ของแอป"""
+    raw = rep.get('injured_persons')
+    if not isinstance(raw, list) or not raw:
+        return
+    out = []
+    for p in raw:
+        if not isinstance(p, dict):
+            continue
+        g = lambda k: str(p.get(k) or "").strip()   # noqa: E731
+        if not (g('name') or g('cid')):
+            continue
+        out.append({
+            "name": g('name'),
+            "age": g('age'),
+            "citizen_id": g('cid'),
+            "job": g('occupation'),
+            "car_regno": g('car_reg'),
+            "address": g('address'),
+            "tel_no": g('phone'),
+            "hospital": g('hospital'),
+            "cost": g('treat_cost'),
+            "injure": g('symptom'),
+            "gender": g('gender'),
+            "person_type": g('person_type'),      # ป้ายไทย → PERSON_TYPE_LABEL
+            "wounded_type": g('wound_level'),
+            "work_place": g('work_place'),
+            "position": g('position'),
+            "income": g('income'),
+            "relation": g('relation'),
+            "treat_from": g('treat_from'),
+            "treat_to": g('treat_to'),
+        })
+    if out:
+        data.injuries = out
+
+
 def _populate_claim_from_report(data, rep):
     """เติม ClaimData จาก report (ค่าไทยของ se-survey) ให้ fill_* กรอกหน้าหลัก EMCS ได้ครบ —
     XML import ตั้งค่าไว้บางส่วน แต่ fill_* ต้องมีค่าไทยใน ClaimData เพื่อเลือก dropdown บังคับ
@@ -743,6 +786,7 @@ def _populate_claim_from_report(data, rep):
     data.finish_date, data.finish_time = split_dt('acc_survey_complete_date')
     # คู่กรณี: เขียนทับ third_parties ด้วยค่าไทยจาก report (XML ให้ code — fill_third_parties เลือก dropdown ไม่ได้)
     _populate_third_parties_from_report(data, rep)
+    _populate_injuries_from_report(data, rep)
     # ความเสียหายรถประกัน (แผนภาพ structured) → รายการ EMCS ให้ fill_damage_list กรอก popup ได้
     # se-survey เก็บ insured_damage = [{part, pos:L/R/A, level:L/M/H/X}] (ไม่มีประเภท ครูด/บุบ แยก)
     # ก่อนหน้านี้ data.damage ว่างเสมอ → ฟอร์มความเสียหาย EMCS เปล่า ต้องติ๊กเองทุกเคส
