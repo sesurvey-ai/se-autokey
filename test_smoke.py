@@ -1210,8 +1210,29 @@ check("หมวดรูป: หมวดฐานไม่มีเลข → 
       and _c('รูปผู้บาดเจ็บรถคู่กรณี') == 'รูปผู้บาดเจ็บรถคู่กรณี')
 check("หมวดรูป: ว่าง/ไม่รู้จัก → 'รูปประกอบ'",
       _c('') == 'รูปประกอบ' and _c('รูปอะไรไม่รู้') == 'รูปประกอบ')
-# หน้าค่าใช้จ่าย: กติกา user 2026-07-27 — บอทกรอกแค่ เลขที่ใบแจ้งหนี้ + วันที่ แล้วบันทึก
 import inspect as _insp  # noqa: E402
+# บล็อกตำรวจ + แอลกอฮอล์ + อีเมล + ค่าเสียหายส่วนแรก — แอปเก็บครบแต่เดิมบอทไม่เคยกรอก
+_d_pol = claim_data.ClaimData()
+_main._populate_claim_from_report(_d_pol, {
+    'acc_police_name': 'พ.ต.ท. บุรินทร์ ทองก่อ', 'acc_police_station': 'สภ.สำโรงเหนือ',
+    'acc_police_comment': 'รอสอบปากคำ', 'acc_police_date': '07/10/2568',
+    'acc_police_book_no': 'บ.123/68', 'acc_alcohol_test': 'ตรวจแล้ว',
+    'acc_alcohol_result': '35 mg%', 'assured_email': 'a@b.com', 'deductible': '2000'})
+check("ตำรวจ/แอลกอฮอล์: map จาก report ครบ",
+      (_d_pol.police_name, _d_pol.police_station, _d_pol.police_book_no,
+       _d_pol.alcohol_result, _d_pol.assured_email, _d_pol.deductible)
+      == ('พ.ต.ท. บุรินทร์ ทองก่อ', 'สภ.สำโรงเหนือ', 'บ.123/68', '35 mg%', 'a@b.com', '2000'))
+_src_all = _insp.getsource(emcs)
+for _eid in ('txtPolice_Name', 'txtPolice_Station', 'txtPolice_Comment', 'txtBook_Number',
+             'wuCale_Police_Date_txtCalendar', 'rdoAlc_Chk_', 'txtAlc_Result',
+             'txtAssured_Email', 'txtDeductible'):
+    check(f"บอทกรอก {_eid} แล้ว (เดิม 0 hit)", _eid in _src_all)
+# ตีความ 'ไม่ได้ตรวจ' → radio ไม่มีการตรวจ (index 1) และไม่กรอกช่องผล
+_alc = _insp.getsource(emcs._fill_police_and_alcohol)
+check("แอลกอฮอล์: ตีความ 'ไม่ได้ตรวจ' เป็น 'ไม่มีการตรวจ'",
+      "ไม่ได้ตรวจ" in _alc and "no_test" in _alc)
+
+# หน้าค่าใช้จ่าย: กติกา user 2026-07-27 — บอทกรอกแค่ เลขที่ใบแจ้งหนี้ + วันที่ แล้วบันทึก
 _fb = _insp.getsource(emcs.fill_billing)
 check("ค่าใช้จ่าย: บอทไม่กรอกตารางราคา (คนกรอกเอง)", "fill_fee_table(driver" not in _fb)
 check("ค่าใช้จ่าย: บอทไม่กรอก 3 ช่องสรุป (ผลการดำเนินงาน/ความเห็น)",

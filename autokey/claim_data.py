@@ -100,6 +100,17 @@ class ClaimData:
     model_no: str = ""             # หมายเลข Model → txtModelNo
     driver_by_policy: str = ""     # ชื่อผู้ขับขี่ตามกรมธรรม์ → txtDriver_By_Policy
     surveyor_phone: str = ""       # โทรศัพท์ผู้สำรวจ → txtAcc_Tel (อยู่ติดกับ txtAcc_Surv)
+    # บล็อกตำรวจ + แอลกอฮอล์ + อีเมล + ค่าเสียหายส่วนแรก — แอปเก็บครบ แต่เดิมบอทไม่เคยกรอก
+    # (พึ่ง XML importer ทางเดียว → หายในโหมดเติม draft ที่ข้าม import)
+    police_name: str = ""          # → txtPolice_Name
+    police_station: str = ""       # → txtPolice_Station
+    police_comment: str = ""       # → txtPolice_Comment
+    police_date: str = ""          # → wuCale_Police_Date_txtCalendar
+    police_book_no: str = ""       # → txtBook_Number (เลขคดี/บันทึกประจำวัน)
+    alcohol_test: str = ""         # → rdoAlc_Chk (มี/ไม่มีการตรวจ)
+    alcohol_result: str = ""       # → txtAlc_Result (ผลตรวจ)
+    assured_email: str = ""        # → txtAssured_Email
+    deductible: str = ""           # → txtDeductible (ค่าเสียหายส่วนแรก)
     # รถยนต์ไฟฟ้า (EV) — se-survey เก็บครบ แต่เดิมไม่มีอะไรพาเข้า EMCS
     ev_type: str = ""              # code BEV/FCEV/HEV/MEV/PHEV (= value ของ ddlEvType)
     ev_battery_no: str = ""        # เลขแบตเตอรี่ (txtBatt_Number)

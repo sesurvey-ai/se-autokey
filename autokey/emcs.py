@@ -1229,6 +1229,9 @@ def fill_policy(driver, data: ClaimData):
     set_text(driver, "wuCale_Policy_End_txtCalendar", to_buddhist_date(data.expiry_date))
     set_text(driver, "txtAssured_Name", data.insure_name)
     set_text(driver, "txtPolicy_Type", data.insure_type)
+    # แอปเก็บแต่เดิมไม่มีอะไรพาไป (EMCS มีช่องจริงทั้งคู่ ไม่บังคับ)
+    set_text(driver, "txtAssured_Email", data.assured_email)
+    set_text(driver, "txtDeductible", data.deductible)
 
 
 def _select_car_type(driver, car_type):
@@ -1478,6 +1481,35 @@ def fill_driver(driver, data: ClaimData):
                  presleep=1, label="ประเภทใบขับขี่")
 
 
+def _fill_police_and_alcohol(driver, data: ClaimData):
+    """บล็อกตำรวจ + ผลตรวจแอลกอฮอล์ — แอปเก็บครบแต่เดิมบอทไม่เคยกรอกเลย
+    (grep 'Police'/'Alc' ในโค้ดเก่า = 0 hit) จึงพึ่ง XML importer ทางเดียว →
+    หายทั้งบล็อกในโหมดเติม draft (--sesurvey-fill-existing) ที่ข้ามขั้น import
+    งานจริงของพนักงานกรอกบล็อกนี้จริง (ไอโออิ: ชื่อ/สถานี/วันที่/ความเห็น ครบ)
+    ทุกช่องไม่บังคับ → ว่างก็ข้าม (set_text ข้ามค่าว่างอยู่แล้ว) ไม่ใส่ '-'"""
+    set_text(driver, "txtPolice_Name", data.police_name)
+    set_text(driver, "txtPolice_Station", data.police_station)
+    set_text(driver, "txtPolice_Comment", data.police_comment)
+    set_text(driver, "txtBook_Number", data.police_book_no)
+    if str(data.police_date or "").strip():
+        set_text(driver, "wuCale_Police_Date_txtCalendar",
+                 to_buddhist_date(data.police_date))
+
+    # ผลตรวจแอลกอฮอล์: EMCS แยกเป็น radio "มี/ไม่มีการตรวจ" + ช่องผลตรวจ
+    # แอปมีกล่องข้อความเดียว → ตีความจากข้อความ: มีข้อความที่ไม่ใช่ 'ไม่ได้ตรวจ' = มีการตรวจ
+    alc = " ".join(str(data.alcohol_test or "").split())
+    res = " ".join(str(data.alcohol_result or "").split())
+    if alc or res:
+        no_test = any(k in alc for k in ("ไม่ได้ตรวจ", "ไม่ตรวจ", "ไม่มีการตรวจ", "ไม่มี"))
+        try:
+            driver.find_element(By.ID, f"rdoAlc_Chk_{'1' if no_test else '0'}").click()
+            log(f"   ✓ ผลตรวจแอลกอฮอล์: {'ไม่มีการตรวจ' if no_test else 'มีการตรวจ'}")
+        except Exception:
+            log("   ⚠️ เลือก radio ผลตรวจแอลกอฮอล์ไม่ได้ — กรอกเอง")
+        if not no_test:
+            set_text(driver, "txtAlc_Result", res or alc)
+
+
 def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห้ง"):
     log("EMCS: กรอกรายละเอียดอุบัติเหตุ")
     wait_visible(driver, By.ID, "wuCale_Acc_Date_txtCalendar")
@@ -1490,6 +1522,7 @@ def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห�
 
     set_text(driver, "txtAcc_Place", _dash(data.acc_place))
     set_text(driver, "txtAcc_Detail", _dash(data.acc_detail))
+    _fill_police_and_alcohol(driver, data)
     # ผลการดำเนินงาน + ความเห็นผู้ตรวจสอบ (se-survey มีข้อความ; EMCS มาร์ค 'not used' แต่ช่องแก้ได้)
     # หน้า 1: 2 ช่องนี้เป็น input บรรทัดเดียว (EMCS มาร์ค 'not used') → ยุบบรรทัดก่อนพิมพ์
     # ต่างจากหน้าค่าใช้จ่ายที่เป็น textarea และคงบรรทัดไว้
