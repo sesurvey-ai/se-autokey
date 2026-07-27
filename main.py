@@ -709,7 +709,11 @@ def _populate_claim_from_report(data, rep):
     # = กด Enter อาจ trigger postback ก่อนเวลา
     data.accident_summary = " ".join(str(gv('survey_result') or "").split())   # → ผลการดำเนินงาน (txtAcc_result)
     data.review_comment = " ".join(str(gv('review_comment') or "").split())    # → ความเห็นของผู้ตรวจสอบ (txtAcc_Comment)
-    data.surveyor_comment = " ".join(str(gv('surveyor_comment') or "").split())  # → ความเห็นของเซอร์เวย์ (txtSurv_Comment หน้าค่าใช้จ่าย)
+    # → ความเห็นของเซอร์เวย์ (txtSurv_Comment หน้าค่าใช้จ่าย) — fallback ไป notes ให้ตรงกับ
+    # xmlExport.service.ts (SURV_COMMENT = surveyor_comment || notes) ไม่งั้น 2 เส้นทางส่งไม่เท่ากัน:
+    # XML สำรองมีข้อความ แต่บอท (เส้นทางหลัก) กลับส่งช่องว่าง
+    data.surveyor_comment = " ".join(
+        (str(gv('surveyor_comment') or "").strip() or str(gv('notes') or "")).split())
     data.surveyor_name = gv('acc_surveyor') or gv('surveyor_name')
     data.damage_estimate = gv('estimated_cost')
     data.prb_number = gv('prb_number')
