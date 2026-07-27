@@ -28,6 +28,7 @@ from .browser import (
     iso_to_thai_date,
     log,
     set_text,
+    set_textarea,
     split_hhmm,
     to_buddhist_date,
     today_buddhist,
@@ -1471,8 +1472,10 @@ def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห�
     set_text(driver, "txtAcc_Place", _dash(data.acc_place))
     set_text(driver, "txtAcc_Detail", _dash(data.acc_detail))
     # ผลการดำเนินงาน + ความเห็นผู้ตรวจสอบ (se-survey มีข้อความ; EMCS มาร์ค 'not used' แต่ช่องแก้ได้)
-    set_text(driver, "txtAcc_result", data.accident_summary)
-    set_text(driver, "txtAcc_Comment", data.review_comment)
+    # หน้า 1: 2 ช่องนี้เป็น input บรรทัดเดียว (EMCS มาร์ค 'not used') → ยุบบรรทัดก่อนพิมพ์
+    # ต่างจากหน้าค่าใช้จ่ายที่เป็น textarea และคงบรรทัดไว้
+    set_text(driver, "txtAcc_result", " ".join(str(data.accident_summary or "").split()))
+    set_text(driver, "txtAcc_Comment", " ".join(str(data.review_comment or "").split()))
     set_text(driver, "txtAcc_Surv", data.surveyor_name)
     set_text(driver, "txtAcc_Tel", data.surveyor_phone)   # ช่องติดกับผู้สำรวจภัย เดิมว่างทุกเคส
 
@@ -2665,11 +2668,13 @@ return out;
 
 
 def _save_and_exit_billing(driver):
-    """โหมด draft-park (se-survey ⚡ นำเข้า / เติม draft เดิม): บันทึกหัวบิลด้วย
-    btnSurvey_Update แล้วกดกลับหน้า Inbox/Outbox (wuMenuPage1_imbReturn_In_Out) เพื่อ
-    'ออกจากเรื่อง' — ปลดล็อกให้คนอื่นเปิดต่อได้ (ไม่งั้นเรื่องค้างถูกล็อก).
-    ไม่แตะ 'บันทึกราคา'/'ส่งงานใหม่'. บันทึกไม่สำเร็จ = ไม่กดกลับ (กันข้อมูลหาย +
-    ปล่อยให้คนตรวจบนหน้าจอ)."""
+    """โหมด draft-park (se-survey ⚡ นำเข้า / เติม draft เดิม): บันทึกหัวบิล
+    (เลขที่ใบแจ้งหนี้ + วันที่วางบิล) ด้วย `btnSurvey_Update` — ปุ่มนี้ value='บันทึกราคา'
+    และเป็นปุ่มบันทึกเดียวของหน้า จึงเลี่ยงไม่ได้ถ้าอยากให้หัวบิลติด
+    (user อนุญาตให้กดแล้ว 2026-07-27) — จากนั้นกดกลับหน้า Inbox/Outbox
+    (wuMenuPage1_imbReturn_In_Out) = 'ออกจากเรื่อง' ปลดล็อกให้คนอื่นเปิดต่อได้
+    ⛔ ไม่แตะ 'ส่งงานใหม่' (wuFlow1_cmdSendNew) เด็ดขาด
+    บันทึกไม่สำเร็จ = ไม่กดกลับ (กันข้อมูลหาย + ปล่อยให้คนตรวจบนหน้าจอ)."""
     # (1) บันทึกหัวบิล (เลขที่ใบแจ้งหนี้ + วันที่วางบิล) — verify ปุ่มไม่ใช่ 'ส่งงาน' ก่อนกด
     #     (กันกดส่งงานพลาด ตามวินัยเดียวกับตัวหาปุ่ม 'บันทึก' ที่กันคำว่า 'ส่งงาน')
     try:
@@ -2709,9 +2714,16 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
     แล้วกด "บันทึก" (เป็น draft แก้ได้ — จุดส่งงานจริงคือปุ่ม 'ส่งงานใหม่'
     ซึ่งสคริปต์ไม่กดให้เด็ดขาด ต้องตรวจแล้วกดเอง)
 
+    ⚠️ ข้อเท็จจริงของหน้านี้ (ตรวจจาก HTML จริงทั้งงานไอโออิและ draft ไทยไพบูลย์ 2026-07-27):
+    **ไม่มีปุ่ม id `btnSurveySave` อยู่จริง** — ปุ่มบันทึกเดียวของหน้าคือ
+    `btnSurvey_Update` ซึ่ง value = 'บันทึกราคา'. เดิมโค้ด/ล็อกเขียนว่า "ไม่กดบันทึกราคา"
+    ทั้งที่กดปุ่มนั้นอยู่ (guard เช็คแค่คำว่า 'ส่งงาน' จึงผ่าน) = ล็อกหลอก.
+    user ปรับกติกา 2026-07-27: **กด 'บันทึกราคา' ได้** เพราะเลขที่ใบแจ้งหนี้ + วันที่วางบิล
+    ต้องถูกบันทึกด้วยปุ่มนี้ปุ่มเดียว. ที่ยังห้ามเด็ดขาดคือ 'ส่งงานใหม่' (wuFlow1_cmdSendNew)
+
     save_price=False (โหมด draft-park: se-survey ⚡ นำเข้า / เติม draft เดิม):
-    ไม่กด 'บันทึกราคา' (btnSurveySave) และไม่แตะ 'ส่งงานใหม่' — แต่ **บันทึกหัวบิล
-    (เลขที่ใบแจ้งหนี้+วันที่) ด้วย btnSurvey_Update** แล้ว **กดกลับหน้า Inbox/Outbox
+    ไม่กรอก "ราคา" ในตาราง (คนกรอกเอง) แต่ **บันทึกหัวบิล
+    (เลขที่ใบแจ้งหนี้+วันที่) ด้วย btnSurvey_Update ('บันทึกราคา')** แล้ว **กดกลับหน้า Inbox/Outbox
     (wuMenuPage1_imbReturn_In_Out) = ออกจากเรื่อง เพื่อปลดล็อก** (ไม่งั้นเรื่องค้างถูกล็อก
     คนอื่นเปิดต่อไม่ได้ ต้องรอ). ราคา + ส่งงาน คนทำเองภายหลัง
     navigate=False: อยู่หน้าค่าใช้จ่ายแล้ว (เช่นหลังกด 'งานต่อเนื่อง') — ไม่ต้องกดเมนูเข้าใหม่"""
@@ -2753,7 +2765,7 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
                        ("txtAcc_Comment", data.review_comment),       # ความเห็นของผู้ตรวจสอบ
                        ("txtSurv_Comment", data.surveyor_comment)):   # ความเห็นของเซอร์เวย์
         try:
-            set_text(driver, _fid, _val)
+            set_textarea(driver, _fid, _val)   # คงบรรทัดใหม่ (3 ช่องนี้เป็น textarea)
         except Exception as e:
             log(f"   ⚠️ กรอก {_fid} ไม่ได้ ({type(e).__name__}) — ข้าม กรอกเอง")
 
@@ -2780,31 +2792,18 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
     if not save_price:
         # โหมด draft-park: ไม่กด 'บันทึกราคา'/'ส่งงานใหม่' — แต่บันทึกหัวบิล (btnSurvey_Update)
         # แล้ว 'ออกจากเรื่อง' (กลับ Inbox/Outbox) เพื่อปลดล็อก; ราคา+ส่งงาน คนทำเองภายหลัง
-        log("EMCS: กรอกหน้าค่าใช้จ่ายแล้ว — ไม่กด 'บันทึกราคา'/'ส่งงานใหม่' "
-            "(ราคา+ส่งงาน ทำเองภายหลัง)")
+        log("EMCS: กรอกหน้าค่าใช้จ่ายแล้ว — บันทึกหัวบิล (เลขที่ใบแจ้งหนี้+วันที่) "
+            "ด้วยปุ่ม 'บันทึกราคา'; ไม่กด 'ส่งงานใหม่' (ราคา+ส่งงาน ทำเองภายหลัง)")
         _save_and_exit_billing(driver)
         return
 
-    # ปุ่มบันทึกของหน้านี้คือ btnSurveySave ('บันทึกราคา') ซึ่งจะ enable
-    # ก็ต่อเมื่อกรอกตารางราคาค่าสำรวจครบ — ถ้ายัง disabled แปลว่าต้องให้คน
-    # กรอกราคาก่อน (ห้ามแตะปุ่ม 'ส่งงานใหม่' เด็ดขาดเช่นเดิม)
-    try:
-        btn = driver.find_element(By.ID, "btnSurveySave")
-        if btn.is_enabled():
-            btn.click()
-            try:
-                accept_alert(driver, timeout=8)
-            except Exception:
-                pass  # บางจังหวะไม่มี alert ยืนยัน
-            log("EMCS: กดบันทึกราคาแล้ว ✅ — เหลือตรวจสอบและกด "
-                "'ส่งงานใหม่' ด้วยตัวเองเมื่อพร้อม (สคริปต์จะไม่กดให้)")
-        else:
-            log("EMCS: กรอกหน้าค่าใช้จ่ายแล้ว — ปุ่ม 'บันทึกราคา' ยัง disabled "
-                "(ต้องกรอกตารางราคาค่าสำรวจก่อน) ตรวจ/กรอกราคา แล้วบันทึก+"
-                "ส่งงานเอง")
-    except Exception:
-        log("   ⚠️ ไม่เจอปุ่ม 'บันทึกราคา' — กรอกข้อมูลให้ครบแล้ว "
-            "ตรวจและบันทึกเองบนหน้าจอ")
+    # ปุ่มบันทึกเดียวของหน้าคือ btnSurvey_Update (value='บันทึกราคา') — id `btnSurveySave`
+    # ที่โค้ดเดิมอ้างไม่มีอยู่จริงบนหน้า (ตรวจแล้วทั้งงานไอโออิและ draft ไทยไพบูลย์)
+    # จึงตกลง except ทุกครั้ง = โหมดนี้ไม่เคยบันทึกอะไรเลย
+    # ⛔ 'ส่งงานใหม่' (wuFlow1_cmdSendNew) ยังห้ามแตะเด็ดขาดเหมือนเดิม
+    _save_and_exit_billing(driver)
+    log("EMCS: บันทึกหน้าค่าใช้จ่ายแล้ว — ตรวจ/แก้ราคา แล้วกด 'ส่งงานใหม่' เอง "
+        "(สคริปต์ไม่กดส่งให้)")
 
 
 # --------------------------------------------------------------- ส่งงาน (commit)
@@ -3096,17 +3095,47 @@ def _recascade_province(driver, province_id: str, timeout: int = 10):
     time.sleep(0.8)
 
 
-def _set_or_clear_claim_ref(driver, notify_value):
-    """เลขที่รับแจ้ง (txtAcc_ClaimRef_No, บังคับ *): มีค่ารูปแบบถูก (ABxx/xx) → set (se-survey มี);
-    ไม่งั้นเคลียร์ — import ของ ISURVEY-ไอโออิ ใส่ค่าดิบผิดรูป (เช่น '2026097275' ไม่มี /) →
-    validation reject; ปล่อยว่าง = ผ่าน (validFormat ข้ามค่าว่าง)"""
+# บริษัทที่ vlidSurvey มี case แยก และยอมให้ "เลขที่รับแจ้ง" ว่างได้ถ้ามีเลขอ้างอิงอีกช่อง
+# (ตรวจจาก JS จริง 2026-07-27: case '1059' = ไอโออิ ใช้เงื่อนไข OR กับ txtRef_Claim_No)
+# บริษัทอื่นตกสาย default = **บังคับ txtAcc_ClaimRef_No เสมอ** → ห้ามล้างทิ้ง
+_CLAIMREF_OPTIONAL_INSURERS = {"1059"}
+
+
+def _page_insurer_code(driver) -> str:
+    """รหัสบริษัทประกันที่ JS ของ EMCS ใช้ตัดสินเงื่อนไข (getInsurerID → ddlInsurerNameMajor)
+    อ่านจากหน้าเว็บโดยตรง เพื่อให้ทุก flow (import / เติม draft / เติมผู้บาดเจ็บ) ได้ค่าเดียวกัน"""
+    try:
+        return (driver.execute_script(
+            "var e=document.getElementById('ddlInsurerNameMajor');return e?e.value:'';")
+            or "").strip()
+    except Exception:
+        return ""
+
+
+def _set_or_clear_claim_ref(driver, notify_value, insurer_code: str = None):
+    """เลขที่รับแจ้ง (txtAcc_ClaimRef_No, บังคับ *)
+
+    เดิม: รูปแบบไม่ตรง 'ABxx/xx' → ล้างช่องทิ้ง โดยอ้างว่า 'ปล่อยว่าง = ผ่าน'
+    ซึ่งจริงเฉพาะไอโออิ (1059) เท่านั้น — ของบริษัทอื่น (เช่นไทยไพบูลย์ 2429 ที่ไม่มี case
+    ใน JS เลย) สาย default บังคับช่องนี้เสมอ ล้าง = บันทึกหน้าหลักไม่ผ่านทันที
+    ที่ผ่านมารอดเพราะเลขของไทยไพบูลย์บังเอิญมี '/' พอดี (BR10/6905/12524) ไม่ใช่เพราะโค้ดถูก
+    """
     ref = str(notify_value or "").strip()
     if re.match(r'^[A-Za-z0-9]{2,}/', ref):
         set_text(driver, "txtAcc_ClaimRef_No", ref)
         log(f"   ✓ เลขที่รับแจ้ง: {ref}")
-    else:
+        return
+    code = str(insurer_code if insurer_code is not None else _page_insurer_code(driver)).strip()
+    if code in _CLAIMREF_OPTIONAL_INSURERS:
         driver.execute_script(
             "var e=document.getElementById('txtAcc_ClaimRef_No');if(e)e.value='';")
+        log(f"   – เลขที่รับแจ้งรูปแบบไม่ตรง → ล้างทิ้ง (บริษัท {code} ยอมให้ว่างได้)")
+        return
+    if ref:
+        set_text(driver, "txtAcc_ClaimRef_No", ref)
+        log(f"   ✓ เลขที่รับแจ้ง (รูปแบบไม่ตรง แต่บริษัท {code} บังคับต้องมีค่า): {ref}")
+    else:
+        log(f"   ⚠️ ไม่มีเลขที่รับแจ้ง และบริษัท {code} บังคับ — บันทึกหน้าหลักจะไม่ผ่าน")
 
 
 def fill_imported(driver, cfg, data: ClaimData, images_folder=None,

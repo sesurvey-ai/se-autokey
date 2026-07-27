@@ -1210,6 +1210,34 @@ check("หมวดรูป: หมวดฐานไม่มีเลข → 
       and _c('รูปผู้บาดเจ็บรถคู่กรณี') == 'รูปผู้บาดเจ็บรถคู่กรณี')
 check("หมวดรูป: ว่าง/ไม่รู้จัก → 'รูปประกอบ'",
       _c('') == 'รูปประกอบ' and _c('รูปอะไรไม่รู้') == 'รูปประกอบ')
+# EMCS ฝั่งคู่กรณีไม่มี dropdown คำนำหน้าที่ใช้จริง — งานจริงใส่ในชื่อ ('นาย พาสกรณ์ มากพูน')
+_d_tp = claim_data.ClaimData()
+_main._populate_third_parties_from_report(_d_tp, {'opposing_parties': [
+    {'title': 'นาย', 'first_name': 'พาสกรณ์', 'last_name': 'มากพูน'}]})
+check("คู่กรณี: คำนำหน้าถูกต่อหน้าชื่อ (แอปบังคับเลือก แต่เดิมถูกทิ้ง)",
+      _d_tp.third_parties[0]['drv_name'] == 'นาย พาสกรณ์ มากพูน',
+      repr(_d_tp.third_parties[0]['drv_name']))
+_d_tp2 = claim_data.ClaimData()
+_main._populate_third_parties_from_report(_d_tp2, {'opposing_parties': [
+    {'first_name': 'สมชาย', 'last_name': 'ใจดี'}]})
+check("คู่กรณี: ไม่มีคำนำหน้า → ไม่มีเว้นวรรคนำหน้า",
+      _d_tp2.third_parties[0]['drv_name'] == 'สมชาย ใจดี',
+      repr(_d_tp2.third_parties[0]['drv_name']))
+
+# ข้อความสรุป 3 ช่องบนหน้าค่าใช้จ่ายเป็น textarea — งานจริงเขียน bullet ~20 บรรทัด ห้ามยุบ
+_d_txt = claim_data.ClaimData()
+_NL = chr(10)
+_main._populate_claim_from_report(
+    _d_txt, {'survey_result': _NL.join(['ข้อ 1', '  ข้อ 2  ', '', 'ข้อ 3'])})
+check("ผลการดำเนินงาน: คงบรรทัดใหม่ (ตัดช่องว่างหัวท้ายรายบรรทัด)",
+      _d_txt.accident_summary == _NL.join(['ข้อ 1', 'ข้อ 2', '', 'ข้อ 3']),
+      repr(_d_txt.accident_summary))
+
+# เลขที่รับแจ้ง: ห้ามล้างทิ้งสำหรับบริษัทที่ไม่มี case ใน JS (ตกสาย default = บังคับเสมอ)
+check("เลขที่รับแจ้ง: มีเฉพาะไอโออิ 1059 ที่ยอมให้ว่าง",
+      emcs._CLAIMREF_OPTIONAL_INSURERS == {'1059'},
+      str(emcs._CLAIMREF_OPTIONAL_INSURERS))
+
 # ชื่อชิ้นส่วนบนแผนภาพมี ซ้าย/ขวา ในตัวแล้ว — ต่อท้ายซ้ำได้ 'ประตูหน้าซ้ายซ้าย' (12/19 ชิ้นโดน)
 _dmg = _main._report_damage_items([
     {'part': 'ประตูหน้าซ้าย', 'pos': 'L', 'level': 'M'},

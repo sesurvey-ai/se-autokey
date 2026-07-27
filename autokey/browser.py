@@ -224,6 +224,35 @@ def get_value(driver, elem_id) -> str:
     return driver.find_element(By.ID, elem_id).get_attribute("value")
 
 
+def set_textarea(driver, elem_id, value):
+    """กรอกข้อความ "หลายบรรทัด" ลง <textarea> โดยคงขึ้นบรรทัดใหม่ไว้
+
+    ต่างจาก set_text: ใช้ JS assign แทน send_keys เพราะ send_keys แปลง 
+ เป็นการกด Enter
+    (ช้า + เสี่ยง submit ถ้า element ไม่ใช่ textarea จริง) แล้ว dispatch input/change
+    ให้ ASP.NET/jQuery ที่ผูก handler ไว้รับรู้ค่าใหม่
+    ใช้กับหน้าค่าใช้จ่ายของ EMCS (txtAcc_result / txtAcc_Comment / txtSurv_Comment)
+    ซึ่งงานจริงเขียนเป็น bullet ~20 บรรทัด — ยุบบรรทัดทิ้งคืออ่านยากและผิดรูปแบบสำนวน"""
+    if value is None or str(value) == "":
+        log(f"   - ข้าม {elem_id} (ค่าว่าง)")
+        return
+    value = str(value)
+    try:
+        el = driver.find_element(By.ID, elem_id)
+    except Exception:
+        log(f"   ⚠️ ไม่พบ {elem_id} — ข้าม")
+        return
+    if el.tag_name.lower() != "textarea":
+        # ไม่ใช่ textarea (เช่นช่องเดียวกันบนหน้า 1 เป็น input) → ยุบบรรทัดแล้วใช้เส้นปกติ
+        set_text(driver, elem_id, " ".join(value.split()))
+        return
+    driver.execute_script(
+        "var e=arguments[0];e.value=arguments[1];"
+        "e.dispatchEvent(new Event('input',{bubbles:true}));"
+        "e.dispatchEvent(new Event('change',{bubbles:true}));", el, value)
+    log(f"   ✓ {elem_id}: {len(value)} ตัวอักษร / {value.count(chr(10)) + 1} บรรทัด")
+
+
 def set_text(driver, elem_id, value):
     """กรอกข้อความลง input (ข้ามถ้าค่าว่าง)
 

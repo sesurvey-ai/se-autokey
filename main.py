@@ -609,7 +609,12 @@ def _populate_third_parties_from_report(data, rep):
             # ความสัมพันธ์ผู้ขับขี่กับเจ้าของรถคู่กรณี — แอปบังคับกรอก แต่เดิมไม่ถูกส่งต่อ
             "relation": str(o.get("relation") or "").strip(),
             "chassis_no": str(o.get("vin") or o.get("chassis_no") or "").strip(),
-            "drv_name": f"{first} {last}".strip(),
+            # EMCS ฝั่งคู่กรณีไม่มี dropdown คำนำหน้าที่ใช้จริง (ddlDri_Title_ID อยู่ในเลย์เอาต์
+            # AXA ที่ซ่อน) — งานจริงของพนักงานใส่คำนำหน้า "ในชื่อ" เลย เช่น 'นาย พาสกรณ์ มากพูน'
+            # แอปบังคับให้เลือกคำนำหน้าอยู่แล้ว (opponent_editor.dart) แต่เดิมถูกทิ้งทั้งค่า
+            # → ต่อหน้าชื่อให้ตรงธรรมเนียม (ช่วยให้ resolve_gender อนุมานเพศได้ด้วย)
+            "drv_name": " ".join(
+                x for x in (str(o.get("title") or "").strip(), first, last) if x),
             "opo_name": str(o.get("owner_name") or "").strip(),
             # ที่อยู่ "เจ้าของรถ" — เดิมไม่ map ทำให้ตกไป fallback = ที่อยู่ผู้ขับขี่ (คนละคนได้)
             "opo_address": str(o.get("owner_address") or "").strip(),
@@ -711,13 +716,18 @@ def _populate_claim_from_report(data, rep):
     # ความเห็น/ผลสำรวจ → EMCS หน้าหลัก (ช่องมาร์ค 'not used' แต่ user ขอให้เติม; se-survey มีข้อความครบ)
     # ยุบ \n → เว้นวรรค: txtAcc_result/txtAcc_Comment เป็น input บรรทัดเดียว — ส่ง \n ผ่าน send_keys
     # = กด Enter อาจ trigger postback ก่อนเวลา
-    data.accident_summary = " ".join(str(gv('survey_result') or "").split())   # → ผลการดำเนินงาน (txtAcc_result)
-    data.review_comment = " ".join(str(gv('review_comment') or "").split())    # → ความเห็นของผู้ตรวจสอบ (txtAcc_Comment)
-    # → ความเห็นของเซอร์เวย์ (txtSurv_Comment หน้าค่าใช้จ่าย) — fallback ไป notes ให้ตรงกับ
-    # xmlExport.service.ts (SURV_COMMENT = surveyor_comment || notes) ไม่งั้น 2 เส้นทางส่งไม่เท่ากัน:
-    # XML สำรองมีข้อความ แต่บอท (เส้นทางหลัก) กลับส่งช่องว่าง
-    data.surveyor_comment = " ".join(
-        (str(gv('surveyor_comment') or "").strip() or str(gv('notes') or "")).split())
+    # คงบรรทัดใหม่ไว้ — ปลายทางหลักคือ textarea 3 ช่องบนหน้าค่าใช้จ่าย และงานจริงของพนักงาน
+    # เขียนเป็น bullet ~20 บรรทัด (ตัวอย่างจริงไอโออิ: ผลการดำเนินงาน 1,453 ตัวอักษร)
+    # ยุบบรรทัดทิ้ง = อ่านยาก/ผิดรูปแบบสำนวน. ช่องชื่อเดียวกันบนหน้า 1 เป็น input บรรทัดเดียว
+    # → ฝั่งนั้นยุบบรรทัดตอนกรอก (กัน Enter trigger postback)
+    def _keep_lines(v):
+        return "\n".join(" ".join(ln.split()) for ln in str(v or "").splitlines()).strip()
+
+    data.accident_summary = _keep_lines(gv('survey_result'))   # → ผลการดำเนินงาน (txtAcc_result)
+    data.review_comment = _keep_lines(gv('review_comment'))    # → ความเห็นของผู้ตรวจสอบ (txtAcc_Comment)
+    # → ความเห็นของเซอร์เวย์ (txtSurv_Comment) — fallback ไป notes ให้ตรงกับ xmlExport.service.ts
+    # (SURV_COMMENT = surveyor_comment || notes) ไม่งั้น 2 เส้นทางส่งไม่เท่ากัน
+    data.surveyor_comment = _keep_lines(gv('surveyor_comment')) or _keep_lines(gv('notes'))
     data.surveyor_name = gv('acc_surveyor') or gv('surveyor_name')
     data.surveyor_phone = gv('acc_surveyor_phone') or gv('surveyor_phone')
     data.mileage = gv('mileage')
