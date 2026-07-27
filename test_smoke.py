@@ -1210,6 +1210,33 @@ check("หมวดรูป: หมวดฐานไม่มีเลข → 
       and _c('รูปผู้บาดเจ็บรถคู่กรณี') == 'รูปผู้บาดเจ็บรถคู่กรณี')
 check("หมวดรูป: ว่าง/ไม่รู้จัก → 'รูปประกอบ'",
       _c('') == 'รูปประกอบ' and _c('รูปอะไรไม่รู้') == 'รูปประกอบ')
+# หน้าค่าใช้จ่าย: กติกา user 2026-07-27 — บอทกรอกแค่ เลขที่ใบแจ้งหนี้ + วันที่ แล้วบันทึก
+import inspect as _insp  # noqa: E402
+_fb = _insp.getsource(emcs.fill_billing)
+check("ค่าใช้จ่าย: บอทไม่กรอกตารางราคา (คนกรอกเอง)", "fill_fee_table(driver" not in _fb)
+check("ค่าใช้จ่าย: บอทไม่กรอก 3 ช่องสรุป (ผลการดำเนินงาน/ความเห็น)",
+      "txtAcc_result" not in _fb and "txtSurv_Comment" not in _fb)
+check("ค่าใช้จ่าย: ยังกรอกเลขที่ใบแจ้งหนี้ + วันที่",
+      'txtBill_No' in _fb and 'wuCale_Bill_Date_txtCalendar' in _fb)
+
+# "การเรียกร้องค่าเสียหายจากคู่กรณี" ไม่ผูกกับผลคดี — งานจริงติ๊กไว้ทั้งที่ผลคดี = รอสรุปผลคดี
+_fv = _insp.getsource(emcs.fill_verdict)
+check("เรียกร้องคู่กรณี: กรอกทุกผลคดี ไม่ใช่เฉพาะ rdoAcc_Cause01",
+      '_fill_opponent_fault(driver, data)' in _fv
+      and 'if CAUSE_RADIO[label] == "rdoAcc_Cause01":' not in _fv)
+
+# ความเสียหายคู่กรณี: อ่านจำนวนช่องจริงจาก DOM (ฟอร์ม import มี 20 ไม่ใช่ 8)
+_fod = _insp.getsource(emcs.fill_opponent_damage)
+check("ความเสียหายคู่กรณี: อ่าน slot จริงจาก DOM แทน hardcode 8",
+      '_free_text_slots(driver)' in _fod and '_slots[c]' in _fod)
+check("ความเสียหายคู่กรณี: สูตร fallback เดิมให้ prefix ซ้ำเมื่อเกิน 8 (เหตุผลที่ต้องอ่าน slot)",
+      len({f"ctl0{2 + (c % 4)}_{'A' if c < 4 else 'B'}" for c in range(12)}) == 8)
+
+# รายละเอียดการเกิดเหตุ (แอปหน้า 5) → txtAcc_Detail
+_fa = _insp.getsource(emcs.fill_accident) if hasattr(emcs, 'fill_accident') else ''
+check("รายละเอียดการเกิดเหตุ: acc_detail → txtAcc_Detail",
+      'txtAcc_Detail' in _insp.getsource(emcs))
+
 # ประเภทผู้บาดเจ็บ: EMCS มี 5 ตัว แต่ XML มีรหัสแค่ 3 (DV/PV/ON) → ต้องพาป้ายไทยจากแอปไปเอง
 _d_inj = claim_data.ClaimData()
 _main._populate_claim_from_report(_d_inj, {'injured_persons': [

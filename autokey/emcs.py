@@ -512,12 +512,19 @@ def fill_opponent_damage(driver, prefix, damages, main_window):
             pass
         return
 
-    if len(items) > MAX_DAMAGE_ITEMS:
-        log(f"   ⚠️ ความเสียหายคู่กรณี {len(items)} เกิน {MAX_DAMAGE_ITEMS} — กรอกเท่าที่ได้")
-    for c, (name, level) in enumerate(items[:MAX_DAMAGE_ITEMS]):
-        col = "A" if c < 4 else "B"
-        row = 2 + (c % 4)
-        pp = f"dgvOtherDamage_List_ctl0{row}_wuOtherDamL{col}_"
+    # จำนวนช่องอิสระอ่านจาก DOM จริง (cmdNewReport=8 / ฟอร์ม import=20) เหมือนฝั่งรถประกัน
+    # — เดิมฮาร์ดโค้ด 8 ทั้งที่ฟอร์มที่ใช้จริงมี 20 ช่อง ทำให้รายการที่ 9+ หายเงียบ
+    _slots = _free_text_slots(driver)
+    _cap = len(_slots) if _slots else MAX_DAMAGE_ITEMS
+    if len(items) > _cap:
+        log(f"   ⚠️ ความเสียหายคู่กรณี {len(items)} เกิน {_cap} ช่องที่มีจริง — "
+            f"ที่เหลือต้องกรอกเองภายหลัง")
+    for c, (name, level) in enumerate(items[:_cap]):
+        if _slots:
+            pp = _slots[c]
+        else:   # fallback (อ่าน slot ไม่ได้) — สูตรเดิม ctl02-05 × A/B รองรับได้แค่ 8
+            pp = (f"dgvOtherDamage_List_ctl0{2 + (c % 4)}_"
+                  f"wuOtherDamL{'A' if c < 4 else 'B'}_")
         try:
             el = driver.find_element(By.ID, pp + "txtDam_Name")
             el.clear()
@@ -1564,8 +1571,11 @@ def fill_verdict(driver, data: ClaimData):
             return
     log(f"   ✓ ผลคดี: '{_res}' → '{label}' (score {score:.0f})")
     driver.find_element(By.ID, CAUSE_RADIO[label]).click()
-    if CAUSE_RADIO[label] == "rdoAcc_Cause01":
-        _fill_opponent_fault(driver, data)
+    # "การเรียกร้องค่าเสียหายจากคู่กรณี" (chkOpo_Result + ยอดเงิน 2 ช่อง) ไม่ได้ผูกกับผลคดี
+    # ยืนยันจากงานจริงที่พนักงานกรอก (เคลมไอโออิ 2026013058298): ผลคดี = rdoAcc_Cause03
+    # 'รอสรุปผลคดี' แต่ยังติ๊ก chkOpo_Result_0 ไว้ → เดิมบอทกรอกเฉพาะตอน rdoAcc_Cause01
+    # ทำให้เซอร์เวย์ติ๊ก+พิมพ์ยอดเงินไปฟรีทุกเคสที่ผลคดีเป็นอย่างอื่น
+    _fill_opponent_fault(driver, data)
     _fill_followup(driver, data)
 
 
@@ -2771,15 +2781,10 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
             pass
     set_text(driver, "txtBill_No", data.invoice_value)
     set_text(driver, "wuCale_Bill_Date_txtCalendar", today_buddhist())
-    # 3 ช่องสรุปความเห็นของหน้านี้ (textarea ทั้งหมด — ยืนยัน id จากหน้าจริง 21/07/69)
-    # try รายช่อง: บางบริษัท/บางเลย์เอาต์อาจไม่มีช่องเหล่านี้ — ขาดช่องต้องไม่ล้มทั้งหน้า
-    for _fid, _val in (("txtAcc_result", data.accident_summary),      # ผลการดำเนินงาน
-                       ("txtAcc_Comment", data.review_comment),       # ความเห็นของผู้ตรวจสอบ
-                       ("txtSurv_Comment", data.surveyor_comment)):   # ความเห็นของเซอร์เวย์
-        try:
-            set_textarea(driver, _fid, _val)   # คงบรรทัดใหม่ (3 ช่องนี้เป็น textarea)
-        except Exception as e:
-            log(f"   ⚠️ กรอก {_fid} ไม่ได้ ({type(e).__name__}) — ข้าม กรอกเอง")
+    # ⛔ กติกา user 2026-07-27: หน้าค่าใช้จ่ายบอทกรอกแค่ "เลขที่ใบแจ้งหนี้" + "วันที่"
+    # แล้วกดบันทึก — ตารางราคา / ผลการดำเนินงาน / ความเห็นผู้ตรวจสอบ / ความเห็นเซอร์เวย์
+    # ผู้ใช้กรอกเองแล้วกด "ส่งงานใหม่" เอง (บอทไม่แตะทั้งชุด)
+    # โค้ดที่เคยกรอกยังอยู่ (fill_fee_table / set_textarea) เผื่อวันหนึ่งเปลี่ยนกติกา
 
     # readback ยืนยันค่าที่กรอก (set_text เงียบตอนสำเร็จ — log ไว้ให้ตรวจ/audit)
     try:
@@ -2789,17 +2794,7 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
         log(f"   ✓ เลขที่ใบแจ้งหนี้ = {_bn!r} | วันที่วางบิล = {_bd!r}")
     except Exception:
         pass
-    for _fid, _lbl in (("txtAcc_result", "ผลการดำเนินงาน"),
-                       ("txtAcc_Comment", "ความเห็นของผู้ตรวจสอบ"),
-                       ("txtSurv_Comment", "ความเห็นของเซอร์เวย์")):
-        try:
-            _v = driver.find_element(By.ID, _fid).get_attribute("value") or ""
-            log(f"   ✓ {_lbl} = {_v[:60]!r}{'…' if len(_v) > 60 else ''}")
-        except Exception:
-            pass
-
-    # ตารางราคา — กรอกเฉพาะช่อง "เสนอ" จากข้อมูล XML
-    fill_fee_table(driver, data.bill)
+    # (readback ของ 3 ช่องสรุปถูกถอดออกพร้อมกับการกรอก — บอทไม่แตะช่องพวกนั้นแล้ว)
 
     if not save_price:
         # โหมด draft-park: ไม่กด 'บันทึกราคา'/'ส่งงานใหม่' — แต่บันทึกหัวบิล (btnSurvey_Update)
