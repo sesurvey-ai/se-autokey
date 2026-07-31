@@ -1501,8 +1501,10 @@ def _fill_police_and_alcohol(driver, data: ClaimData):
     res = " ".join(str(data.alcohol_result or "").split())
     if alc or res:
         no_test = any(k in alc for k in ("ไม่ได้ตรวจ", "ไม่ตรวจ", "ไม่มีการตรวจ", "ไม่มี"))
+        # ⚠️ ลำดับ radio: rdoAlc_Chk_0 = "ไม่มีการตรวจ" / rdoAlc_Chk_1 = "มีการตรวจ"
+        # (ยืนยันจาก label ในหน้าจริง — เคยเขียนกลับด้านมาแล้ว ห้ามเดาจากเลข index)
         try:
-            driver.find_element(By.ID, f"rdoAlc_Chk_{'1' if no_test else '0'}").click()
+            driver.find_element(By.ID, f"rdoAlc_Chk_{'0' if no_test else '1'}").click()
             log(f"   ✓ ผลตรวจแอลกอฮอล์: {'ไม่มีการตรวจ' if no_test else 'มีการตรวจ'}")
         except Exception:
             log("   ⚠️ เลือก radio ผลตรวจแอลกอฮอล์ไม่ได้ — กรอกเอง")

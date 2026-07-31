@@ -1211,6 +1211,12 @@ check("หมวดรูป: หมวดฐานไม่มีเลข → 
 check("หมวดรูป: ว่าง/ไม่รู้จัก → 'รูปประกอบ'",
       _c('') == 'รูปประกอบ' and _c('รูปอะไรไม่รู้') == 'รูปประกอบ')
 import inspect as _insp  # noqa: E402
+# ⚠️ regression: ลำดับ radio แอลกอฮอล์ของ EMCS สลับกับที่คนทั่วไปเดา
+# label จริง: rdoAlc_Chk_0 = "ไม่มีการตรวจ" / rdoAlc_Chk_1 = "มีการตรวจ"
+_alcsrc = _insp.getsource(emcs._fill_police_and_alcohol)
+check("แอลกอฮอล์: ไม่ได้ตรวจ → ติ๊ก rdoAlc_Chk_0 (ไม่ใช่ _1)",
+      "'0' if no_test else '1'" in _alcsrc, "เคยเขียนกลับด้านมาแล้ว")
+
 # บล็อกตำรวจ + แอลกอฮอล์ + อีเมล + ค่าเสียหายส่วนแรก — แอปเก็บครบแต่เดิมบอทไม่เคยกรอก
 _d_pol = claim_data.ClaimData()
 _main._populate_claim_from_report(_d_pol, {
