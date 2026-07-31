@@ -557,9 +557,17 @@ _DMG_POS_TH = {'L': 'ซ้าย', 'R': 'ขวา', 'A': ''}          # pos �
 _DMG_LVL_RANK = {'L': 'A', 'M': 'B', 'H': 'C', 'X': 'D'}  # ระดับ ต่ำ/กลาง/สูง/สูงมาก → rank A-D (rdoDam_Lavel)
 
 
+# pos ของแอป → index radio rdoDam_Left_Right ของ EMCS ('0'=ซ้าย '1'=ขวา '2'=ทั้งคู่)
+_DMG_POS_IDX = {'L': '0', 'R': '1', 'A': '2'}
+
+
 def _report_damage_items(raw):
     """[{part, pos:L/R/A, level:L/M/H/X}] (แผนภาพความเสียหายมือถือ) →
-    [(ชื่อชิ้นส่วน+ซ้าย/ขวา, rank A-D)] ใช้ร่วมกันทั้งรถประกันและคู่กรณี"""
+    [(ชื่อชิ้นส่วน, rank A-D, side '0'/'1'/'2')] ใช้ร่วมกันทั้งรถประกันและคู่กรณี
+
+    ชื่อชิ้นส่วนบนแอปตรงกับ checklist ของ EMCS verbatim (22 ชิ้น) และ **ไม่มีข้างในชื่อ**
+    เพราะ EMCS แยก "ด้าน" เป็น radio ต่างหาก — ส่ง side ไปตรง ๆ ไม่ต้องเดาจากชื่อ
+    (ของเดิมต่อ 'ซ้าย/ขวา' ท้ายชื่อ ทำให้ match checklist ไม่ได้เลย ตกช่องอิสระทั้งหมด)"""
     out = []
     for it in (raw or []):
         if not isinstance(it, dict):
@@ -569,11 +577,7 @@ def _report_damage_items(raw):
             continue
         pos = str(it.get('pos') or '').strip().upper()
         rank = _DMG_LVL_RANK.get(str(it.get('level') or '').strip().upper(), '')
-        # ชื่อชิ้นส่วนบนแผนภาพมีคำว่า ซ้าย/ขวา อยู่ในตัวแล้ว ('ประตูหน้าซ้าย') และ pos
-        # ก็ถูก derive จากชื่อนั้นอีกที → ต่อท้ายดื้อ ๆ จะได้ 'ประตูหน้าซ้ายซ้าย'
-        # (12 จาก 19 ชิ้นบนแผนภาพโดนหมด) ต่อเฉพาะตอนชื่อยังไม่มีคำนั้น
-        side = _DMG_POS_TH.get(pos, '')
-        out.append((part if (not side or side in part) else part + side, rank))
+        out.append((part, rank, _DMG_POS_IDX.get(pos, '2')))
     return out
 
 
@@ -606,6 +610,9 @@ def _populate_third_parties_from_report(data, rep):
             "car_color": str(o.get("car_color") or "").strip(),
             "car_reg_year": str(o.get("reg_year") or "").strip(),   # พ.ศ. (แปลงตอนกรอก)
             "km_no": str(o.get("mileage") or "").strip(),
+            # EMCS มี ddlEv_Type ให้คู่กรณีจริง และ emcs.py:_fill_ev เดินสายรออยู่แล้ว
+            # แต่เดิม main.py ไม่เคยใส่ key นี้ → ว่าง '-- ระบุ --' ทุกเคส
+            "ev_type": str(o.get("ev_type") or "").strip(),
             # ความสัมพันธ์ผู้ขับขี่กับเจ้าของรถคู่กรณี — แอปบังคับกรอก แต่เดิมไม่ถูกส่งต่อ
             "relation": str(o.get("relation") or "").strip(),
             "chassis_no": str(o.get("vin") or o.get("chassis_no") or "").strip(),
@@ -633,7 +640,8 @@ def _populate_third_parties_from_report(data, rep):
             "insure_type": str(o.get("insure_type") or o.get("policy_type") or "-").strip(),
             # ความเสียหายคู่กรณี (แผนภาพมือถือ) → fill_opponent_damage (ต่อคัน ≤ MAX_DAMAGE_ITEMS)
             # เดิมไม่ใส่ key นี้ → tp.get('damages') ว่าง → ฟอร์มความเสียหายคู่กรณีเปล่าทุกคัน
-            "damages": [{"part": p, "level": r} for p, r in _report_damage_items(o.get("damage"))],
+            "damages": [{"part": p, "level": r, "side": sd}
+                        for p, r, sd in _report_damage_items(o.get("damage"))],
             # ค่าเสียหายประมาณ + เข้าสัญญา KFK — มือถือเก็บครบและ XML ก็มี (COST_DAMAGE/HAS_KFK)
             # แต่ dict นี้เขียนทับ third_parties ที่ enrich จาก XML → เดิมตกไปทั้งคู่
             # (emcs.py:374/377 อ่าน cost_damage / has_kfk) = ช่องเงินว่าง + ไม่เคยติ๊ก KFK
@@ -785,6 +793,8 @@ def _populate_claim_from_report(data, rep):
     data.deductible = gv('deductible')
     data.model_no = gv('model_no')
     data.driver_by_policy = gv('driver_by_policy')
+    data.driver_ticket = gv('driver_ticket')      # → txtDri_Order
+    data.car_lost = bool(rep.get('car_lost'))     # → chkLost_Car
     data.damage_estimate = gv('estimated_cost')
     data.prb_number = gv('prb_number')
     data.notify_value = gv('claim_ref_no')   # เลขที่รับแจ้ง (บังคับ * — se-survey มีรูปแบบถูก)
@@ -801,9 +811,10 @@ def _populate_claim_from_report(data, rep):
     # ก่อนหน้านี้ data.damage ว่างเสมอ → ฟอร์มความเสียหาย EMCS เปล่า ต้องติ๊กเองทุกเคส
     dmg = _report_damage_items(rep.get('insured_damage'))
     if dmg:
-        data.damage = [p for p, _ in dmg]
+        data.damage = [p for p, _, _ in dmg]
         data.type_damage = [''] * len(dmg)   # แอปไม่มีประเภทความเสียหายแยก (fill ใช้ชิ้นส่วน+ระดับพอ)
-        data.rank_damage = [r for _, r in dmg]
+        data.rank_damage = [r for _, r, _ in dmg]
+        data.side_damage = [sd for _, _, sd in dmg]   # ด้าน (radio แยกของ EMCS)
         data.cost_damage = [''] * len(dmg)
     # ลักษณะความเสียหาย: se-survey มี acc_damage_type → ใช้เลย; ไม่มี → 'auto' (resolve_loss_type เดิม)
     return gv('acc_damage_type') or 'auto'

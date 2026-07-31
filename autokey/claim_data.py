@@ -99,6 +99,8 @@ class ClaimData:
     mileage: str = ""              # เลข กม. รถประกัน → txtKm_No (ของคู่กรณีส่งอยู่แล้ว)
     model_no: str = ""             # หมายเลข Model → txtModelNo
     driver_by_policy: str = ""     # ชื่อผู้ขับขี่ตามกรมธรรม์ → txtDriver_By_Policy
+    driver_ticket: str = ""        # ใบสั่งจราจร → txtDri_Order
+    car_lost: bool = False         # รถหาย → chkLost_Car
     surveyor_phone: str = ""       # โทรศัพท์ผู้สำรวจ → txtAcc_Tel (อยู่ติดกับ txtAcc_Surv)
     # บล็อกตำรวจ + แอลกอฮอล์ + อีเมล + ค่าเสียหายส่วนแรก — แอปเก็บครบ แต่เดิมบอทไม่เคยกรอก
     # (พึ่ง XML importer ทางเดียว → หายในโหมดเติม draft ที่ข้าม import)
@@ -111,6 +113,9 @@ class ClaimData:
     alcohol_result: str = ""       # → txtAlc_Result (ผลตรวจ)
     assured_email: str = ""        # → txtAssured_Email
     deductible: str = ""           # → txtDeductible (ค่าเสียหายส่วนแรก)
+    # ด้านของความเสียหายแต่ละชิ้น ('0'ซ้าย/'1'ขวา/'2'ทั้งคู่) — ขนานกับ damage/rank_damage
+    # ว่าง = ให้ปลายทางเดาจากชื่อชิ้นส่วนเหมือนเดิม (flow ISURVEY ที่ชื่อมีข้างอยู่ในตัว)
+    side_damage: list = field(default_factory=list)
     # รถยนต์ไฟฟ้า (EV) — se-survey เก็บครบ แต่เดิมไม่มีอะไรพาเข้า EMCS
     ev_type: str = ""              # code BEV/FCEV/HEV/MEV/PHEV (= value ของ ddlEvType)
     ev_battery_no: str = ""        # เลขแบตเตอรี่ (txtBatt_Number)

@@ -490,8 +490,8 @@ def fill_opponent_damage(driver, prefix, damages, main_window):
     """กรอกความเสียหายคู่กรณีลง popup (frmDamage.aspx) — ใช้ช่อง free-text
     dgvOtherDamage_List (โครงสร้างเดียวกับความเสียหายรถประกันใน fill_damage_list)
     จาก tp['damages'] = [{part, level, ...}] แล้ว btnSave กลับหน้าหลัก"""
-    items = [(d.get("part", ""), d.get("level", "")) for d in (damages or [])
-             if d.get("part")]
+    items = [(d.get("part", ""), d.get("level", ""), d.get("side", ""))
+             for d in (damages or []) if d.get("part")]
     if not items:
         return
     log(f"   กรอกความเสียหายคู่กรณี {len(items)} รายการ (popup free-text)")
@@ -519,7 +519,7 @@ def fill_opponent_damage(driver, prefix, damages, main_window):
     if len(items) > _cap:
         log(f"   ⚠️ ความเสียหายคู่กรณี {len(items)} เกิน {_cap} ช่องที่มีจริง — "
             f"ที่เหลือต้องกรอกเองภายหลัง")
-    for c, (name, level) in enumerate(items[:_cap]):
+    for c, (name, level, side) in enumerate(items[:_cap]):
         if _slots:
             pp = _slots[c]
         else:   # fallback (อ่าน slot ไม่ได้) — สูตรเดิม ctl02-05 × A/B รองรับได้แค่ 8
@@ -531,15 +531,7 @@ def fill_opponent_damage(driver, prefix, damages, main_window):
             el.send_keys(name)
         except Exception:
             continue
-        # ด้าน ซ้าย/ขวา จากชื่อชิ้นส่วน (เหมือน fill_damage_list)
-        if "ซ้าย" in name and "ขวา" in name:
-            side = "2"
-        elif "ขวา" in name:
-            side = "1"
-        elif "ซ้าย" in name:
-            side = "0"
-        else:
-            side = "2"
+        side = side or _damage_side(name)   # แอปส่งด้านมาตรง ๆ; ไม่มีค่อยเดาจากชื่อ
         try:
             driver.find_element(By.ID, pp + f"rdoDam_Left_Right_{side}").click()
         except Exception:
@@ -1232,6 +1224,15 @@ def fill_policy(driver, data: ClaimData):
     # แอปเก็บแต่เดิมไม่มีอะไรพาไป (EMCS มีช่องจริงทั้งคู่ ไม่บังคับ)
     set_text(driver, "txtAssured_Email", data.assured_email)
     set_text(driver, "txtDeductible", data.deductible)
+    set_text(driver, "txtDri_Order", data.driver_ticket)
+    if getattr(data, "car_lost", False):
+        try:
+            el = driver.find_element(By.ID, "chkLost_Car")
+            if not el.is_selected():      # click() สลับสถานะ — เติม draft ซ้ำจะปลดติ๊ก
+                el.click()
+                log("   ✓ ติ๊ก 'รถหาย'")
+        except Exception:
+            log("   ⚠️ ติ๊ก 'รถหาย' ไม่ได้ — ติ๊กเองบนหน้าจอ")
 
 
 def _select_car_type(driver, car_type):
@@ -1481,6 +1482,13 @@ def fill_driver(driver, data: ClaimData):
                  presleep=1, label="ประเภทใบขับขี่")
 
 
+def _dt_time(v) -> str:
+    """แยกส่วนเวลาออกจากค่ารูปแบบ 'dd/mm/yyyy|HH:MM' ที่ se-survey ใช้เก็บวัน-เวลาคู่กัน
+    (to_buddhist_date ตัด '|time' ทิ้งให้อยู่แล้ว — ตัวนี้เอาอีกครึ่งที่เหลือ)"""
+    s = str(v or "")
+    return s.split("|", 1)[1].strip() if "|" in s else ""
+
+
 def _fill_police_and_alcohol(driver, data: ClaimData):
     """บล็อกตำรวจ + ผลตรวจแอลกอฮอล์ — แอปเก็บครบแต่เดิมบอทไม่เคยกรอกเลย
     (grep 'Police'/'Alc' ในโค้ดเก่า = 0 hit) จึงพึ่ง XML importer ทางเดียว →
@@ -1494,13 +1502,20 @@ def _fill_police_and_alcohol(driver, data: ClaimData):
     if str(data.police_date or "").strip():
         set_text(driver, "wuCale_Police_Date_txtCalendar",
                  to_buddhist_date(data.police_date))
+        ph, pm = split_hhmm(_dt_time(data.police_date))
+        set_text(driver, "txtPolice_Date_Hour", ph)
+        set_text(driver, "txtPolice_Date_Minute", pm)
 
     # ผลตรวจแอลกอฮอล์: EMCS แยกเป็น radio "มี/ไม่มีการตรวจ" + ช่องผลตรวจ
     # แอปมีกล่องข้อความเดียว → ตีความจากข้อความ: มีข้อความที่ไม่ใช่ 'ไม่ได้ตรวจ' = มีการตรวจ
     alc = " ".join(str(data.alcohol_test or "").split())
     res = " ".join(str(data.alcohol_result or "").split())
     if alc or res:
-        no_test = any(k in alc for k in ("ไม่ได้ตรวจ", "ไม่ตรวจ", "ไม่มีการตรวจ", "ไม่มี"))
+        # แอปส่งป้ายเต็ม 2 ค่า ('ไม่มีการตรวจแอลกอฮอล์' / 'มีการตรวจแอลกอฮอล์') → เทียบตรง
+        # ส่วนข้อความอิสระของเคสเก่า/ISURVEY ยังใช้การตีความคำเดิมเป็น fallback
+        no_test = (alc == "ไม่มีการตรวจแอลกอฮอล์") or (
+            alc != "มีการตรวจแอลกอฮอล์"
+            and any(k in alc for k in ("ไม่ได้ตรวจ", "ไม่ตรวจ", "ไม่มีการตรวจ", "ไม่มี")))
         # ⚠️ ลำดับ radio: rdoAlc_Chk_0 = "ไม่มีการตรวจ" / rdoAlc_Chk_1 = "มีการตรวจ"
         # (ยืนยันจาก label ในหน้าจริง — เคยเขียนกลับด้านมาแล้ว ห้ามเดาจากเลข index)
         try:
@@ -1637,11 +1652,22 @@ def _fill_followup(driver, data: ClaimData):
     except Exception:
         log(f"   ⚠️ เลือกการติดตามงาน '{t}' ไม่ได้ — เลือกเองบนหน้าจอ")
         return
-    set_text(driver, "txtFlu_No", data.followup_count)
+    # "ครั้งที่นัดหมาย" บนหน้าจอเป็น dropdown (ddlFlu_No) ส่วน txtFlu_No เป็นช่องซ่อน
+    # → เลือก dropdown ก่อน ถ้าไม่มีค่อยตกไปช่องข้อความเดิม
+    _cnt = str(data.followup_count or "").strip()
+    if _cnt:
+        try:
+            Select(driver.find_element(By.ID, "ddlFlu_No")).select_by_value(_cnt)
+        except Exception:
+            set_text(driver, "txtFlu_No", _cnt)
     set_text(driver, "txtFlu_Detail", data.followup_detail)
     if str(data.followup_date or "").strip():
         set_text(driver, "wuCale_Flu_Date_txtCalendar",
                  _report_date(data.followup_date))
+        # EMCS มีช่องชั่วโมง/นาทีคู่กับวันที่ (ปลดล็อกหลังเลือก 'มีการนัดหมาย' แล้วเท่านั้น)
+        fh, fm = split_hhmm(_dt_time(data.followup_date))
+        set_text(driver, "txtFlu_Date_Hour", fh)
+        set_text(driver, "txtFlu_Date_Minute", fm)
 
 
 # การเรียกร้องค่าเสียหายจากคู่กรณี (chkOpo_Result_0..4) — ติ๊กด้วย index จึงไม่ต้องแคร์
@@ -1993,7 +2019,11 @@ def fill_damage_list(driver, data: ClaimData, main_window: str):
     driver.switch_to.window(new_handle)
     wait_visible(driver, By.ID, "btnSave", 15)
 
-    items = list(zip(data.damage, data.type_damage, data.rank_damage))
+    # side ที่แอปส่งมาตรง ๆ (EMCS แยก radio ด้านออกจากชื่อชิ้นส่วน) — ไม่มีก็เดาจากชื่อ
+    # เหมือนเดิม (flow ISURVEY ที่ชื่อชิ้นส่วนมีคำว่าซ้าย/ขวาอยู่ในตัว)
+    _sides = list(getattr(data, "side_damage", []) or [])
+    _sides += [""] * (len(data.damage) - len(_sides))
+    items = list(zip(data.damage, data.type_damage, data.rank_damage, _sides))
 
     # ฟอร์มใหม่ (2569+) มี checklist ชิ้นส่วนสำเร็จรูป — อ่านจาก DOM (ฟอร์มเก่าคืน [])
     try:
@@ -2007,10 +2037,10 @@ def fill_damage_list(driver, data: ClaimData, main_window: str):
 
     # match ชิ้นส่วนเข้า checklist (ติ๊ก checkbox) — ไม่ตรง → คิวช่องอิสระ
     used, free_items = set(), []
-    for (name, _dtype, rank) in items:
+    for (name, _dtype, rank, side) in items:
         idx, score = _match_damage_checklist(name, parts, used)
         if idx is None:
-            free_items.append((name, rank))
+            free_items.append((name, rank, side))
             continue
         c = checklist[idx]
         used.add(idx)
@@ -2019,7 +2049,7 @@ def fill_damage_list(driver, data: ClaimData, main_window: str):
                 "arguments[0].click();", driver.find_element(By.ID, c["cb"]))
             if c.get("has_pos"):
                 driver.execute_script("arguments[0].click();", driver.find_element(
-                    By.ID, c["prefix"] + "rdoDam_Left_Right_" + _damage_side(name)))
+                    By.ID, c["prefix"] + "rdoDam_Left_Right_" + (side or _damage_side(name))))
             ri = _damage_rank_idx(rank)
             if ri is not None:
                 driver.execute_script("arguments[0].click();", driver.find_element(
@@ -2028,7 +2058,7 @@ def fill_damage_list(driver, data: ClaimData, main_window: str):
         except Exception as e:
             log(f"   ⚠️ ติ๊ก checklist '{c['part']}' ไม่ได้ ({type(e).__name__}) — ช่องอิสระแทน")
             used.discard(idx)
-            free_items.append((name, rank))
+            free_items.append((name, rank, side))
 
     # ที่เหลือ (ไม่ match checklist) → ช่องอิสระ dgvOtherDamage_List
     # อ่าน slot จริงจาก DOM (cmdNewReport=8 / ฟอร์ม import=20) แทน hardcode
@@ -2037,7 +2067,7 @@ def fill_damage_list(driver, data: ClaimData, main_window: str):
     if len(free_items) > cap:
         log(f"   ⚠️ ช่องอิสระมี {len(free_items)} เกิน {cap} ช่อง — "
             f"ที่เหลือต้องกรอกเองภายหลัง")
-    for c, (name, rank) in enumerate(free_items[:cap]):
+    for c, (name, rank, side) in enumerate(free_items[:cap]):
         if slots:
             prefix = slots[c]
         else:   # fallback (อ่าน slot ไม่ได้) — สูตรเดิม ctl02-05 × A/B (≤8)
@@ -2045,8 +2075,8 @@ def fill_damage_list(driver, data: ClaimData, main_window: str):
                       f"wuOtherDamL{'A' if c < 4 else 'B'}_")
 
         driver.find_element(By.ID, prefix + "txtDam_Name").send_keys(name)
-        side = _damage_side(name)
-        driver.find_element(By.ID, prefix + f"rdoDam_Left_Right_{side}").click()
+        driver.find_element(
+            By.ID, prefix + f"rdoDam_Left_Right_{side or _damage_side(name)}").click()
         ri = _damage_rank_idx(rank)
         if ri is not None:
             driver.find_element(By.ID, prefix + f"rdoDam_Lavel_{ri}").click()
