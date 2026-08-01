@@ -1215,7 +1215,11 @@ def fill_insurer_and_refs(driver, data: ClaimData):
 def fill_policy(driver, data: ClaimData):
     log("EMCS: กรอกข้อมูลกรมธรรม์")
     wait_visible(driver, By.ID, "txtAcc_Policy_No")
-    set_text(driver, "txtPrb_Number", data.prb_number)
+    # กรมธรรม์ (พ.ร.บ.) — EMCS บังคับ **ทุกบริษัท** (txtPrb_Number อยู่นอก switch ใน vlidSurvey)
+    # แต่แอปมือถือซ่อนช่องนี้ไว้หลังสวิตช์ "มี พ.ร.บ." โดยตั้งใจ (ลดช่องกรอกเมื่อเคสไม่มี พ.ร.บ.)
+    # → เคสที่ไม่มี พ.ร.บ. จะส่งค่าว่างมา ทำให้หัวหน้าบันทึกฟอร์มหลักไม่ผ่าน
+    # ใส่ '-' ตามกติกา required-field-empty แทน (หัวหน้าแก้เองได้ถ้ามีเลขจริง)
+    set_text(driver, "txtPrb_Number", _dash(data.prb_number))
     set_text(driver, "txtAcc_Policy_No", data.policy_value)
     set_text(driver, "wuCale_Policy_Start_txtCalendar", to_buddhist_date(data.effective_date))
     set_text(driver, "wuCale_Policy_End_txtCalendar", to_buddhist_date(data.expiry_date))
