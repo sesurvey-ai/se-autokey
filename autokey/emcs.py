@@ -2255,6 +2255,24 @@ def _resolve_image_type(driver, category: str) -> str:
     return cat
 
 
+def image_quota_left(driver) -> int:
+    """จำนวนรูปที่ยังอัปได้ของเคลมนี้ อ่านจากป้าย lblCurr_Image บนหน้า Upload รูป
+    ("คงเหลือ 66 รูป : upload ไปแล้ว 14 รูป : จากทั้งหมด 80 รูป")
+
+    ⚠️ EMCS จำกัดจำนวนรูปต่อเคลม (เห็นจริง 80 ใบ) และโควตานี้**แชร์กับรูปที่คนอื่น
+    อัปไว้ก่อนแล้ว** ถ้าส่งเกิน หน้าเว็บเด้ง JS alert
+    'ไม่สามารถอัพโหลดรูปภาพได้ :: เนื่องจาก รูปที่กำลังอัพโหลดมีจำนวนมากกว่า จำนวนรูปคงเหลือ.'
+    แล้ว alert ตัวนั้นจะบล็อกทุกอย่างต่อ — เดิมบอทไม่รู้จัก ไปค้างรอปุ่มปิดกล่อง 600 วิ
+
+    คืน -1 ถ้าอ่านไม่ได้ (ให้ผู้เรียกทำต่อตามปกติ ไม่ block งาน)"""
+    try:
+        txt = driver.find_element(By.ID, "lblCurr_Image").text or ""
+    except Exception:
+        return -1
+    m = re.search(r"คงเหลือ\s*(\d+)", txt)
+    return int(m.group(1)) if m else -1
+
+
 def _upload_one_batch(driver, paths, image_type: str, html5_ui: bool):
     """[อยู่หน้ารูปแล้ว] เลือกประเภท image_type → ส่ง paths → อัปโหลด → ปิดกล่องผล
     **ไม่ navigate** — ฟอร์มอัปโหลด (ddlImage_Type_Html5) คงอยู่บนหน้ารูปหลังอัป
@@ -2265,7 +2283,18 @@ def _upload_one_batch(driver, paths, image_type: str, html5_ui: bool):
     ตัวเดียว (multiple) รวดเดียว — UI เก่า fallback (ทีละไฟล์ + ประเภทต่อแถว)"""
     if not paths:
         return
-    log(f"EMCS: อัปโหลดรูป {len(paths)} ไฟล์ (ประเภท '{image_type}')")
+    # โควตารูปต่อเคลมของ EMCS — ส่งเกินแล้วเว็บเด้ง alert บล็อกทุกอย่างต่อ
+    # ตัดให้พอดีโควตาแทนที่จะปล่อยพัง แล้ว log ว่าตกไปกี่ใบ (ห้ามเงียบ)
+    left = image_quota_left(driver)
+    if left == 0:
+        log(f"   ⛔ โควตารูปของเคลมนี้เต็มแล้ว — ข้ามรูป {len(paths)} ใบ (ประเภท '{image_type}')")
+        return
+    if 0 < left < len(paths):
+        log(f"   ⚠️ โควตารูปเหลือ {left} ใบ แต่จะอัป {len(paths)} ใบ "
+            f"→ อัปแค่ {left} ใบ **ตกไป {len(paths) - left} ใบ** (ประเภท '{image_type}')")
+        paths = list(paths)[:left]
+    log(f"EMCS: อัปโหลดรูป {len(paths)} ไฟล์ (ประเภท '{image_type}')"
+        + (f" [โควตาเหลือ {left}]" if left >= 0 else ""))
     if html5_ui:
         # หน้าอาจเพิ่ง refresh จากชุดก่อน — รอ dropdown พร้อมก่อน (กัน stale)
         wait_present(driver, By.ID, "ddlImage_Type_Html5", 15)
@@ -2307,6 +2336,14 @@ def _upload_one_batch(driver, paths, image_type: str, html5_ui: bool):
         log(f"   ✓ ตั้งประเภทรูป '{image_type}' ครบ {len(rows) - 1} แถว")
         driver.find_element(By.ID, "btnUpload").click()
 
+    # เผื่อ EMCS เด้ง alert (เช่นเกินโควตา) — ต้องเคลียร์ก่อน ไม่งั้น wait ข้างล่างค้างยาว
+    try:
+        alert_txt = accept_alert(driver, timeout=3)
+        if alert_txt:
+            log(f"   ⚠️ EMCS แจ้ง: {alert_txt.strip()[:120]} — รูปชุดนี้อาจไม่ถูกอัป")
+            return
+    except Exception:
+        pass
     # รออัปโหลดเสร็จ (ปุ่มปิดกล่องแจ้งผลโผล่) — เผื่อเวลาสำหรับรูปจำนวนมาก
     try:
         wait_clickable(driver, By.CLASS_NAME, "close", 600).click()
