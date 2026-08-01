@@ -37,6 +37,7 @@ from autokey.config import load_config
 from autokey.images import (
     archive_old_images,
     categories_from_export,
+    claim_zips,
     download_xml_export,
     extract_zip_images,
     images_from_zip,
@@ -842,7 +843,9 @@ def _images_from_zip_drop(cfg, claim_no, img_dir, quiet: bool = False):
     if not claim_no:
         return None
     zip_dir = Path(str(getattr(cfg, "sesurvey_zip_dir", "") or (cfg.base_dir / "zip_import")))
-    cands = sorted(zip_dir.glob(f"*{claim_no}*.zip")) +         sorted(zip_dir.glob(f"*/*{claim_no}*.zip"))
+    # จับคู่ด้วย claim_matches (ขอบเขตชัด + เลขต้องยาวพอ) ไม่ใช่ glob substring —
+    # เลขเคลมสั้นเคยไปคว้า zip ของเคลมอื่นมาทั้งก้อน (เจอสด 2026-08-01 เลข '11')
+    cands = claim_zips(zip_dir, claim_no)
     if not cands:
         if not quiet:
             log(f"   (ไม่พบ zip export ของเคลมนี้ใน {zip_dir} → ไม่มีรูปส่งขึ้น EMCS)")

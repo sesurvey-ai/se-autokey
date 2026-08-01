@@ -343,6 +343,32 @@ _TP_EXPORT_LABEL = {
 }
 
 
+def claim_matches(name: str, claim: str) -> bool:
+    """ชื่อไฟล์/โฟลเดอร์นี้เป็นของเลขเคลมนี้จริงไหม
+
+    ⚠️ ห้ามใช้ substring ดิบ ๆ — เจอสด 2026-08-01: เคสทดสอบเลขเคลม '11' ไป match
+    'export_21BR10AVD-6906-001187_....zip' (มี '11' อยู่ใน '001187') แล้วบอทหยิบ
+    **รูปของเคลมคนละใบ** มาเตรียมอัปขึ้น EMCS — ถ้าเป็นโหมด live คือรูปลูกค้าคนหนึ่ง
+    ไปโผล่ในสำนวนของอีกคน
+
+    กติกา: เลขเคลมต้องยาวพอเป็นเลขจริง (เลขจริง 21 ตัว เช่น 21BR10AVD-6906-001187)
+    และต้องอยู่แบบมี "ขอบ" ไม่ใช่ฝังกลางกลุ่มตัวเลข/ตัวอักษรอื่น
+    """
+    claim = str(claim or "").strip()
+    if len(claim) < 10 or not re.fullmatch(r"[0-9A-Za-z\-]+", claim):
+        return False
+    return re.search(r"(?<![0-9A-Za-z])%s(?![0-9A-Za-z])" % re.escape(claim), str(name)) is not None
+
+
+def claim_zips(zip_dir: Path, claim: str) -> list:
+    """ไฟล์ .zip ใน zip_dir (และโฟลเดอร์ย่อยชั้นเดียว) ที่เป็นของเลขเคลมนี้จริง"""
+    zip_dir = Path(zip_dir)
+    if not zip_dir.is_dir():
+        return []
+    return sorted(p for p in list(zip_dir.glob("*.zip")) + list(zip_dir.glob("*/*.zip"))
+                  if claim_matches(p.name, claim))
+
+
 def _export_entries(search_dir: Path, claim: str):
     """yield (parts, filename) ของรูปใน PICTURES/ จากโฟลเดอร์ zip ที่แตกแล้ว หรือไฟล์ .zip ใน search_dir.
     parts = tuple ใต้ PICTURES เช่น ('INS','a.jpg') / ('TP_VEH','111','b.jpg')"""
@@ -350,7 +376,9 @@ def _export_entries(search_dir: Path, claim: str):
     if not search_dir.is_dir():
         return
     # 1) โฟลเดอร์แตกแล้ว (มี PICTURES/ อยู่ข้างใน) — ลองโฟลเดอร์ที่ชื่อมีเลขเคลมก่อน แล้วค่อย search_dir เอง
-    for cand in sorted(search_dir.glob(f"*{claim}*")) + [search_dir]:
+    # ใช้ claim_matches แทน glob substring — เลขเคลมสั้นเคยไปคว้าโฟลเดอร์ของเคลมอื่น
+    cands = sorted(p for p in search_dir.glob("*") if p.is_dir() and claim_matches(p.name, claim))
+    for cand in cands + [search_dir]:
         if not cand.is_dir():
             continue
         root = next((p for p in cand.rglob("PICTURES") if p.is_dir()), None)
