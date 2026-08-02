@@ -340,8 +340,15 @@ def build_xml(pages: list) -> str:
         out.append(block("TXN_SURV_INJ", INJ_MAP, rows, pre, seq=n + 1))
     if bill:
         out.append(block("TXN_SURV_BILL", BILL_MAP, bill))
-    return ('<?xml version="1.0" encoding="UTF-8"?>\n<INSERT_SURV_REPORT_XML>'
-            + "".join(out) + "</INSERT_SURV_REPORT_XML>")
+    # ⚠️ ประทับตราว่าไฟล์นี้สกัดจากหน้าเว็บ EMCS — **ข้อมูลทดสอบเท่านั้น**
+    # ห้ามให้ระบบเข้าใจผิดว่าเป็นไฟล์ ISURVEY เพราะกติกาต่างกันคนละเรื่อง:
+    #   ISURVEY = ระบบเก่า ไม่มีหนัก/เบา · ลักษณะความเสียหาย ฯลฯ ต้องเตือนให้หัวหน้ากรอกเอง
+    #   EMCS    = ข้อมูลที่ผู้ใช้กรอกและตรวจแล้ว มีครบ แต่เป็นของที่ดูดกลับมา ไม่ใช่งานใหม่
+    # ฝั่ง backend อ่านคอมเมนต์บรรทัดนี้เพื่อแยกที่มา (xmlImport.service)
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!-- SOURCE=EMCS_EXTRACT (สกัดจากหน้าเว็บ EMCS ด้วย tools/emcs_dump.py '
+            '— ข้อมูลทดสอบ ไม่ใช่ไฟล์ ISURVEY) -->\n'
+            '<INSERT_SURV_REPORT_XML>' + "".join(out) + "</INSERT_SURV_REPORT_XML>")
 
 
 def _rows(vals: dict, head: str, tail: str, keys: tuple) -> list:
