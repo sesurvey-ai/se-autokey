@@ -12,7 +12,9 @@
 
 สิ่งที่สกัด (ต่อไฟล์)
   dropdowns : id → [{value,label}]  ตัวเลือกทั้งหมด
+  formats   : id → [{insurer,regex,example}]  แพตเทิร์นข้อความที่แต่ละบริษัทบังคับ
   required  : ฟังก์ชัน vlid* → {base: {...}, per_insurer: {รหัส: {...}}}
+              แต่ละช่อง = {label, cond} · cond ว่าง = บังคับเสมอ · มีค่า = บังคับเมื่อ...
   elements  : id/tag/type ของทุก input/select/textarea
 
 ⚠️ กับดักที่เจอมาแล้ว — โค้ดนี้กันไว้หมดแล้ว อย่าลบออก
@@ -24,6 +26,10 @@
     ถ้าไม่แยกจะสรุปว่า "บังคับทุกบริษัท" เกินจริง (เคยพลาดมาแล้ว)
  4) ดอกจันแดงในหน้า ≠ บังคับ — 427 จาก 432 จุดเป็นของฝังตาย มีแค่ span id="req*" ที่
     setSome_ReqField() สลับตามบริษัท → เครื่องมือนี้จึงไม่อ่านดอกจันเลย อ่านแต่ Check*Valid
+ 5) CheckTextBoxCitizenValid ใส่ "เลขคนที่" ('1','2',...) ในตำแหน่งป้าย ไม่ใช่ชื่อช่อง
+    → ช่องเดียวกันมีอีกบรรทัดที่ป้ายจริง เลือกอันที่ยาวกว่า
+ 6) บางช่องบังคับเฉพาะเมื่อเข้าเงื่อนไข เช่น txtPrb_Number บังคับต่อเมื่อติ๊ก chkHas_Prb
+    → เก็บ cond ไว้ด้วย ไม่งั้นสรุปว่า "บังคับเสมอ" เกินจริง
 """
 import argparse
 import json
@@ -56,6 +62,57 @@ def _is_commented(src: str, pos: int) -> bool:
     return src[line_start:pos].lstrip().startswith("//")
 
 
+def _conditions(body: str, pos: int) -> list:
+    """เงื่อนไข if ที่ครอบตำแหน่งนี้อยู่ — ว่าง = บังคับเสมอ
+
+    กับดัก 6: หลายช่องบังคับ "เฉพาะเมื่อ" เช่น txtPrb_Number บังคับก็ต่อเมื่อ
+    ติ๊ก chkHas_Prb → ถ้านับรวมกับช่องบังคับเสมอ จะสรุปเกินจริงอีกแบบ
+    """
+    stack = []
+    for m in re.finditer(r"[{}]", body[:pos]):
+        if _is_commented(body, m.start()):
+            continue
+        if m.group(0) == "{":
+            stack.append(_if_before(body, m.start()))
+        elif stack:
+            stack.pop()
+    return [_pretty_cond(c) for c in stack if c]
+
+
+def _if_before(body: str, brace: int):
+    """ถ้า { นี้เป็นของ if (...) คืนเงื่อนไขข้างใน — ไล่วงเล็บย้อนกลับ ไม่ใช้ regex
+    เพราะ if ซ้อนกันทำให้ regex แบบ greedy คร่อมข้าม if ตัวนอกไปด้วย"""
+    i = brace - 1
+    while i >= 0 and body[i].isspace():
+        i -= 1
+    if i < 0 or body[i] != ")":
+        return None
+    depth, j = 0, i
+    while j >= 0:
+        if body[j] == ")":
+            depth += 1
+        elif body[j] == "(":
+            depth -= 1
+            if depth == 0:
+                break
+        j -= 1
+    if j < 0:
+        return None
+    k = j - 1
+    while k >= 0 and body[k].isspace():
+        k -= 1
+    if body[k - 1:k + 1] != "if" or (k - 2 >= 0 and (body[k - 2].isalnum()
+                                                     or body[k - 2] == "_")):
+        return None
+    return re.sub(r"\s+", " ", body[j + 1:i]).strip()
+
+
+def _pretty_cond(c: str) -> str:
+    """ย่อเงื่อนไขที่ยาวและซ้ำ ๆ ให้อ่านออก — ที่เจอบ่อยคือ 'มีรายการอย่างน้อย 1'"""
+    m = re.match(r"document\.getElementById\('(\w+)'\)\.options\[.*\]\.value\s*>=\s*1$", c)
+    return f"เลือก {m.group(1)} ตั้งแต่ 1 รายการขึ้นไป" if m else c
+
+
 def validators(src: str) -> dict:
     """ทุกฟังก์ชัน vlid*/valid* พร้อมช่องที่ตรวจ แยก base / รายบริษัท"""
     out = {}
@@ -75,16 +132,20 @@ def validators(src: str) -> dict:
             # ยุบ ctl00/ctl01/... เป็น ctlNN — หน้าคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน ตรวจซ้ำ
             # ทุกแถว (ผู้บาดเจ็บ 32 คน × 7 ช่อง = 224 รายการ) ซึ่งเป็นช่องชุดเดียวกัน
             d = {}
-            for cid, lab in CHECK_RE.findall(t):
+            for m2 in CHECK_RE.finditer(t):
+                if _is_commented(t, m2.start()):
+                    continue                            # กับดัก 1 (ระดับบรรทัด)
+                cid, lab = m2.group(1), m2.group(2)
                 key = re.sub(r"ctl\d+", "ctlNN", cid)
                 lab = re.sub(r"\s*::.*$", "", lab).strip()
                 # กับดัก 5: CheckTextBoxCitizenValid ใส่ "เลขคนที่" ในช่องป้าย ('1','2',...)
                 # ไม่ใช่ชื่อช่อง — ช่องเดียวกันมีอีกบรรทัดที่ป้ายจริง เลือกป้ายที่ยาวกว่า
                 if lab.isdigit():
                     lab = ""
-                if len(lab) > len(d.get(key, "")):
-                    d[key] = lab
-                d.setdefault(key, lab)
+                cond = _conditions(t, m2.start())       # กับดัก 6
+                cur = d.get(key)
+                if cur is None or len(lab) > len(cur["label"]):
+                    d[key] = {"label": lab, "cond": cond}
             return d
 
         per = {}
@@ -97,6 +158,31 @@ def validators(src: str) -> dict:
                      "_n": len(CHECK_RE.findall(body))}
     for v in out.values():
         v.pop("_n", None)
+    return out
+
+
+FORMAT_RE = re.compile(r"validFormat\(\s*/(.+?)/\s*,\s*'([A-Za-z_0-9]+)'\s*,\s*'(.*?)'",
+                       re.S)
+
+
+def formats(src: str) -> dict:
+    """กติการูปแบบข้อความต่อบริษัท — validFormat(/regex/, 'id', 'ตัวอย่างที่ถูก')
+
+    สำคัญกับบอท: เลขที่รับแจ้งของแต่ละบริษัทมีแพตเทิร์นคนละแบบ
+    (12-123456 · 08-001-NMOT-012345 · I09081234 · ACD001-A1901-000000 ...)
+    ส่งผิดแพตเทิร์น EMCS เด้งทันทีแม้ข้อมูลจะถูก
+    """
+    out = {}
+    for m in FORMAT_RE.finditer(src):
+        if _is_commented(src, m.start()):
+            continue
+        rx, cid, msg = m.group(1), m.group(2), re.sub(r"\s+", " ", m.group(3)).strip()
+        ins = None
+        head = src[max(0, m.start() - 6000):m.start()]
+        c = re.findall(r"case\s*'([^']+)'\s*:", head)
+        if c:
+            ins = c[-1]
+        out.setdefault(cid, []).append({"insurer": ins, "regex": rx, "example": msg})
     return out
 
 
@@ -132,8 +218,8 @@ def elements(src: str) -> list:
 def scan(path: Path) -> dict:
     src = _read(path)
     return {"file": path.name, "bytes": len(src),
-            "validators": validators(src), "dropdowns": dropdowns(src),
-            "elements": elements(src)}
+            "validators": validators(src), "formats": formats(src),
+            "dropdowns": dropdowns(src), "elements": elements(src)}
 
 
 # ── เทียบกับลิสต์ที่ใช้อยู่จริงในโปรเจกต์ (หา drift) ────────────────────────────
@@ -194,13 +280,19 @@ def main():
         d = scan(p)
         spec.append(d)
         print(f"\n=== {d['file']}  ({d['bytes']:,} bytes) ===")
-        print(f"  element {len(d['elements'])} · dropdown {len(d['dropdowns'])}")
+        print(f"  element {len(d['elements'])} · dropdown {len(d['dropdowns'])}"
+              f" · format {sum(len(x) for x in d['formats'].values())}")
         for fn, v in d["validators"].items():
             per = " · ".join(f"{k}:{len(x)}" for k, x in v["per_insurer"].items())
-            print(f"  {fn}(): บังคับทุกบริษัท {len(v['base'])} ช่อง"
+            always = {k: f for k, f in v["base"].items() if not f["cond"]}
+            when = {k: f for k, f in v["base"].items() if f["cond"]}
+            print(f"  {fn}(): บังคับทุกบริษัท {len(always)} ช่อง"
+                  + (f" (+{len(when)} มีเงื่อนไข)" if when else "")
                   + (f" | รายบริษัท → {per}" if per else ""))
-            for cid, lab in v["base"].items():
-                print(f"      - {lab or cid}")
+            for cid, f in always.items():
+                print(f"      - {f['label'] or cid}")
+            for cid, f in when.items():
+                print(f"      ~ {f['label'] or cid}   ← เมื่อ {' และ '.join(f['cond'])}")
 
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)

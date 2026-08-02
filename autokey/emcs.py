@@ -1210,17 +1210,23 @@ def fill_insurer_and_refs(driver, data: ClaimData):
     wait_clickable(driver, By.ID, "txtSurv_JobNo")
     set_text(driver, "txtSurv_JobNo", data.invoice_value)
     set_text(driver, "txtRef_Claim_No", data.claim_value)
+    _warn_format(driver, "txtRef_Claim_No", data.claim_value, "เลขที่เคลม")
 
 
 def fill_policy(driver, data: ClaimData):
     log("EMCS: กรอกข้อมูลกรมธรรม์")
     wait_visible(driver, By.ID, "txtAcc_Policy_No")
-    # กรมธรรม์ (พ.ร.บ.) — EMCS บังคับ **ทุกบริษัท** (txtPrb_Number อยู่นอก switch ใน vlidSurvey)
-    # แต่แอปมือถือซ่อนช่องนี้ไว้หลังสวิตช์ "มี พ.ร.บ." โดยตั้งใจ (ลดช่องกรอกเมื่อเคสไม่มี พ.ร.บ.)
-    # → เคสที่ไม่มี พ.ร.บ. จะส่งค่าว่างมา ทำให้หัวหน้าบันทึกฟอร์มหลักไม่ผ่าน
-    # ใส่ '-' ตามกติกา required-field-empty แทน (หัวหน้าแก้เองได้ถ้ามีเลขจริง)
-    set_text(driver, "txtPrb_Number", _dash(data.prb_number))
+    # กรมธรรม์ (พ.ร.บ.) — บังคับ **เฉพาะเมื่อติ๊ก chkHas_Prb** เท่านั้น
+    #   if (document.getElementById("chkHas_Prb").checked == true) { CheckInputBoxValid('txtPrb_Number'...
+    # (ตรวจด้วย tools/emcs_spec.py 2026-08-02 — ก่อนหน้านี้เข้าใจผิดว่าบังคับทุกกรณี)
+    # ตรงกับดีไซน์แอปมือถือพอดี: เคสไม่มี พ.ร.บ. ไม่ต้องกรอก → ไม่ต้องยัด '-' ให้เป็นเลขปลอม
+    # ยัด '-' เฉพาะตอนติ๊กไว้แต่ไม่มีเลข ไม่งั้นบันทึกไม่ผ่าน (กติกา required-field-empty)
+    if _checkbox_checked(driver, "chkHas_Prb"):
+        set_text(driver, "txtPrb_Number", _dash(data.prb_number))
+    elif str(data.prb_number or "").strip():
+        log("   – มีเลข พ.ร.บ. แต่ EMCS ไม่ได้ติ๊ก 'มี พ.ร.บ.' → ข้ามช่องนี้ หัวหน้าติ๊กเองได้")
     set_text(driver, "txtAcc_Policy_No", data.policy_value)
+    _warn_format(driver, "txtAcc_Policy_No", data.policy_value, "กรมธรรม์เลขที่")
     set_text(driver, "wuCale_Policy_Start_txtCalendar", to_buddhist_date(data.effective_date))
     set_text(driver, "wuCale_Policy_End_txtCalendar", to_buddhist_date(data.expiry_date))
     set_text(driver, "txtAssured_Name", data.insure_name)
@@ -3208,6 +3214,132 @@ def _recascade_province(driver, province_id: str, timeout: int = 10):
     time.sleep(0.8)
 
 
+# กติการูปแบบข้อความรายบริษัท — สกัดอัตโนมัติจาก validForm() ใน JS ของ EMCS
+# ด้วย tools/emcs_spec.py (2026-08-02) **อย่าแก้ด้วยมือ** ให้รันเครื่องมือแล้วคัดลอกใหม่
+#
+# validForm() ถูกผูกไว้กับปุ่มบันทึก/แก้ไขของหน้าหลัก → ถ้ารูปแบบไม่ตรง EMCS เด้ง
+# AlertSummary แล้วบันทึกไม่ผ่าน แม้ข้อมูลจะถูกต้องก็ตาม
+# เทียบด้วย re.search ไม่ใช่ re.match เพราะ JS ใช้ .test() และหลายแพตเทิร์นมี ^
+# เฉพาะตัวเลือกแรกของ | เท่านั้น (เช่น ของ 1059) — match จะเปลี่ยนความหมาย
+_FORMAT_RULES = {
+    "txtAcc_ClaimRef_No": {
+        "20": [
+            '^[0-9]{6}$|[0-9]{2}[-][0-9]{6}|[0-9]{4}[-][0-9]{5}$',
+        ],
+        "1203": [
+            '^[0-9]{2}[-]{1}[0-9]{3}[-]{1}NMOT[-]{1}[0-9]{6}$',
+        ],
+        "12": [
+            '^[I]{1}[0-9]{8}$',
+        ],
+        "1059": [
+            '^[A-Z]{2}[0-9]{4}[/]{1}[0-9]{6}$|ABI[0-9]{5}[/]{1}[0-9]{4}$|ABC[A-Z0-9]{1,}[/]{1}[0-9]{2}[/]{1}[0-9]{2}$',
+        ],
+        "1232": [
+            '^FCI[0-9]{3}[-][A][0-9]{4}[-][0-9]{6}$|^ACD[0-9]{3}[-][A][0-9]{4}[-][0-9]{6}$|^FCI001-A[0-9]{4}[-][0-9]{6}$',
+        ],
+        "992": [
+            '^[A-Z]{3}[-][0-9]{2}[-][0-9]{6}$|[A-Z]{3}[-][A-Z]{3}[-][A-Z]{1}[-][0-9]{2}[-][0-9]{6}$',
+        ],
+        "19": [
+            '^[F]{1}[M]{1}[0-9]{8}$|[D]{1}[M]{1}[0-9]{8}$|[A]{1}[M]{1}[0-9]{8}$',
+        ],
+        "2179": [
+            '^[0-9]{4}[/][0-9]{4}[/][0-9]{5}$',
+        ],
+        "17": [
+            '^[0-9]{10}$',
+        ],
+        "11": [
+            '^(MO.)[0-9]{3}(-)[0-9]{2}\\/[0-9]{8}$|^[0-9]{5}(RMO)[0-9]{6}$|^[0-9]{3}(-)[0-9]{2}(-RMO-)[0-9]{6}$|^(FN)[0-9]{8}$',
+            '^(MO.)[0-9]{3}(-)[0-9]{2}\\/[0-9]{8}$|^[0-9]{5}(RMO)[0-9]{6}$|^[0-9]{3}(-)[0-9]{2}(-RMO-)[0-9]{6}$|^(FN)[0-9]{8}$|^[0-9]{3}(-)[0-9]{2}(-)[A-Z]{3}(-)[0-9]{6}$',
+        ],
+        "1101": [
+            '^(KIT)[-][0-9]{3}[-][M][-][0-9]{2}[-][0-9]{6}|[V,A,K,W][0-9]{11}|[K][0-9]{5}[M][0-9]{6}|[O][0-9]{5}[M][0-9]{6}$',
+        ],
+        "4": [
+            '^(ACD)[0-9]{3}(-)(A)[0-9]{4}(-)[0-9]{6}$',
+        ],
+        "821": [
+            '^[0-9]{8}$',
+        ],
+    },
+    "txtRef_Claim_No": {
+        "20": [
+            '^C[0-9]{7}$|V[0-9]{7}$|VR[0-9]{6}|K[0-9]{7}$|^[A-Z]{1}[A-Z0-9]{1}[0-9]{6}$',
+        ],
+        "12": [
+            '^[A-Z0-9]{6}[/]{1}[0-9]{3}[/]{1}[0-9]{4}$',
+        ],
+        "1059": [
+            '^[0-9]{13}$|^[1-9]{1}[0-9]{3}[/]{1}[0-9]{9}$|^[0-9]{8}(A)[0-9]{4}$|^[0-9]{8}[A-Z]{1}[0-9]{4}$',
+        ],
+        "1232": [
+            '^FAL[0-9]{7}$|CLM[0-9]{3}-A[0-9]{2}[-]{1}[0-9]{6}$',
+        ],
+        "1518": [
+            '^[0-9]{2}[M]{1}[/]{1}[0-9]{3}000[0-9]{6}$|T[0-9]{2}[-]{1}[0-9]{3}[-]{1}[0-9]{5}$',
+            '^[M|P|C]{1}[6]{1}[6|7|8]{1}[A-Z]{2}[C]{1}[-]{1}[0-9]{5}$',
+        ],
+        "2348": [
+            '^[A]{1}[0-9]{5}([C]|[V]|[B]){1}[0-9]{6}$',
+        ],
+        "992": [
+            '^[A-Z]{3}[-][0-9]{2}[-][0-9]{6}$|[A-Z]{3}[-][A-Z]{3}[-][A-Z]{1}[-][0-9]{2}[-][0-9]{6}$',
+        ],
+        "19": [
+            '^[C]{1}[0-9]{7}$|[T]{1}[0-9]{1}[M]{1}[A-Z0-9]{5}$',
+        ],
+        "11": [
+            '^(MO.)[0-9]{3}(-)[0-9]{2}\\/[0-9]{8}$|^[0-9]{5}(CMO)[0-9]{6}$|^[0-9]{2}(-)[0-9]{1}(-)[0-9]{3}(-)[0-9]{6}$|^(CLA-)[0-9]{8}$',
+        ],
+        "1101": [
+            '^(CLM)[-][0-9]{3}[-][M][-][A-Z0-9]{3}[-][0-9]{2}[-][0-9]{6}|[3][0-9]{8}$',
+        ],
+        "4": [
+            '^(CLM)[0-9]{3}(-)(A)[0-9]{2}(-)[0-9]{6}$',
+        ],
+    },
+    "txtAcc_Policy_No": {
+        "12": [
+            '^[A-Z0-9]{6}[/]{1}[0-9]{3}$',
+        ],
+        "1232": [
+            '^001-ACTP[0-9]{2}[-][0-9]{6}$|001-AMV1[0-9]{2}[-]{1}[0-9]{6}$|001-AMV2[0-9]{2}[-]{1}[0-9]{6}$|001-AMV3[0-9]{2}[-]{1}[0-9]{6}$|001-AMV5[0-9]{2}[-]{1}[0-9]{6}$|001-AMP2[0-9]{2}[-][0-9]{6}$|001-AM2N[0-9]{2}[-][0-9]{6}$|001-AM3N[0-9]{2}[-][0-9]{6}$|001-AM1S[0-9]{2}[-][0-9]{6}$|001-APV1[0-9]{2}[-][0-9]{6}$|001-AWS1[0-9]{2}[-][0-9]{6}$|001-AWS3[0-9]{2}[-][0-9]{6}$|001-AWS5[0-9]{2}[-][0-9]{6}$|[0-9]{3}[-][A-z0-9]{4}[0-9]{2}[-][0-9]{6}$',
+        ],
+        "992": [
+            '^[A-Z]{1}[-][0-9]{1}[-][0-9]{2}[-][0-9]{1}[-][0-9]{6}$|[A-Z]{1}[-][0-9]{1}[-][0-9]{2}[-][A-Z]{1}[-][0-9]{7}$|[A-Z]{2}[-][0-9]{1}[-][0-9]{2}[-][0-9]{1}[-][0-9]{6}$|[A-Z]{3}[-][A-Z]{1}[-][A-Z0-9]{1}[0-9]{2}[-][0-9]{2}[-][0-9]{6}$|[A-Z]{3}[-][A-Z]{1}[-][A-Z0-9]{3}[-][0-9]{2}[-][0-9]{6}$',
+        ],
+        "19": [
+            '^[A-Z0-9]{8}$',
+        ],
+        "11": [
+            '^(MO.)[0-9]{3}(-)[0-9]{2}\\/[0-9]{8}$|^[0-9]{2}(-)[0-9]{2}(-)[0-9]{8}$|^(V)[0-9]{4}(-)[0-9]{8}$|^(VM)[0-9]{3}(-)[0-9]{4}(-)[0-9]{2}(-)[0-9]{6}$|^[0-9]{3}(-)[0-9]{2}\\/[0-9]{7}$|^[M][T][0-9]{14}$|^[M][T][0-9]{13}$',
+        ],
+        "1101": [
+            '^[ก][ท][A-Z]{3}[0-9]{7}|[A-Z0-9]{3}[-][0-9]{8}[/][A-Z]{3}|[0-9]{3}[-][M][-][A-Z0-9]{3}[-][0-9]{2}[-][0-9]{6}$',
+        ],
+        "4": [
+            '^[0-9]{3}(-)((A)[0-9]{5}|(AC)[0-9]{4})(-)[0-9]{6}$',
+        ],
+    },
+    "txtPrb_Number": {
+        "1232": [
+            '^[0-9]{3}[-][A-Z0-9]{4}[0-9]{2}[-][0-9]{6}$',
+        ],
+    },
+}
+
+
+def _format_ok(field: str, insurer_code, value) -> bool:
+    """None = บริษัทนี้ไม่มีกติการูปแบบ · True = ตรง · False = ผิดรูปแบบ (EMCS จะไม่ให้บันทึก)"""
+    pats = _FORMAT_RULES.get(field, {}).get(str(insurer_code or "").strip())
+    val = str(value or "").strip()
+    if not pats or not val:
+        return None
+    return any(re.search(p, val) for p in pats)
+
+
 # บริษัทที่ vlidSurvey มี case แยก และยอมให้ "เลขที่รับแจ้ง" ว่างได้ถ้ามีเลขอ้างอิงอีกช่อง
 # (ตรวจจาก JS จริง 2026-07-27: case '1059' = ไอโออิ ใช้เงื่อนไข OR กับ txtRef_Claim_No)
 # บริษัทอื่นตกสาย default = **บังคับ txtAcc_ClaimRef_No เสมอ** → ห้ามล้างทิ้ง
@@ -3225,6 +3357,32 @@ def _page_insurer_code(driver) -> str:
         return ""
 
 
+def _field_value(driver, element_id: str) -> str:
+    try:
+        return (driver.execute_script(
+            "var e=document.getElementById(arguments[0]);return e?e.value:'';",
+            element_id) or "").strip()
+    except Exception:
+        return ""
+
+
+def _checkbox_checked(driver, element_id: str) -> bool:
+    try:
+        return bool(driver.execute_script(
+            "var e=document.getElementById(arguments[0]);return !!(e&&e.checked);", element_id))
+    except Exception:
+        return False
+
+
+def _warn_format(driver, field: str, value, label: str, insurer_code: str = None):
+    """เตือนเมื่อค่าไม่ตรงแพตเทิร์นที่บริษัทนี้บังคับ — ช่องพวกนี้ห้ามว่างจึงล้างทิ้งไม่ได้
+    ได้แต่บอกล่วงหน้าว่าทำไม EMCS ถึงจะไม่ยอมบันทึก จะได้ไม่ต้องไล่หาสาเหตุเอง"""
+    code = insurer_code if insurer_code is not None else _page_insurer_code(driver)
+    if _format_ok(field, code, value) is False:
+        log(f"   ⚠️ {label} '{str(value).strip()}' ไม่ตรงรูปแบบที่บริษัท {code} บังคับ "
+            f"— EMCS อาจไม่ยอมให้บันทึกหน้าหลัก")
+
+
 def _set_or_clear_claim_ref(driver, notify_value, insurer_code: str = None):
     """เลขที่รับแจ้ง (txtAcc_ClaimRef_No, บังคับ *)
 
@@ -3232,21 +3390,33 @@ def _set_or_clear_claim_ref(driver, notify_value, insurer_code: str = None):
     ซึ่งจริงเฉพาะไอโออิ (1059) เท่านั้น — ของบริษัทอื่น (เช่นไทยไพบูลย์ 2429 ที่ไม่มี case
     ใน JS เลย) สาย default บังคับช่องนี้เสมอ ล้าง = บันทึกหน้าหลักไม่ผ่านทันที
     ที่ผ่านมารอดเพราะเลขของไทยไพบูลย์บังเอิญมี '/' พอดี (BR10/6905/12524) ไม่ใช่เพราะโค้ดถูก
+
+    2026-08-02: เดิมเช็ค "ขึ้นต้นด้วยอะไรก็ได้แล้วมี /" ซึ่งหลวมเกินไป — ไอโออิบังคับ
+    แพตเทิร์นเฉพาะ (HY2010/000001 · ABI12345/0753 · ABCSR0001/01/53) เลขอย่าง
+    BR10/6905/12524 ผ่านด่านเก่าแต่ EMCS ตีกลับตอนกดบันทึก ตอนนี้เทียบแพตเทิร์นจริง
+    รายบริษัทจาก _FORMAT_RULES (สกัดด้วย tools/emcs_spec.py)
     """
     ref = str(notify_value or "").strip()
-    if re.match(r'^[A-Za-z0-9]{2,}/', ref):
-        set_text(driver, "txtAcc_ClaimRef_No", ref)
-        log(f"   ✓ เลขที่รับแจ้ง: {ref}")
-        return
     code = str(insurer_code if insurer_code is not None else _page_insurer_code(driver)).strip()
-    if code in _CLAIMREF_OPTIONAL_INSURERS:
+    ok = _format_ok("txtAcc_ClaimRef_No", code, ref)
+    if ok is not False:
+        # ตรงกติกา หรือบริษัทนี้ไม่มีกติกา → ใส่ได้เลย (ว่างก็ตกไปเช็คด้านล่าง)
+        if ref:
+            set_text(driver, "txtAcc_ClaimRef_No", ref)
+            log(f"   ✓ เลขที่รับแจ้ง: {ref}")
+            return
+    # เงื่อนไขจริงของ 1059 คือ OR: บ่นเมื่อ txtAcc_ClaimRef_No **และ** txtRef_Claim_No ว่างทั้งคู่
+    # → ล้างช่องนี้ได้ก็ต่อเมื่อเลขที่เคลมมีค่าอยู่แล้วเท่านั้น ไม่งั้นว่างทั้งคู่ = บันทึกไม่ผ่าน
+    if code in _CLAIMREF_OPTIONAL_INSURERS and _field_value(driver, "txtRef_Claim_No"):
         driver.execute_script(
             "var e=document.getElementById('txtAcc_ClaimRef_No');if(e)e.value='';")
-        log(f"   – เลขที่รับแจ้งรูปแบบไม่ตรง → ล้างทิ้ง (บริษัท {code} ยอมให้ว่างได้)")
+        why = f"รูปแบบไม่ตรง ({ref})" if ref else "ไม่มีเลขที่รับแจ้ง"
+        log(f"   – {why} → ปล่อยว่าง (บริษัท {code} ยอมได้เพราะมีเลขที่เคลมแล้ว)")
         return
     if ref:
         set_text(driver, "txtAcc_ClaimRef_No", ref)
-        log(f"   ✓ เลขที่รับแจ้ง (รูปแบบไม่ตรง แต่บริษัท {code} บังคับต้องมีค่า): {ref}")
+        log(f"   ⚠️ เลขที่รับแจ้ง {ref} ไม่ตรงรูปแบบที่บริษัท {code} บังคับ "
+            f"แต่ช่องนี้ห้ามว่าง — EMCS อาจไม่ยอมให้บันทึก")
     else:
         log(f"   ⚠️ ไม่มีเลขที่รับแจ้ง และบริษัท {code} บังคับ — บันทึกหน้าหลักจะไม่ผ่าน")
 
