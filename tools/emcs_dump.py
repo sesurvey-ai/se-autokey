@@ -219,6 +219,27 @@ INJ_MAP = [
     ("PERSON_TYPE", "ddlPerson_Type"), ("WOUNDED_TYPE", "ddlWounded_Type"),
 ]
 
+# หน้า "ใบค่าใช้จ่าย" — 3 คอลัมน์: txtSur_* (เซอร์เวย์เรียกเก็บ) · txtIns_* (ฝั่งประกัน
+# disabled) · txtFul_* (มีแต่ช่องอื่น ๆ)  XML ใช้คู่ SUR_/FUL_ → FUL_ ไม่มีช่องบนหน้านี้
+# ⚠️ ช่องที่ลงท้าย _Price เป็น readonly ที่ JS คำนวณให้ (txtSur_Daily_Price ว่างเสมอ)
+#    ตัวที่หัวหน้าพิมพ์จริงคือชื่อสั้น (txtSur_Daily) — เคยเกือบแมปผิดข้าง
+BILL_MAP = [
+    ("SUR_INVEST", "txtInvestigate_UnitPrice"), ("FUL_INVEST", ""),
+    ("SUR_TRANS", "txtTransport_UnitPrice"), ("FUL_TRANS", ""),
+    ("INVEST_NUM", "txtNum_Investigate"), ("TRANS_NUM", "txtNum_Transport"),
+    ("PHOTO_NUM", "txtNum_Photo"),
+    ("SUR_PHOTO", "txtPhoto_Price"),          # ยอดรวมค่ารูป (จำนวน × ราคาต่อใบ)
+    ("FUL_PHOTO", ""), ("SUR_OTHER", "txtOther_UnitPrice"),
+    ("OTHER_DESC", "txtOther_Desc"), ("BILL_NO", "txtBill_No"),
+    ("BILL_DATE", "@date:wuCale_Bill_Date_txtCalendar"),
+    ("CREDIT_TERM", "txtCredit_Term"), ("DUE_DATE", "@date:wuCale_Due_Date_txtCalendar"),
+    ("SUR_TEL", "txtSur_Tel"), ("SUR_INSURE", "txtSur_Insure"),
+    ("SUR_CLAIM", "txtSur_Claim"), ("SUR_DAILY", "txtSur_Daily"),
+    ("ACC_RESULT", "txtAcc_result"), ("ACC_COMMENT", "txtAcc_Comment"),
+    ("SURV_COMMENT", "txtSurv_Comment"), ("INC_VAT", "@radio:rdo_Inc_Vat_"),
+    ("SUR_PERCENT_CLAIM", "txtSur_Percent_Claim"),
+]
+
 ASSET_MAP = [
     ("ASSET_SEQ", "@seq"), ("ASSET_DESC", "txtAsset_Desc"),
     ("ASSET_DAMAGE_CAUSE", "txtAsset_Damage_Cause"), ("ASSET_DAMAGE", "txtAsset_Damage"),
@@ -285,26 +306,40 @@ def _num(v: str) -> str:
     return n[:-3] if n.endswith(".00") else n
 
 
+def _page_with(pages: list, marker: str) -> dict:
+    """ค่าจากหน้าที่มีช่อง marker อยู่ — ห้ามยุบทุกหน้าเป็น dict เดียวแล้วใช้ตรง ๆ
+    เพราะชื่อช่องชนกันข้ามหน้า (txtSurv_Comment / txtAcc_Comment มีทั้งหน้าหลักและ
+    หน้าค่าใช้จ่าย คนละความหมาย) หน้าหลังจะทับหน้าแรกเงียบ ๆ"""
+    for p in pages:
+        if any(k == marker or k.startswith(marker) for k in p["values"]):
+            return p["values"]
+    return {}
+
+
 def build_xml(pages: list) -> str:
     """ประกอบ INSERT_SURV_REPORT_XML จากค่าที่ดูดมาทุกหน้า"""
-    vals = {}
+    main = _page_with(pages, "txtSurv_JobNo")
+    bill = _page_with(pages, "txtBill_No")
+    rows = {}
     for p in pages:
-        vals.update(p["values"])
+        rows.update({k: v for k, v in p["values"].items() if k.startswith("dtl")})
 
-    def block(name, mapping, prefix="", **kw):
+    def block(name, mapping, vals, prefix="", **kw):
         body = "".join(f"<{t}>{_esc(resolve(vals, src, prefix, **kw)) or ' '}</{t}>"
                        for t, src in mapping)
         return f"<{name}>{body}</{name}>"
 
-    out = [block("TXN_SURV_REPORT", REPORT_MAP)]
-    out.append(block("TXN_SURV_CAR", CAR_MAP, insured=True, type=0))
-    for n, pre in enumerate(_rows(vals, "dtlOpo_ctl", "_wuOpo_", ("txtOpo_Name", "txtCar_RegNo"))):
+    out = [block("TXN_SURV_REPORT", REPORT_MAP, main),
+           block("TXN_SURV_CAR", CAR_MAP, main, insured=True, type=0)]
+    for n, pre in enumerate(_rows(rows, "dtlOpo_ctl", "_wuOpo_", ("txtOpo_Name", "txtCar_RegNo"))):
         alias = [(t, CAR_OPO_ALIAS.get(s, s)) for t, s in CAR_MAP]
-        out.append(block("TXN_SURV_CAR", alias, pre, insured=False, type=20 + n))
-    for n, pre in enumerate(_rows(vals, "dtlAsset_ctl", "_wuAsset_", ("txtAsset_Desc", "txtOwner"))):
-        out.append(block("TXN_SURV_ASSET", ASSET_MAP, pre, seq=n + 1))
-    for n, pre in enumerate(_rows(vals, "dtlInj_ctl", "_wuInj_", ("txtInj_Name", "txtCitizen_ID"))):
-        out.append(block("TXN_SURV_INJ", INJ_MAP, pre, seq=n + 1))
+        out.append(block("TXN_SURV_CAR", alias, rows, pre, insured=False, type=20 + n))
+    for n, pre in enumerate(_rows(rows, "dtlAsset_ctl", "_wuAsset_", ("txtAsset_Desc", "txtOwner"))):
+        out.append(block("TXN_SURV_ASSET", ASSET_MAP, rows, pre, seq=n + 1))
+    for n, pre in enumerate(_rows(rows, "dtlInj_ctl", "_wuInj_", ("txtInj_Name", "txtCitizen_ID"))):
+        out.append(block("TXN_SURV_INJ", INJ_MAP, rows, pre, seq=n + 1))
+    if bill:
+        out.append(block("TXN_SURV_BILL", BILL_MAP, bill))
     return ('<?xml version="1.0" encoding="UTF-8"?>\n<INSERT_SURV_REPORT_XML>'
             + "".join(out) + "</INSERT_SURV_REPORT_XML>")
 
