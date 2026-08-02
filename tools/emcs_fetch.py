@@ -79,7 +79,7 @@ def _goto(driver, menu_id: str, marker: str, timeout: int, tries: int = 2):
     raise last
 
 
-def fetch(driver, claim: str, esurvey: str, outdir: Path) -> list:
+def fetch(driver, claim: str, esurvey: str, outdir: Path, keep_open: bool = False) -> list:
     """เปิดเรื่อง → ไล่เซฟทุกหน้า → ออกจากเรื่อง (ปลดล็อก) คืนลิสต์ไฟล์ที่เซฟ"""
     outdir.mkdir(parents=True, exist_ok=True)
     saved = []
@@ -107,7 +107,12 @@ def fetch(driver, claim: str, esurvey: str, outdir: Path) -> list:
                     + (f" (เซฟหน้าที่โผล่จริงไว้ที่ {dbg.name})" if dbg else ""))
     finally:
         # ออกจากเรื่องเสมอ ไม่งั้นเรื่องค้างล็อก คนอื่นเปิดต่อไม่ได้
-        if not _inside_report(driver):
+        if keep_open and _inside_report(driver):
+            log("")
+            log("   ⚠️ ค้างหน้าเรื่องไว้บนจอตามที่สั่ง (--keep-open)")
+            log(f"   ⚠️ เรื่อง {esurvey} **ถูกล็อกอยู่** คนอื่นเปิดต่อไม่ได้")
+            log("   ⚠️ ดูเสร็จแล้วกด 'กลับหน้า Inbox/Outbox' บนหน้าจอเองเพื่อปลดล็อก")
+        elif not _inside_report(driver):
             # เปิดเรื่องไม่สำเร็จตั้งแต่แรก (เช่นคนอื่นล็อกอยู่) = ไม่มีอะไรต้องปลด
             log("   (ไม่ได้เข้าไปในเรื่อง — ไม่มีล็อกให้ปลด)")
         else:
@@ -139,12 +144,17 @@ def main():
     ap.add_argument("--fetch", action="store_true",
                     help="เปิดเรื่องแล้วเซฟทุกหน้าจริง (ไม่ใส่ = แค่ค้นหาแล้วรายงาน)")
     ap.add_argument("--dump", action="store_true", help="แปลงเป็น XML ต่อด้วย emcs_dump")
+    ap.add_argument("--keep-open", action="store_true",
+                    help="ค้างหน้า EMCS ไว้บนจอให้ดูเทียบเอง (⚠️ เรื่องจะยังถูกล็อก "
+                         "ต้องกด 'กลับหน้า Inbox/Outbox' เองเมื่อดูเสร็จ)")
     ap.add_argument("--out", default="", help="โฟลเดอร์ปลายทาง (default runs/fetch_<เลขเคลม>)")
     a = ap.parse_args()
 
     cfg = load_config()
     outdir = Path(a.out or f"runs/fetch_{a.claim.replace('/', '-')}")
-    driver = make_driver(detach=False)             # ต้องปิดเอง ไม่ปล่อยค้างล็อกเรื่อง
+    # detach=False = ปิดเบราว์เซอร์เองเมื่อจบ ไม่ปล่อยค้างล็อกเรื่อง
+    # --keep-open = ค้างไว้ให้คนดูเทียบเอง (ยอมแลกกับการถือล็อกไว้จนคนกดกลับเอง)
+    driver = make_driver(detach=bool(a.keep_open))
     try:
         emcs.login(driver, cfg)
         reports = emcs.find_existing_reports(driver, a.claim)
@@ -163,9 +173,10 @@ def main():
         if not target:
             sys.exit("มีหลายเรื่อง — ระบุ --esurvey ว่าจะอ่านเรื่องไหน")
         log(f"\nEMCS: เปิดเรื่อง {target} (อ่านอย่างเดียว)")
-        saved = fetch(driver, a.claim, target, outdir)
+        saved = fetch(driver, a.claim, target, outdir, a.keep_open)
     finally:
-        driver.quit()
+        if not a.keep_open:
+            driver.quit()
 
     log(f"\n✓ เซฟ {len(saved)} หน้า ที่ {outdir}")
     if a.dump and saved:
