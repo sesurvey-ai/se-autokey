@@ -267,8 +267,8 @@ def main():
     paths = []
     for pat in a.files:
         if any(c in pat for c in "*?"):
-            p = Path(pat)                       # glob แบบ absolute ต้องแยก root ออกก่อน
-            paths += sorted((p.parent if p.parent.is_absolute() else Path()).glob(p.name))
+            p = Path(pat)                       # glob: parent ว่าง = โฟลเดอร์ปัจจุบัน
+            paths += sorted(Path(p.parent or ".").glob(p.name))
         else:
             paths.append(Path(pat))
     paths = [p for p in paths if p.is_file()]
