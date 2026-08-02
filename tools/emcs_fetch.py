@@ -55,9 +55,11 @@ def fetch(driver, claim: str, esurvey: str, outdir: Path) -> list:
     """เปิดเรื่อง → ไล่เซฟทุกหน้า → ออกจากเรื่อง (ปลดล็อก) คืนลิสต์ไฟล์ที่เซฟ"""
     outdir.mkdir(parents=True, exist_ok=True)
     saved = []
-    # เปิดเรื่อง (ฟังก์ชันนี้เช็คให้ด้วยว่าเรื่องถูกล็อกโดยคนอื่นอยู่หรือเปล่า)
-    emcs.open_report_images(driver, claim, esurvey)
     try:
+        # เปิดเรื่อง (ฟังก์ชันนี้เช็คให้ด้วยว่าเรื่องถูกล็อกโดยคนอื่นอยู่หรือเปล่า)
+        # ⚠️ ต้องอยู่ "ใน" try — ถ้าคลิกลิงก์ติดแล้วหน้าโหลดไม่ทันจน raise
+        # เรื่องจะเปิดค้างล็อกทันที ต้องให้ finally ได้กดออกจากเรื่องเสมอ
+        emcs.open_report_images(driver, claim, esurvey)
         for name, menu_id, marker in PAGES:
             try:
                 _click(driver, menu_id)
@@ -71,17 +73,29 @@ def fetch(driver, claim: str, esurvey: str, outdir: Path) -> list:
                 log(f"   ⚠️ ข้าม {name} — {type(e).__name__}: {e}")
     finally:
         # ออกจากเรื่องเสมอ ไม่งั้นเรื่องค้างล็อก คนอื่นเปิดต่อไม่ได้
-        try:
-            _click(driver, "wuMenuPage1_imbReturn_In_Out")
+        if not _inside_report(driver):
+            # เปิดเรื่องไม่สำเร็จตั้งแต่แรก (เช่นคนอื่นล็อกอยู่) = ไม่มีอะไรต้องปลด
+            log("   (ไม่ได้เข้าไปในเรื่อง — ไม่มีล็อกให้ปลด)")
+        else:
             try:
-                emcs.accept_alert(driver, timeout=10)
-            except Exception:
-                pass
-            log("EMCS: ออกจากเรื่องแล้ว — ปลดล็อก คนอื่นเปิดต่อได้")
-        except Exception as e:
-            log(f"   ⛔ กดออกจากเรื่องไม่สำเร็จ ({type(e).__name__}) — "
-                f"เรื่อง {esurvey} อาจค้างล็อก ให้เปิด EMCS กดกลับ Inbox เองด้วย")
+                _click(driver, "wuMenuPage1_imbReturn_In_Out")
+                try:
+                    emcs.accept_alert(driver, timeout=10)
+                except Exception:
+                    pass
+                log("EMCS: กลับหน้า Inbox/Outbox แล้ว = ออกจากเรื่อง ปลดล็อก คนอื่นเปิดต่อได้")
+            except Exception as e:
+                log(f"   ⛔ กดกลับหน้า Inbox/Outbox ไม่สำเร็จ ({type(e).__name__}) — "
+                    f"เรื่อง {esurvey} ค้างล็อกอยู่ **ต้องเปิด EMCS กดปุ่มกลับเองทันที**")
     return saved
+
+
+def _inside_report(driver) -> bool:
+    """ตอนนี้อยู่ในเรื่อง (= ถือล็อกอยู่) หรือเปล่า — ดูจากเมนูของหน้าเรื่อง"""
+    try:
+        return bool(driver.find_elements(By.ID, "wuMenuPage1_imbReturn_In_Out"))
+    except Exception:
+        return False
 
 
 def main():
