@@ -31,13 +31,14 @@ from autokey import emcs  # noqa: E402
 from autokey.browser import log, make_driver  # noqa: E402
 from autokey.config import load_config  # noqa: E402
 
-# หน้าในเรื่องหนึ่ง ๆ : (ชื่อไฟล์, id ปุ่มเมนู, ช่องที่ต้องโผล่ถึงจะถือว่าโหลดเสร็จ)
-# หน้าแรกคือหน้าที่เปิดมาเลย ไม่ต้องกดเมนู
+# หน้าในเรื่องหนึ่ง ๆ : (ชื่อไฟล์, id ปุ่มเมนู, ช่องที่ต้องโผล่ถึงจะถือว่าโหลดเสร็จ, วินาทีที่รอ)
+# ⚠️ หน้าข้อมูลทั่วไปใหญ่ ~3 MB (อีก 3 หน้าแค่ 0.15-1 MB) ใช้เวลาโหลดจริง 30-45 วิ
+#    เคยตั้ง 20 วิเท่ากันหมดแล้วหน้านี้หลุดทุกรอบ ทั้งที่หน้ามาถูกต้อง
 PAGES = [
-    ("1-ข้อมูลทั่วไป", "wuMenuPage1_imbGeneral_Survey", "txtSurv_JobNo"),
-    ("2-ทรัพย์สิน", "wuMenuPage1_imbAsset", "ddlAsset_Count"),
-    ("3-ผู้บาดเจ็บ", "wuMenuPage1_imbInjure_Person", "ddlInj_Count"),
-    ("4-ใบค่าใช้จ่าย", "wuMenuPage1_imbSpend", "txtBill_No"),
+    ("1-ข้อมูลทั่วไป", "wuMenuPage1_imbGeneral_Survey", "txtSurv_JobNo", 90),
+    ("2-ทรัพย์สิน", "wuMenuPage1_imbAsset", "ddlAsset_Count", 25),
+    ("3-ผู้บาดเจ็บ", "wuMenuPage1_imbInjure_Person", "ddlInj_Count", 40),
+    ("4-ใบค่าใช้จ่าย", "wuMenuPage1_imbSpend", "txtBill_No", 25),
 ]
 
 # id เดียวที่อนุญาตให้คลิก — อย่างอื่นห้ามแตะ (ปุ่มบันทึก/ส่งงานอยู่นอกลิสต์นี้ทั้งหมด)
@@ -51,6 +52,33 @@ def _click(driver, element_id: str):
     emcs.click_retry(driver, By.ID, element_id)
 
 
+def _goto(driver, menu_id: str, marker: str, timeout: int, tries: int = 2):
+    """กดเมนูสลับหน้าแล้วรอช่องประจำหน้านั้นโผล่ — คลิกที่ไม่ติดจะเงียบ (ไม่ error
+    แต่ก็ไม่เปลี่ยนหน้า) จึงต้องยืนยันด้วย marker
+
+    กดซ้ำได้แค่กรณีที่ยังไม่ขยับจริง ๆ — การกดซ้ำ = postback หน้า 3 MB ใหม่
+    ซึ่งทำให้ช้าลงกว่าเดิม เคยตั้ง retry แล้วยิ่งแย่ จึงรอให้ครบ timeout ก่อนเสมอ
+
+    ⚠️ EMCS disable ปุ่มเมนูของ "หน้าที่ยืนอยู่" — และพอเปิดเรื่องมันพามาที่หน้า
+    ข้อมูลทั่วไปให้เลย กดปุ่มนั้นซ้ำจึงรอ clickable จนหมดเวลาแล้ว error ทั้งที่หน้าถูกอยู่แล้ว
+    → เช็ค marker ก่อน ถ้าอยู่หน้านั้นแล้วไม่ต้องกดอะไร (marker แยกหน้าได้ 1:1 ตรวจแล้ว)"""
+    if driver.find_elements(By.ID, marker):
+        return
+    last = None
+    for i in range(tries):
+        try:
+            _click(driver, menu_id)
+            emcs.wait_present(driver, By.ID, marker, timeout)
+            time.sleep(1.0)                        # เผื่อ postback เติมค่าท้าย ๆ
+            return
+        except Exception as e:
+            last = e
+            if i + 1 < tries:
+                log(f"      (รอ {timeout} วิแล้วยังไม่ถึงหน้า — กด {menu_id} ซ้ำ)")
+                time.sleep(2.0)
+    raise last
+
+
 def fetch(driver, claim: str, esurvey: str, outdir: Path) -> list:
     """เปิดเรื่อง → ไล่เซฟทุกหน้า → ออกจากเรื่อง (ปลดล็อก) คืนลิสต์ไฟล์ที่เซฟ"""
     outdir.mkdir(parents=True, exist_ok=True)
@@ -60,17 +88,23 @@ def fetch(driver, claim: str, esurvey: str, outdir: Path) -> list:
         # ⚠️ ต้องอยู่ "ใน" try — ถ้าคลิกลิงก์ติดแล้วหน้าโหลดไม่ทันจน raise
         # เรื่องจะเปิดค้างล็อกทันที ต้องให้ finally ได้กดออกจากเรื่องเสมอ
         emcs.open_report_images(driver, claim, esurvey)
-        for name, menu_id, marker in PAGES:
+        time.sleep(2.0)      # หน้าเพิ่งเปิดยังไม่นิ่ง คลิกทันทีจะไม่ติด (เจอจริงกับหน้าแรก)
+        for name, menu_id, marker, timeout in PAGES:
             try:
-                _click(driver, menu_id)
-                emcs.wait_present(driver, By.ID, marker, 25)
-                time.sleep(1.0)                    # เผื่อ postback เติมค่าท้าย ๆ
+                _goto(driver, menu_id, marker, timeout)
                 f = outdir / f"{name}.html"
                 f.write_text(driver.page_source, encoding="utf-8")
                 saved.append(f)
                 log(f"   ✓ {name}  ({f.stat().st_size:,} bytes)")
             except Exception as e:
-                log(f"   ⚠️ ข้าม {name} — {type(e).__name__}: {e}")
+                # เซฟหน้าที่ไปโผล่จริงไว้วินิจฉัย — ไม่งั้นได้แค่ TimeoutException เปล่า ๆ
+                dbg = outdir / f"{name}-FAILED.html"
+                try:
+                    dbg.write_text(driver.page_source, encoding="utf-8")
+                except Exception:
+                    dbg = None
+                log(f"   ⚠️ ข้าม {name} — {type(e).__name__}"
+                    + (f" (เซฟหน้าที่โผล่จริงไว้ที่ {dbg.name})" if dbg else ""))
     finally:
         # ออกจากเรื่องเสมอ ไม่งั้นเรื่องค้างล็อก คนอื่นเปิดต่อไม่ได้
         if not _inside_report(driver):
