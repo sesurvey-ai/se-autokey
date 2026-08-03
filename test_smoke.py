@@ -392,15 +392,15 @@ check("gender_from_title: น.ส. (ตัวย่อ) → W",
       emcs.gender_from_title("น.ส.ปฐมาวดี") == "W"
       and emcs.gender_from_title("นส.สมหญิง") == "W")
 
-# dry_claim_block_reason: เคลมแห้งแท้ = '' / เคลมสด = เหตุผล (คุม _offer_submit ใส่คำเตือน)
+# fresh_claim_note: เคลมแห้งแท้ = '' / เคลมสด = เหตุผล (คุม _offer_submit ใส่คำเตือน)
 check("dry_claim: ประเภท 2 + ไม่มีคู่กรณี/บาดเจ็บ/ทรัพย์สิน → '' (เคลมแห้งแท้)",
-      claim_data.ClaimData(claim_type="2").dry_claim_block_reason() == "")
+      claim_data.ClaimData(claim_type="2").fresh_claim_note() == "")
 check("dry_claim: ประเภทไม่ใช่ 2 → เหตุผล (เคลมสด → เตือน)",
-      claim_data.ClaimData(claim_type="1").dry_claim_block_reason() != "")
+      claim_data.ClaimData(claim_type="1").fresh_claim_note() != "")
 check("dry_claim: มีคู่กรณี → เหตุผล (เคลมสด → เตือน)",
       claim_data.ClaimData(claim_type="2",
                            third_parties=[{"plate_no": "9กฆ5003"}]
-                           ).dry_claim_block_reason() != "")
+                           ).fresh_claim_note() != "")
 
 # gender_from_title: อนุมานเพศจากคำนำหน้า (ทิศนี้ชัดเจน 100%) — fallback ตอนเพศว่าง
 check("gender_from_title: นางสาว → W",
@@ -557,13 +557,13 @@ _appt3 = claim_data.ClaimData(claim_type="3")
 _dry2_tp = claim_data.ClaimData(claim_type="2",
                                 third_parties=[{"plate_no": "x"}])
 check("type 2 ไม่มีคู่กรณี = เคลมแห้งแท้",
-      _dry2.dry_claim_block_reason() == "")
+      _dry2.fresh_claim_note() == "")
 check("type 1 = บล็อก (เคลมสด)",
-      "เคลมสด" in _fresh1.dry_claim_block_reason())
+      "เคลมสด" in _fresh1.fresh_claim_note())
 check("type 3 = บล็อก (เคลมนัดหมาย)",
-      "เคลมนัดหมาย" in _appt3.dry_claim_block_reason())
+      "เคลมนัดหมาย" in _appt3.fresh_claim_note())
 check("type 2 แต่มีคู่กรณี = บล็อก (กันข้อมูลเพี้ยน)",
-      "คู่กรณี" in _dry2_tp.dry_claim_block_reason())
+      "คู่กรณี" in _dry2_tp.fresh_claim_note())
 
 # bill จากหน้าจอ (INS_*) ต้องไม่ถูก XML ทับ
 if bill_xmls:
