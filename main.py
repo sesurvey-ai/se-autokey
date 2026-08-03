@@ -107,10 +107,13 @@ def parse_args():
     p.add_argument("--force-new", action="store_true",
                    help="สร้างเรื่องใหม่แม้เคลมนี้จะมีเรื่องใน EMCS อยู่แล้ว "
                         "(ปกติระบบจะหยุดกันเปิดเรื่องซ้ำ)")
-    p.add_argument("--no-save-price", action="store_true",
-                   help="ไม่กรอก 'ตารางราคา' (เรทค่าสำรวจ) — ช่องอื่นของหน้าค่าใช้จ่าย "
-                        "ยังกรอกครบและยังกด 'บันทึกราคา' ให้ เพื่อให้หัวบิลติดและปลดล็อกเรื่อง "
-                        "(เรทราคาใส่เอง แล้วกด 'ส่งงานใหม่' เองบนหน้าจอ)")
+    # --no-save-price = ชื่อเดิม (คงไว้ให้คำสั่งที่จดไว้ยังใช้ได้) — ความหมายจริงคือ
+    # "กรอกหน้าค่าใช้จ่ายแบบย่อ" ไม่ได้แปลว่าไม่กดบันทึก (กดเสมอ ไม่งั้นหัวบิลไม่ติด)
+    p.add_argument("--no-full-billing", "--no-save-price", action="store_true",
+                   dest="no_save_price",
+                   help="หน้าค่าใช้จ่ายกรอกแค่ 2 ช่อง (เลขที่ใบแจ้งหนี้ + วันที่วางบิล) "
+                        "เหมือนงานที่มาจาก se-survey — ไม่แตะความเห็น/ตารางราคา "
+                        "แต่ยังกด 'บันทึกราคา' ให้ (หัวบิลถึงจะติด + ปลดล็อกเรื่อง)")
     p.add_argument("--allow-fresh", action="store_true",
                    help="อนุญาตกรอกเคลมสด/มีคู่กรณี (นโยบายปัจจุบัน: "
                         "เคลมแห้งเท่านั้น — เคลมสดพักไว้)")
@@ -541,7 +544,7 @@ def run_import_xml(cfg, args):
             driver, cfg, data, images_folder=images_folder,
             loss_type=args.loss_type, image_type=args.image_type,
             severity=args.severity, force_new=args.force_new,
-            save_price=not args.no_save_price)
+            full_billing=not args.no_save_price)
         save_debug_snapshot(driver, cfg.runs_dir / "logs",
                             tag=f"done_import_{data.claim_value}")
         banner("กรอกครบทุกหน้าแล้ว (draft, นำเข้า XML)"
@@ -1031,7 +1034,7 @@ def _run_fill_existing(cfg, args, case_id, hdrs, meta):
     try:
         emcs.fill_existing_report(driver, cfg, data, esurvey=esurvey,
                                   images_folder=img_folder, loss_type=loss_type,
-                                  severity=severity, save_price=False)
+                                  severity=severity, full_billing=False)
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"fill_existing_{case_id}")
         raise
@@ -1381,9 +1384,10 @@ def run_sesurvey_import(cfg, args):
     driver = make_driver(detach=True, download_dir=per_run_dl)
     banner(f"LIVE: นำเข้าเคส #{case_id} เข้า EMCS (บริษัทรหัส {ins_code}) — draft-only")
     try:
-        # save_price=False: ค่าสำรวจกรอกใน EMCS เอง (ฝั่ง se-survey ตัดหน้าค่าใช้จ่ายทิ้ง)
+        # ต้นทาง se-survey → หน้าค่าใช้จ่ายกรอกแค่ 2 ช่อง (เลขที่ใบแจ้งหนี้ + วันที่วางบิล)
+        # ความเห็น/เรทราคา หัวหน้ากรอกเองใน EMCS — กติกา user 2026-08-03
         esurvey = emcs.run_import(driver, cfg, data, images_folder=img_folder,
-                                  insurer_code=ins_code, save_price=False, loss_type=loss_type,
+                                  insurer_code=ins_code, full_billing=False, loss_type=loss_type,
                                   severity=severity)
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"sesurvey_{case_id}")
@@ -1757,7 +1761,7 @@ def main():
             image_type=args.image_type,
             severity=args.severity,
             force_new=args.force_new,
-            save_price=not args.no_save_price,
+            full_billing=not args.no_save_price,
         )
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs",

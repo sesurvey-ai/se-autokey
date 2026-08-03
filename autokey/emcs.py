@@ -2879,14 +2879,24 @@ def _save_and_exit_billing(driver):
             f"({type(e).__name__}) — กดกลับ/ออกจากเรื่องเองเพื่อปลดล็อก")
 
 
-def fill_billing(driver, data: ClaimData, save_price: bool = True,
+def fill_billing(driver, data: ClaimData, full_billing: bool = True,
                  navigate: bool = True):
-    """หน้าค่าใช้จ่าย: กรอกให้ครบแล้วกด "บันทึกราคา" (เป็น draft แก้ได้ —
-    จุดส่งงานจริงคือปุ่ม 'ส่งงานใหม่' ซึ่งสคริปต์ไม่กดให้เด็ดขาด ต้องตรวจแล้วกดเอง)
+    """หน้าค่าใช้จ่าย — **กรอกมาก/น้อยขึ้นกับต้นทางข้อมูล** (กติกา user 2026-08-03)
+    แล้วกด "บันทึกราคา" (เป็น draft แก้ได้ — จุดส่งงานจริงคือปุ่ม 'ส่งงานใหม่'
+    ซึ่งสคริปต์ไม่กดให้เด็ดขาด ต้องตรวจแล้วกดเอง)
 
-    ช่องที่กรอก: เลขที่ใบแจ้งหนี้ + วันที่วางบิล (วันนี้ พ.ศ.) · 3 ช่องสรุปความเห็น
-    (ผลการดำเนินงาน / ความเห็นผู้ตรวจสอบ / ความเห็นเซอร์เวย์) · ตารางราคาคอลัมน์ "เสนอ"
-    ทุกช่องข้ามให้เองถ้าต้นทางไม่มีข้อมูล (ไม่ทับของเดิมที่คนกรอกไว้ ไม่เขียนเลขมั่ว)
+    | ต้นทาง | full_billing | กรอกอะไร |
+    |---|---|---|
+    | **ISURVEY** (มีข้อมูลหัวหน้าครบแล้ว) | True | เต็มหน้า |
+    | **se-survey** (ระบบเราเอง) | False | **แค่ 2 ช่อง** เลขที่ใบแจ้งหนี้ + วันที่วางบิล |
+
+    เหตุผล: งาน ISURVEY หัวหน้ากรอกความเห็น+เรทราคาไว้ในระบบเดิมแล้ว ยกมาได้เลย ·
+    งาน se-survey หัวหน้ายังไม่ได้กรอก จะไปกรอกใน EMCS เอง — บอทเติมให้จะกลายเป็นขยะ
+    ที่หัวหน้าต้องมาลบทิ้ง
+
+    เต็มหน้า = หัวบิล + 3 ช่องสรุปความเห็น (ผลการดำเนินงาน / ความเห็นผู้ตรวจสอบ /
+    ความเห็นเซอร์เวย์) + ตารางราคาคอลัมน์ "เสนอ" — ทุกช่องข้ามให้เองถ้าต้นทางไม่มีข้อมูล
+    (ไม่ทับของเดิมที่คนกรอกไว้ ไม่เขียนเลขมั่ว)
     คอลัมน์อนุมัติ txtIns_* เป็นของบริษัทประกัน — disabled อยู่แล้ว ไม่แตะโดยโครงสร้าง
 
     ⚠️ ข้อเท็จจริงของหน้านี้ (ตรวจจาก HTML จริง 2 ใบ 2026-08-03): ปุ่มบันทึกมีปุ่มเดียว
@@ -2897,9 +2907,9 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
     user ปรับกติกา 2026-07-27: **กด 'บันทึกราคา' ได้** เพราะเลขที่ใบแจ้งหนี้ + วันที่วางบิล
     ต้องถูกบันทึกด้วยปุ่มนี้ปุ่มเดียว. ที่ยังห้ามเด็ดขาดคือ 'ส่งงานใหม่' (wuFlow1_cmdSendNew)
 
-    save_price=False (โหมด draft-park: se-survey ⚡ นำเข้า / เติม draft เดิม):
-    ข้าม "ตารางราคา" อย่างเดียว (คนกรอกเรทเอง — se-survey ไม่มีข้อมูลราคาอยู่แล้ว)
-    ที่เหลือกรอกครบเหมือนกัน แล้ว **บันทึกด้วยปุ่ม 'บันทึกราคา'** แล้ว **กดกลับหน้า Inbox/Outbox
+    full_billing=False (โหมด draft-park: se-survey ⚡ นำเข้า / เติม draft เดิม):
+    กรอกแค่หัวบิล 2 ช่อง — ไม่แตะตารางราคา/ความเห็น (หัวหน้ากรอกเองใน EMCS)
+    แต่ยัง **บันทึกด้วยปุ่ม 'บันทึกราคา'** (ไม่งั้นหัวบิลไม่ติด) แล้ว **กดกลับหน้า Inbox/Outbox
     (wuMenuPage1_imbReturn_In_Out) = ออกจากเรื่อง เพื่อปลดล็อก** (ไม่งั้นเรื่องค้างถูกล็อก
     คนอื่นเปิดต่อไม่ได้ ต้องรอ). ราคา + ส่งงาน คนทำเองภายหลัง
     navigate=False: อยู่หน้าค่าใช้จ่ายแล้ว (เช่นหลังกด 'งานต่อเนื่อง') — ไม่ต้องกดเมนูเข้าใหม่"""
@@ -2935,16 +2945,6 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
             pass
     set_text(driver, "txtBill_No", data.invoice_value)
     set_text(driver, "wuCale_Bill_Date_txtCalendar", today_buddhist())
-    # 3 ช่องสรุปความเห็นของหน้านี้ (textarea ทั้งหมด — ยืนยัน id จากหน้าจริง 21/07/69)
-    # try รายช่อง: บางบริษัท/บางเลย์เอาต์อาจไม่มีช่องเหล่านี้ — ขาดช่องต้องไม่ล้มทั้งหน้า
-    # ค่าว่าง = ไม่มีข้อมูลจากต้นทาง → set_textarea ข้ามให้เอง (ไม่ลบของเดิมที่คนกรอกไว้)
-    for _fid, _val in (("txtAcc_result", data.accident_summary),      # ผลการดำเนินงาน
-                       ("txtAcc_Comment", data.review_comment),       # ความเห็นของผู้ตรวจสอบ
-                       ("txtSurv_Comment", data.surveyor_comment)):   # ความเห็นของเซอร์เวย์
-        try:
-            set_textarea(driver, _fid, _val)   # คงบรรทัดใหม่ (3 ช่องนี้เป็น textarea)
-        except Exception as e:
-            log(f"   ⚠️ กรอก {_fid} ไม่ได้ ({type(e).__name__}) — ข้าม กรอกเอง")
 
     # readback ยืนยันค่าที่กรอก (set_text เงียบตอนสำเร็จ — log ไว้ให้ตรวจ/audit)
     try:
@@ -2954,6 +2954,28 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
         log(f"   ✓ เลขที่ใบแจ้งหนี้ = {_bn!r} | วันที่วางบิล = {_bd!r}")
     except Exception:
         pass
+
+    if not full_billing:
+        # ต้นทาง se-survey: หัวหน้ายังไม่ได้กรอกความเห็น/เรทราคา จะไปกรอกใน EMCS เอง
+        # บอทเติมให้ = ขยะที่หัวหน้าต้องมาลบ → กรอกแค่หัวบิล 2 ช่อง
+        # แต่ยังกด 'บันทึกราคา' (ไม่งั้นหัวบิลไม่ติด) แล้วออกจากเรื่องเพื่อปลดล็อก
+        log("EMCS: หน้าค่าใช้จ่าย — กรอกแค่เลขที่ใบแจ้งหนี้ + วันที่วางบิล "
+            "(งานจาก se-survey: ความเห็น/เรทราคา หัวหน้ากรอกเองใน EMCS); "
+            "บันทึกด้วยปุ่ม 'บันทึกราคา' ไม่กด 'ส่งงานใหม่'")
+        _save_and_exit_billing(driver)
+        return
+
+    # ---- ต้นทาง ISURVEY: หัวหน้ากรอกความเห็น+เรทราคาไว้ในระบบเดิมแล้ว → ยกมาทั้งหน้า ----
+    # 3 ช่องสรุปความเห็น (textarea ทั้งหมด — ยืนยัน id จากหน้าจริง 21/07/69)
+    # try รายช่อง: บางบริษัท/บางเลย์เอาต์อาจไม่มีช่องเหล่านี้ — ขาดช่องต้องไม่ล้มทั้งหน้า
+    # ค่าว่าง = ไม่มีข้อมูลจากต้นทาง → set_textarea ข้ามให้เอง (ไม่ลบของเดิมที่คนกรอกไว้)
+    for _fid, _val in (("txtAcc_result", data.accident_summary),      # ผลการดำเนินงาน
+                       ("txtAcc_Comment", data.review_comment),       # ความเห็นของผู้ตรวจสอบ
+                       ("txtSurv_Comment", data.surveyor_comment)):   # ความเห็นของเซอร์เวย์
+        try:
+            set_textarea(driver, _fid, _val)   # คงบรรทัดใหม่ (3 ช่องนี้เป็น textarea)
+        except Exception as e:
+            log(f"   ⚠️ กรอก {_fid} ไม่ได้ ({type(e).__name__}) — ข้าม กรอกเอง")
     for _fid, _lbl in (("txtAcc_result", "ผลการดำเนินงาน"),
                        ("txtAcc_Comment", "ความเห็นของผู้ตรวจสอบ"),
                        ("txtSurv_Comment", "ความเห็นของเซอร์เวย์")):
@@ -2963,16 +2985,7 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
         except Exception:
             pass
 
-    if not save_price:
-        # โหมด draft-park: ไม่แตะ "ตารางราคา" (คนกรอกเรทเอง) แต่บันทึกหัวบิล+ความเห็น
-        # ด้วยปุ่ม 'บันทึกราคา' แล้ว 'ออกจากเรื่อง' (กลับ Inbox/Outbox) เพื่อปลดล็อก
-        log("EMCS: กรอกหน้าค่าใช้จ่ายแล้ว (ไม่รวมตารางราคา) — บันทึกด้วยปุ่ม 'บันทึกราคา'; "
-            "ไม่กด 'ส่งงานใหม่' (เรทราคา+ส่งงาน ทำเองภายหลัง)")
-        _save_and_exit_billing(driver)
-        return
-
     # ตารางราคา — กรอกเฉพาะคอลัมน์ "เสนอ" จากข้อมูล ISURVEY (data.bill)
-    # ไม่มี bill (เช่นงานที่มาจาก se-survey) = ฟังก์ชันข้ามให้เอง ไม่เขียนเลขมั่ว
     # คอลัมน์อนุมัติ txtIns_* ของบริษัทประกัน disabled อยู่แล้ว — ไม่แตะโดยโครงสร้าง
     # ยอดรวม/VAT (txtTotalPrice, txtVatPrice, txtGrandTotalPrice) JS คำนวณเองตอนกด Tab
     fill_fee_table(driver, data.bill)
@@ -3160,7 +3173,7 @@ def start_continuation(driver, claim: str, esurvey: str):
 
 
 def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
-                      save_price: bool = True, images_folder=None,
+                      full_billing: bool = True, images_folder=None,
                       image_type: str = "รูปรถประกัน") -> str:
     """งานต่อเนื่อง (ครั้งถัดไปของเคลมเดิม): เปิดเรื่องเดิม → 'งานต่อเนื่อง' →
     **อัปรูปของครั้งนี้** → กรอกหน้าค่าใช้จ่าย (invoice ใหม่ + ตารางราคา)
@@ -3171,7 +3184,7 @@ def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
     ครั้งที่ โควตา 80 ใบจึงเป็นของทั้งเคลมร่วมกัน upload_images ตัดให้พอดีโควตาที่
     เหลืออยู่แล้ว (image_quota_left) ครั้งที่ 2 จึงเติมต่อจากที่ครั้งแรกใช้ไป
 
-    save_price=False: ไม่กด 'บันทึกราคา'. ปุ่มส่งจริงคือ 'ส่งผลงานต่อเนื่อง'
+    full_billing=False: ไม่กด 'บันทึกราคา'. ปุ่มส่งจริงคือ 'ส่งผลงานต่อเนื่อง'
     (wuFlow1_cmdSendFollow) — สคริปต์ไม่กดให้เด็ดขาด (เหมือนปุ่ม 'ส่งงานใหม่')
     คืนเลข e-Survey เดิม (งานต่อเนื่องใช้เรื่อง/เลขเดิม ไม่สร้างใหม่)"""
     start_continuation(driver, data.claim_value, esurvey)
@@ -3184,7 +3197,7 @@ def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
                       n_opponents=len(data.third_parties or []),
                       n_injuries=len(data.injuries or []),
                       n_assets=len(data.assets or []))
-    fill_billing(driver, data, save_price=save_price, navigate=moved)
+    fill_billing(driver, data, full_billing=full_billing, navigate=moved)
     return esurvey
 
 
@@ -3193,7 +3206,7 @@ def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
 def fill_one(driver, cfg, data: ClaimData, images_folder=None,
              loss_type: str = "auto", image_type: str = "รูปรถประกัน",
              severity: str = "เบา", force_new: bool = False,
-             save_price: bool = True) -> str:
+             full_billing: bool = True) -> str:
     """กรอกเคลมเดียวจนจบ (driver ต้องอยู่หน้ารายการงาน EMCS แล้ว)
     คืนเลข e-Survey ของเรื่องที่สร้าง
 
@@ -3213,7 +3226,7 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
         cont = continuation_esurvey(existing, data.invoice_value)
         if cont:
             log(f"EMCS: เคลมนี้มีเรื่องเดิม + invoice ใหม่ → โหมดงานต่อเนื่อง (ต่อจาก {cont})")
-            return fill_continuation(driver, cfg, data, cont, save_price=save_price,
+            return fill_continuation(driver, cfg, data, cont, full_billing=full_billing,
                                      images_folder=images_folder, image_type=image_type)
         guard_duplicate_report(driver, data, force_new, existing=existing)
     else:
@@ -3251,20 +3264,20 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
                       n_injuries=len(data.injuries or []),
                       n_assets=len(data.assets or []))
 
-    fill_billing(driver, data, save_price=save_price)
+    fill_billing(driver, data, full_billing=full_billing)
     return esurvey
 
 
 def run_fill(driver, cfg, data: ClaimData, images_folder=None,
              loss_type: str = "auto", image_type: str = "รูปรถประกัน",
              severity: str = "เบา", force_new: bool = False,
-             save_price: bool = True) -> str:
+             full_billing: bool = True) -> str:
     """login แล้วกรอกเคลมเดียว (flow เดิมสำหรับรันทีละเคลม)"""
     login(driver, cfg)
     return fill_one(driver, cfg, data, images_folder=images_folder,
                     loss_type=loss_type, image_type=image_type,
                     severity=severity, force_new=force_new,
-                    save_price=save_price)
+                    full_billing=full_billing)
 
 
 def _recascade_province(driver, province_id: str, timeout: int = 10):
@@ -3500,7 +3513,7 @@ def _set_or_clear_claim_ref(driver, notify_value, insurer_code: str = None):
 def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
                   loss_type: str = "auto", image_type: str = "รูปรถประกัน",
                   severity: str = "เบา", force_new: bool = False,
-                  save_price: bool = True, insurer_code: str = None) -> str:
+                  full_billing: bool = True, insurer_code: str = None) -> str:
     """กรอกเคลมผ่านโหมด "นำเข้า XML": ให้ EMCS import ฟอร์มหลักจาก SURV_REPORT XML
     แล้วบอทอุดช่องว่าง/แก้ที่ import ทำพลาด + กรอกส่วนที่ import ไม่แตะ
 
@@ -3518,7 +3531,7 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
         cont = continuation_esurvey(existing, data.invoice_value)
         if cont:
             log(f"EMCS: เคลมนี้มีเรื่องเดิม + invoice ใหม่ → โหมดงานต่อเนื่อง (ต่อจาก {cont})")
-            return fill_continuation(driver, cfg, data, cont, save_price=save_price,
+            return fill_continuation(driver, cfg, data, cont, full_billing=full_billing,
                                      images_folder=images_folder, image_type=image_type)
         guard_duplicate_report(driver, data, force_new, existing=existing)
     else:
@@ -3571,26 +3584,26 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
                       n_injuries=len(data.injuries or []),
                       n_assets=len(data.assets or []))
 
-    fill_billing(driver, data, save_price=save_price)
+    fill_billing(driver, data, full_billing=full_billing)
     return esurvey
 
 
 def run_import(driver, cfg, data: ClaimData, images_folder=None,
                loss_type: str = "auto", image_type: str = "รูปรถประกัน",
                severity: str = "เบา", force_new: bool = False,
-               save_price: bool = True, insurer_code: str = None) -> str:
+               full_billing: bool = True, insurer_code: str = None) -> str:
     """login แล้วกรอกเคลมเดียวผ่านโหมดนำเข้า XML"""
     login(driver, cfg)
     return fill_imported(driver, cfg, data, images_folder=images_folder,
                          loss_type=loss_type, image_type=image_type,
                          severity=severity, force_new=force_new,
-                         save_price=save_price, insurer_code=insurer_code)
+                         full_billing=full_billing, insurer_code=insurer_code)
 
 
 def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",
                          images_folder=None, loss_type: str = "auto",
                          image_type: str = "รูปรถประกัน", severity: str = "เบา",
-                         save_price: bool = True) -> str:
+                         full_billing: bool = True) -> str:
     """เปิด draft 'ที่มีอยู่แล้ว' (import มาแล้ว) → เติมหน้าหลัก + คู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน/
     ความเสียหาย/รูป/ค่าใช้จ่าย → บันทึก (btnUpdate) — **ไม่ import ซ้ำ ไม่สร้าง draft ใหม่ ไม่กดส่งงาน**
 
@@ -3632,7 +3645,7 @@ def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",
                       n_opponents=len(data.third_parties or []),
                       n_injuries=len(data.injuries or []),
                       n_assets=len(data.assets or []))
-    fill_billing(driver, data, save_price=save_price)
+    fill_billing(driver, data, full_billing=full_billing)
     return target
 
 

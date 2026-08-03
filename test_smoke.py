@@ -1253,19 +1253,32 @@ _alc = _insp.getsource(emcs._fill_police_and_alcohol)
 check("แอลกอฮอล์: ตีความ 'ไม่ได้ตรวจ' เป็น 'ไม่มีการตรวจ'",
       "ไม่ได้ตรวจ" in _alc and "no_test" in _alc)
 
-# หน้าค่าใช้จ่าย: กติกา user 2026-08-03 — กรอก "ให้ครบ" แล้วกด 'บันทึกราคา'
-# (แทนกติกา 2026-07-27 ที่ให้กรอกแค่ 2 ช่อง — ตอนนั้นถอด fill_fee_table/set_textarea ออก)
+# หน้าค่าใช้จ่าย: กติกา user 2026-08-03 — กรอกมาก/น้อยตาม "ต้นทางข้อมูล"
+#   ISURVEY (หัวหน้ากรอกไว้แล้ว) = เต็มหน้า | se-survey (หัวหน้าจะกรอกเอง) = แค่ 2 ช่อง
+# (ก่อนหน้านี้: 2026-07-27 กรอก 2 ช่องทุกกรณี — commit 9719228 ถอด fill_fee_table/set_textarea)
 _fb = _insp.getsource(emcs.fill_billing)
-check("ค่าใช้จ่าย: กรอกเลขที่ใบแจ้งหนี้ + วันที่วางบิล",
-      'txtBill_No' in _fb and 'wuCale_Bill_Date_txtCalendar' in _fb)
-check("ค่าใช้จ่าย: กรอก 3 ช่องสรุป (ผลการดำเนินงาน/ความเห็นผู้ตรวจสอบ/ความเห็นเซอร์เวย์)",
+_cut = _fb.index("if not full_billing:")       # ก่อนบรรทัดนี้ = กรอกทุกต้นทาง
+check("ค่าใช้จ่าย: กรอกเลขที่ใบแจ้งหนี้ + วันที่วางบิล ทุกต้นทาง",
+      0 < _fb.index('"txtBill_No"') < _cut
+      and _fb.index('"wuCale_Bill_Date_txtCalendar"') < _cut)
+check("ค่าใช้จ่าย (ISURVEY): กรอก 3 ช่องสรุป (ผลการดำเนินงาน/ความเห็นผู้ตรวจสอบ/เซอร์เวย์)",
       all(i in _fb for i in ("txtAcc_result", "txtAcc_Comment", "txtSurv_Comment")))
-check("ค่าใช้จ่าย: กรอกตารางราคาคอลัมน์ 'เสนอ' จาก data.bill",
+check("ค่าใช้จ่าย (ISURVEY): กรอกตารางราคาคอลัมน์ 'เสนอ' จาก data.bill",
       "fill_fee_table(driver, data.bill)" in _fb)
-check("ค่าใช้จ่าย: ตารางราคาอยู่หลัง early-return ของ save_price=False (--no-save-price ปิดได้)",
-      _fb.index("if not save_price:") < _fb.index("fill_fee_table(driver, data.bill)"))
-check("ค่าใช้จ่าย: 3 ช่องสรุปกรอกทั้ง 2 โหมด (อยู่ก่อน early-return)",
-      _fb.index("txtSurv_Comment") < _fb.index("if not save_price:"))
+check("ค่าใช้จ่าย (se-survey): ไม่แตะ 3 ช่องสรุป — หัวหน้ากรอกเองใน EMCS",
+      all(_fb.index(i) > _cut for i in
+          ("txtAcc_result", "txtAcc_Comment", "txtSurv_Comment")))
+check("ค่าใช้จ่าย (se-survey): ไม่แตะตารางราคา",
+      _fb.index("fill_fee_table(driver, data.bill)") > _cut)
+check("ค่าใช้จ่าย (se-survey): ยังกด 'บันทึกราคา' ก่อน return (ไม่งั้นหัวบิลไม่ติด)",
+      _cut < _fb.index("_save_and_exit_billing(driver)") < _fb.index("return", _cut))
+# call site ต้องผูกกับต้นทางจริง: se-survey → full_billing=False, ISURVEY → ตาม flag
+_main_src = _insp.getsource(_main) if hasattr(_main, "__file__") else open(
+    "main.py", encoding="utf-8").read()
+check("call site: เส้นทาง se-survey ส่ง full_billing=False",
+      _main_src.count("full_billing=False") == 2)
+check("call site: เส้นทาง ISURVEY ส่ง full_billing=not args.no_save_price",
+      _main_src.count("full_billing=not args.no_save_price") == 2)
 # คอลัมน์อนุมัติของบริษัทประกัน (txtIns_*) disabled บนหน้าจริง — บอทต้องไม่แตะ
 # และยอดรวม/VAT JS คำนวณเอง ห้ามพิมพ์ทับ
 _ft = _insp.getsource(emcs.fill_fee_table)
