@@ -829,8 +829,9 @@ _btn, _lab = emcs._find_submit_button(_FakeDriver({}))
 check("find_submit: ไม่มีปุ่ม → (None,'')", _btn is None and _lab == "")
 
 # ---- 22b. _save_and_exit_billing: บันทึกหัวบิล ('บันทึกราคา') + กลับ Inbox/Outbox; กัน 'ส่งงาน' ----
-# id ของปุ่มบันทึกราคาเปลี่ยนตาม hifPostStatus: 1 (draft ใหม่) = btnSurveySave /
-# 2 (เปิดมาแก้) = btnSurvey_Update — บอทต้องเจอทั้งคู่ (เคส S68426080392 เคยหาไม่เจอ)
+# ปุ่มบันทึกราคามี 2 id: ยังไม่เคยบันทึกบิล = btnSurveySave / เคยบันทึกแล้ว = btnSurvey_Update
+# (ไม่ได้ผูกกับ hifPostStatus — พิสูจน์แล้วว่า status=1 เจอได้ทั้ง 2 ปุ่ม)
+# บอทต้องเจอทั้งคู่ — เคส S68426080392 เคยหาไม่เจอจนต้องกดเอง
 class _FakeBtn:
     def __init__(self, val=""):
         self._val, self.text, self.clicked = val, "", False
@@ -859,13 +860,13 @@ def _run_save_exit(present):
 
 _new = _FakeBtn("บันทึกราคา")
 _ids = _run_save_exit({"btnSurveySave": _new})
-check("save_exit: draft ใหม่ (hifPostStatus=1) → กด btnSurveySave", _new.clicked is True)
+check("save_exit: บิลยังไม่เคยบันทึก → กด btnSurveySave", _new.clicked is True)
 check("save_exit: แล้วกดกลับ Inbox/Outbox (imbReturn_In_Out)",
       _ids == ["wuMenuPage1_imbReturn_In_Out"])
 _upd = _FakeBtn("บันทึกราคา")
 _ids = _run_save_exit({"btnSurvey_Update": _upd})
-check("save_exit: เปิดมาแก้ (hifPostStatus=2) → กด btnSurvey_Update", _upd.clicked is True)
-check("save_exit: (status 2) กดกลับ Inbox/Outbox ด้วย",
+check("save_exit: บิลเคยบันทึกแล้ว → กด btnSurvey_Update", _upd.clicked is True)
+check("save_exit: (กรณีที่ 2) กดกลับ Inbox/Outbox ด้วย",
       _ids == ["wuMenuPage1_imbReturn_In_Out"])
 _send = _FakeBtn("ส่งงานใหม่")
 _ids2 = _run_save_exit({"btnSurveySave": _send})

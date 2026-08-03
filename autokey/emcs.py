@@ -2802,13 +2802,18 @@ return out;
 """
 
 
-# ปุ่ม "บันทึกราคา" ของหน้าค่าใช้จ่าย — **id เปลี่ยนตามสถานะงาน** (`hifPostStatus`)
-# ตรวจจาก HTML จริง 2 ใบ (2026-08-03):
-#   hifPostStatus=1  งาน draft ที่เพิ่งสร้าง  → `btnSurveySave`   title='Survey บันทึก'
-#   hifPostStatus=2  ส่งงานแล้วเปิดมาแก้      → `btnSurvey_Update` title='Survey แก้ไข'
-# หน้าเดียวกันจะมีปุ่มเดียวเท่านั้น (อีกตัวไม่ถูก render) จึงต้องลองทั้งคู่
-# ⚠️ กับดักที่พลาดมาแล้ว: เคยตรวจแค่หน้า status=2 ใบเดียวแล้วสรุปว่า "ไม่มี btnSurveySave
-# อยู่จริง" → บอทหาปุ่มไม่เจอทุกครั้งที่เป็น draft ใหม่ (เคส S68426080392 ต้องกดเอง)
+# ปุ่ม "บันทึกราคา" ของหน้าค่าใช้จ่าย — **มี 2 id หน้าหนึ่ง render ตัวเดียว**
+#   `btnSurveySave`   title='Survey บันทึก'  = ใบแจ้งหนี้ครั้งนี้ยังไม่เคยถูกบันทึก
+#   `btnSurvey_Update` title='Survey แก้ไข'  = เคยบันทึกแล้ว (เปิดมาแก้)
+# ตัวชี้ขาด = "บิลครั้งนี้เคยบันทึกหรือยัง" — **ไม่ใช่ `hifPostStatus`**
+# พิสูจน์จากเรื่องเดียวกัน (S68426080392) 2026-08-03:
+#   21:31 ก่อนบันทึกบิล → hifPostStatus=1 + btnSurveySave
+#   22:36 หลังบันทึกบิล → hifPostStatus=1 + btnSurvey_Update   ← status เท่าเดิม ปุ่มเปลี่ยน
+# (ตัวอย่างที่ 3: เคส 058298 ส่งงานแล้ว = status 2 + btnSurvey_Update)
+# ยังไม่ได้พิสูจน์เงื่อนไขเป๊ะทุกกรณี (3 ตัวอย่าง) — วิธีที่ปลอดภัยคือ "ลองทั้งคู่" เสมอ
+# ⚠️ กับดักที่พลาดมา 2 รอบในเรื่องเดียวกัน: (1) ตรวจหน้าเดียวแล้วสรุปว่า "ไม่มี btnSurveySave
+# อยู่จริง" → บอทหาปุ่มไม่เจอทุก draft ใหม่ (2) เจอ 2 หน้าที่ต่างกัน 2 ตัวแปรพร้อมกัน
+# แล้วชี้ผิดตัวว่า hifPostStatus เป็นเหตุ — ทั้งคู่คือ "สรุปจากตัวอย่างน้อยเกินไป"
 _PRICE_SAVE_BUTTONS = ("btnSurveySave", "btnSurvey_Update")
 
 
@@ -2899,9 +2904,9 @@ def fill_billing(driver, data: ClaimData, full_billing: bool = True,
     (ไม่ทับของเดิมที่คนกรอกไว้ ไม่เขียนเลขมั่ว)
     คอลัมน์อนุมัติ txtIns_* เป็นของบริษัทประกัน — disabled อยู่แล้ว ไม่แตะโดยโครงสร้าง
 
-    ⚠️ ข้อเท็จจริงของหน้านี้ (ตรวจจาก HTML จริง 2 ใบ 2026-08-03): ปุ่มบันทึกมีปุ่มเดียว
-    value='บันทึกราคา' แต่ **id เปลี่ยนตามสถานะงาน** (`hifPostStatus`) —
-    draft ใหม่ = `btnSurveySave` / เปิดมาแก้ = `btnSurvey_Update` (ดู _PRICE_SAVE_BUTTONS)
+    ⚠️ ข้อเท็จจริงของหน้านี้: ปุ่มบันทึกบนจอมีปุ่มเดียว value='บันทึกราคา' แต่ **id มี 2 แบบ**
+    (ยังไม่เคยบันทึกบิล = `btnSurveySave` / เคยบันทึกแล้ว = `btnSurvey_Update`)
+    — ดู _PRICE_SAVE_BUTTONS, บอทลองทั้งคู่.
     เดิมโค้ด/ล็อกเขียนว่า "ไม่กดบันทึกราคา" ทั้งที่กดปุ่มนั้นอยู่
     (guard เช็คแค่คำว่า 'ส่งงาน' จึงผ่าน) = ล็อกหลอก.
     user ปรับกติกา 2026-07-27: **กด 'บันทึกราคา' ได้** เพราะเลขที่ใบแจ้งหนี้ + วันที่วางบิล
@@ -2990,8 +2995,8 @@ def fill_billing(driver, data: ClaimData, full_billing: bool = True,
     # ยอดรวม/VAT (txtTotalPrice, txtVatPrice, txtGrandTotalPrice) JS คำนวณเองตอนกด Tab
     fill_fee_table(driver, data.bill)
 
-    # ปุ่มบันทึกเดียวของหน้า value='บันทึกราคา' แต่ id ต่างกันตาม hifPostStatus
-    # (btnSurveySave draft ใหม่ / btnSurvey_Update เปิดมาแก้) — _save_and_exit_billing ลองทั้งคู่
+    # ปุ่มบันทึกบนจอมีปุ่มเดียว value='บันทึกราคา' แต่ id มี 2 แบบ (ยังไม่เคยบันทึกบิล =
+    # btnSurveySave / เคยบันทึกแล้ว = btnSurvey_Update) — _save_and_exit_billing ลองทั้งคู่
     # ⛔ 'ส่งงานใหม่' (wuFlow1_cmdSendNew) ยังห้ามแตะเด็ดขาดเหมือนเดิม
     _save_and_exit_billing(driver)
     log("EMCS: บันทึกหน้าค่าใช้จ่ายแล้ว — ตรวจ/แก้ราคา แล้วกด 'ส่งงานใหม่' เอง "
