@@ -1780,5 +1780,22 @@ _cc2 = _lic.cross_check({"license_no": "99999999", "id_no": ""}, _lic_data)
 check("cross_check: เลขใบขับขี่ไม่ตรง → match False + ข้ามฟิลด์ที่ว่าง",
       len(_cc2) == 1 and _cc2[0]["match"] is False)
 
+
+# ---- 22e. ตารางแปลงรหัส ISURVEY → EMCS (สร้างโดย tools/build_code_map.py) ----
+# สองระบบใช้รหัสคนละชุด ส่งรหัสดิบข้ามระบบ = เลือกจังหวัด/ประเภทผิดแบบเงียบ ๆ
+# ค่าเฉลยยืนยันจาก XML รูปแบบ EMCS ที่ ISURVEY ส่งออกเอง (เคลม 2026013147939)
+from autokey import isurvey_emcs_map as _cmap
+check("code map: จังหวัดครบ 77 จังหวัด", len(_cmap.PROVINCE_TO_EMCS) == 77)
+check("code map: ชลบุรี ISURVEY 20 → EMCS 9", _cmap.province("20") == "9")
+check("code map: ชัยภูมิ ISURVEY 36 → EMCS 11", _cmap.province("36") == "11")
+check("code map: ใบขับขี่รถยนต์ส่วนบุคคล ISURVEY 15 → EMCS 19 (ชื่อ EMCS สะกดผิด)",
+      _cmap.license_type("15") == "19")
+check("code map: อำเภอ ISURVEY 3607 (จ.36) → EMCS 1107", _cmap.district("3607", "36") == "1107")
+check("code map: อำเภอไม่ตรงจังหวัดที่ระบุ → '' (ข้อมูลไม่สอดคล้อง ไม่เดา)",
+      _cmap.district("3607", "20") == "")
+check("code map: รหัสที่ไม่รู้จัก → '' ไม่เดา",
+      _cmap.province("9999") == "" and _cmap.license_type("zz") == ""
+      and _cmap.district("", "") == "")
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

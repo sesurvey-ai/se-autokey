@@ -18,6 +18,7 @@ import requests
 
 from .browser import log
 from .claim_data import ClaimData
+from . import isurvey_emcs_map as emcs_map
 
 
 def _multi_survey_msg(claim, cases) -> str:
@@ -220,13 +221,15 @@ class ISurveyAPI:
     # ⚠️ คีย์ผลลัพธ์ต้องเป็น "คำศัพท์เดียวกับที่ surv_xml.py สร้าง" เพราะ fill_third_parties
     # ของ emcs.py อ่านชุดนั้น (ไม่ใช่คีย์ของฟอร์ม ISURVEY) — เทียบมาแล้วด้วย --compare
     #
-    # ⛔ ห้ามส่ง plate_province_id / province_id / district_id จาก ISURVEY
-    # emcs.py เอาไปใช้เป็น **ลำดับใน dropdown** (_select_index) ซึ่งเป็นรหัสคนละชุดกับ
-    # ISURVEY (รถคันเดียวกัน: XML=9 / API=20) → ใส่ไปจะเลือกจังหวัดผิดแบบเงียบ ๆ
-    # ส่งเป็น "ชื่อจังหวัด" (plate_province) แทน ซึ่ง emcs.py เลือกด้วย fuzzy_select
+    # รหัสจังหวัด/อำเภอ/ใบขับขี่ **ต้องแปลงเป็นรหัสของ EMCS ก่อนเสมอ** (isurvey_emcs_map)
+    # สองระบบใช้รหัสคนละชุด — ชลบุรี ISURVEY 20 / EMCS 9 · ใบขับขี่ ISURVEY 15 / EMCS 19
+    # ส่งรหัสดิบข้ามระบบ = เลือกผิดแบบเงียบ ๆ ไม่มี error (เคยเว้นว่างไว้ก่อนจะมีตาราง)
+    # แปลงไม่ได้ = คืน '' (ปล่อยว่างให้คนเลือก) ไม่เดา
     _MAP_TP = {
         "opo_name": ("owner_name", None), "opo_address": ("owner_address", None),
         "plate_no": ("plate_no", None), "plate_province": ("plate_provinceID", "prov"),
+        "plate_province_id": ("plate_provinceID", "provcode"),
+        "province_id": ("drv_provinceID", "provcode"), "district_id": ("@district", None),
         "car_color": ("car_color", None), "veh_type": ("vehTID", "veh"),
         "car_brand": ("car_brand", None), "car_model": ("car_model", None),
         "chassis_no": ("chassis_no", None), "engine_no": ("engine_no", None),
@@ -235,9 +238,7 @@ class ISurveyAPI:
         "age": ("age", None), "birthdate": ("birthdate", None),
         "idcard": ("IDcard_no", None), "phone": ("drv_phone", None),
         "address": ("@address", None),
-        "lic_no": ("lic_no", None),
-        # ⛔ ไม่ส่ง lic_type: emcs.py ใช้ select_by_value = ต้องเป็น "รหัส EMCS"
-        # (XML ให้ 19) แต่ ISURVEY ให้ 15 — คนละชุด ใส่ไปจะเลือกประเภทใบขับขี่ผิด
+        "lic_no": ("lic_no", None), "lic_type": ("lic_typeID", "liccode"),
         "lic_place": ("lic_issue_provinceID", "prov"),
         "lic_issue_date": ("lic_issueDate", None),
         "lic_expire_date": ("lic_expireDate", None),
@@ -277,6 +278,8 @@ class ISurveyAPI:
             "company": self._company, "veh": self._veh_type, "lic": self._lic_type,
             "polytype": lambda c: self.master("masterPolicyType", "poTID",
                                               "policy_type").get(str(c or ""), ""),
+            # แปลงรหัส ISURVEY → รหัส EMCS (ตารางสร้างจาก tools/build_code_map.py)
+            "provcode": emcs_map.province, "liccode": emcs_map.license_type,
             "racc": lambda c: self.master("masterRelateAccident", "raccID", "racc_desc")
                                   .get(str(c or ""), ""),
             "proptype": lambda c: self.master("masterPropType", "prop_typeID", "pt_desc")
@@ -287,6 +290,12 @@ class ISurveyAPI:
         for key, (col, kind) in spec.items():
             # '@address' = ที่อยู่เต็มแบบเดียวกับ XML: บ้านเลขที่,ตำบล,อำเภอ
             # (API แยกเป็นคนละคอลัมน์ ถ้าส่งแค่ address จะได้แค่ '215 หมู่ 13')
+            # '@district' = รหัสอำเภอของ EMCS (ต้องใช้ทั้งรหัสอำเภอ+จังหวัดของ ISURVEY)
+            if col == "@district":
+                out[key] = emcs_map.district(
+                    flat.get("drv_amphurID") or flat.get("amphurID"),
+                    flat.get("drv_provinceID") or flat.get("provinceID"))
+                continue
             if col == "@address":
                 parts = [str(flat.get("address", "") or "").strip(),
                          self._tumbon(flat.get("drv_tumbonID") or flat.get("tumbonID")),
