@@ -115,6 +115,28 @@ class ISurveyAPI:
             return ""
         return self.master("masterAmphur", "amphurID", "amphurname").get(str(code), "")
 
+    def _tumbon(self, code) -> str:
+        if not code:
+            return ""
+        return self.master("masterTumbon", "tumbonID", "tumbonname").get(str(code), "")
+
+    def _company(self, code) -> str:
+        """บริษัทประกัน — master เก็บรหัสเป็น 5 หลักเติมศูนย์ ('00001') แต่ tab-4/5/6
+        คืนมาแบบไม่เติม ('1') → ลองทั้งสองแบบ"""
+        if not code:
+            return ""
+        m = self.master("masterLtCompany", "companyID", "companyName")
+        s = str(code).strip()
+        return m.get(s) or m.get(s.zfill(5), "")
+
+    def _veh_type(self, code) -> str:
+        return self.master("masterVehType", "vehTID", "vt_description") \
+            .get(str(code or ""), "")
+
+    def _lic_type(self, code) -> str:
+        return self.master("masterDrvLicense", "dvlTID", "dvl_type") \
+            .get(str(code or ""), "")
+
     # ------------------------------------------------------------- เปิดเคลม
     def find_case(self, claim, invoice="") -> dict:
         d = self._get("supervisor/listcases.php", claim_no=claim, claim_status="",
@@ -141,6 +163,168 @@ class ISurveyAPI:
     def get_parts(self, case_id) -> list:
         return self._get("supervisor/list_parts_ins_car.php", caseID=case_id,
                          page=1, start=0, limit=1000).get("parts", []) or []
+
+    # ------------------------------- Tab 4/5/6: คู่กรณี / ผู้บาดเจ็บ / ทรัพย์สิน
+    # แต่ละ tab เป็น "หลาย record" → ต้องดึงรายการ ikey ก่อน แล้วอ่านทีละ ikey
+    # (getcaseinfo.php ไม่มี ikey จะตอบ "TabN: not found ikey")
+    #
+    # ⚠️ ชื่อ endpoint/คีย์ผลลัพธ์ **สะกดผิดในระบบ ISURVEY เอง** (injuired/injuires)
+    # ค่าพวกนี้อ่านจาก proxy ของ ExtJS combo บนหน้าจริง 2026-08-03 ไม่ได้เดา —
+    # เดาชื่อมาแล้ว 30 กว่าแบบไม่มีทางถูก อย่าแก้เป็นคำที่สะกดถูกเด็ดขาด
+    RECORD_TABS = {
+        4: ("list_thirdPartyCar.php", "regises",    "คู่กรณี"),
+        5: ("list_injuired.php",      "injuires",   "ผู้บาดเจ็บ"),
+        6: ("list_property.php",      "properties", "ทรัพย์สิน"),
+    }
+
+    def list_records(self, case_id, tab: int) -> list:
+        """รายการ record ของ tab 4/5/6 — คืน [{ikey, ...}, ...] ([] เมื่อไม่มี/พลาด)"""
+        ep, root, label = self.RECORD_TABS[tab]
+        try:
+            r = self._get(f"supervisor/{ep}", caseID=case_id,
+                          page=1, start=0, limit=1000)
+            return r.get(root, []) or []
+        except Exception as e:
+            log(f"   ⚠️ อ่านรายการ{label} (tab-{tab}) ไม่ได้: {type(e).__name__}")
+            return []
+
+    def get_record(self, case_id, tab: int, ikey) -> dict:
+        """อ่าน record เดียวของ tab 4/5/6 ตาม ikey — {} เมื่อไม่มีข้อมูล"""
+        try:
+            msg = self._get("supervisor/getcaseinfo.php", caseID=case_id,
+                            tab=f"tab-{tab}_clone", ikey=ikey).get("message")
+            return msg if isinstance(msg, dict) else {}
+        except Exception as e:
+            log(f"   ⚠️ อ่าน tab-{tab} ikey={ikey} ไม่ได้: {type(e).__name__}")
+            return {}
+
+    @staticmethod
+    def _flat(rec: dict) -> dict:
+        """ยุบ dict ซ้อน (เช่น tab-4 เก็บคนขับไว้ใน rec['driver']) ให้เป็นชั้นเดียว
+        คีย์ชั้นบนชนะเสมอ — ค่า None แปลงเป็น '' ให้ตรงรูปแบบฝั่ง scrape"""
+        out = {}
+        for k, v in rec.items():
+            if isinstance(v, dict):
+                for k2, v2 in v.items():
+                    out.setdefault(k2, v2)
+            elif not isinstance(v, list):
+                out[k] = v
+        for k, v in list(rec.items()):          # ชั้นบนทับของที่ซ้อนมา
+            if not isinstance(v, (dict, list)):
+                out[k] = v
+        return {k: ("" if v is None else v) for k, v in out.items()}
+
+    # map: คีย์ผลลัพธ์ → (คอลัมน์ใน API, ตัวแปลงรหัส→ชื่อ)
+    # คอลัมน์เดาจากชื่อ element ฝั่ง scrape (`othercar_<คอลัมน์>-inputEl`) ซึ่งพิสูจน์
+    # แล้วว่าตรงกับคีย์ JSON ของ tab-4 เป๊ะ → ใช้กฎเดียวกันกับ tab-5/6
+    # ⚠️ คีย์ผลลัพธ์ต้องเป็น "คำศัพท์เดียวกับที่ surv_xml.py สร้าง" เพราะ fill_third_parties
+    # ของ emcs.py อ่านชุดนั้น (ไม่ใช่คีย์ของฟอร์ม ISURVEY) — เทียบมาแล้วด้วย --compare
+    #
+    # ⛔ ห้ามส่ง plate_province_id / province_id / district_id จาก ISURVEY
+    # emcs.py เอาไปใช้เป็น **ลำดับใน dropdown** (_select_index) ซึ่งเป็นรหัสคนละชุดกับ
+    # ISURVEY (รถคันเดียวกัน: XML=9 / API=20) → ใส่ไปจะเลือกจังหวัดผิดแบบเงียบ ๆ
+    # ส่งเป็น "ชื่อจังหวัด" (plate_province) แทน ซึ่ง emcs.py เลือกด้วย fuzzy_select
+    _MAP_TP = {
+        "opo_name": ("owner_name", None), "opo_address": ("owner_address", None),
+        "plate_no": ("plate_no", None), "plate_province": ("plate_provinceID", "prov"),
+        "car_color": ("car_color", None), "veh_type": ("vehTID", "veh"),
+        "car_brand": ("car_brand", None), "car_model": ("car_model", None),
+        "chassis_no": ("chassis_no", None), "engine_no": ("engine_no", None),
+        "drv_name": ("drv_name", None), "gender": ("drv_gender", None),
+        "relation": ("relation", None),
+        "age": ("age", None), "birthdate": ("birthdate", None),
+        "idcard": ("IDcard_no", None), "phone": ("drv_phone", None),
+        "address": ("@address", None),
+        "lic_no": ("lic_no", None),
+        # ⛔ ไม่ส่ง lic_type: emcs.py ใช้ select_by_value = ต้องเป็น "รหัส EMCS"
+        # (XML ให้ 19) แต่ ISURVEY ให้ 15 — คนละชุด ใส่ไปจะเลือกประเภทใบขับขี่ผิด
+        "lic_place": ("lic_issue_provinceID", "prov"),
+        "lic_issue_date": ("lic_issueDate", None),
+        "lic_expire_date": ("lic_expireDate", None),
+        "insurer": ("oth_insure_companyID", "company"),
+        "insure_type": ("oth_insure_typeID", "polytype"),
+        "policy_no": ("oth_policy_no", None),
+        "prb_company": ("oth_comp_insurer", None), "prb_no": ("oth_comp_no", None),
+        "claim_no": ("oth_accident_no", None),
+        "cost_damage": ("D_TOTAL", None),
+        "damage_memo": ("damage_memo", None), "repairer": ("req_fix_place", None),
+        "memo": ("memo", None),
+    }
+    # ⚠️ ยังไม่เคยเทียบกับเคลมที่มีผู้บาดเจ็บจริง (เคลมที่ใช้พัฒนามี 0 ราย)
+    # map เฉพาะช่องที่ตรงกันตรง ๆ — ช่องที่เป็น "รหัส EMCS" (person_type = DV/ON,
+    # wounded_type) เว้นว่างไว้ก่อน เพราะรหัส ISURVEY เป็นคนละชุดกับ EMCS
+    # (บทเรียนเดียวกับ plate_province_id) เติมเมื่อมีเคลมจริงให้เทียบแล้วเท่านั้น
+    _MAP_INJ = {
+        "name": ("person_name", None), "gender": ("gender", None),
+        "age": ("age", None), "citizen_id": ("IDcard_no", None),
+        "job": ("occupation", None), "address": ("address", None),
+        "tel_no": ("person_phone", None), "hospital": ("hospital", None),
+        "cost": ("medical_cost", None), "injure": ("injury_detail", None),
+    }
+    _MAP_ASSET = {
+        "name": ("prop_name", None), "damage_detail": ("prop_damage_detail", None),
+        "damage_cost": ("damage_cost", None), "owner_name": ("owner_name", None),
+        "owner_address": ("owner_address", None), "owner_phone": ("owner_phone", None),
+    }
+
+    def _apply_map(self, rec: dict, spec: dict) -> dict:
+        """แปลง record ดิบ → dict คีย์เดียวกับฝั่ง scrape (แปลงรหัสเป็นชื่อให้ด้วย)"""
+        # ⚠️ ไม่มีตัวแปลงวันที่ในนี้โดยตั้งใจ — emcs.py แปลงเองด้วย iso_to_thai_date()
+        # จึงต้องส่ง ISO ดิบ ('1985-12-18') ถ้าแปลงเป็น dd/mm/yyyy ก่อน วันเกิด/
+        # วันใบขับขี่จะเพี้ยนทั้งชุด (เจอตอนเทียบ --compare กับฝั่ง scrape)
+        conv = {
+            "prov": self._prov, "amphur": self._amphur, "tumbon": self._tumbon,
+            "company": self._company, "veh": self._veh_type, "lic": self._lic_type,
+            "polytype": lambda c: self.master("masterPolicyType", "poTID",
+                                              "policy_type").get(str(c or ""), ""),
+            "racc": lambda c: self.master("masterRelateAccident", "raccID", "racc_desc")
+                                  .get(str(c or ""), ""),
+            "proptype": lambda c: self.master("masterPropType", "prop_typeID", "pt_desc")
+                                      .get(str(c or ""), ""),
+        }
+        flat = self._flat(rec)
+        out = {}
+        for key, (col, kind) in spec.items():
+            # '@address' = ที่อยู่เต็มแบบเดียวกับ XML: บ้านเลขที่,ตำบล,อำเภอ
+            # (API แยกเป็นคนละคอลัมน์ ถ้าส่งแค่ address จะได้แค่ '215 หมู่ 13')
+            if col == "@address":
+                parts = [str(flat.get("address", "") or "").strip(),
+                         self._tumbon(flat.get("drv_tumbonID") or flat.get("tumbonID")),
+                         self._amphur(flat.get("drv_amphurID") or flat.get("amphurID")),
+                         self._prov(flat.get("drv_provinceID") or flat.get("provinceID"))]
+                out[key] = ",".join(p for p in parts if p)
+                continue
+            raw = flat.get(col, "")
+            if kind and str(raw).strip():
+                out[key] = conv[kind](raw) or str(raw)   # แปลงไม่ได้ = คงรหัสไว้ ดีกว่าหาย
+            else:
+                out[key] = str(raw)
+        return out
+
+    def read_record_tabs(self, case_id, d: ClaimData):
+        """อ่านคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน (tab 4/5/6) **ทุกเคลมทุกประเภท**
+
+        เดิมข้ามทั้งชุด ทำให้เคลมสด/นัดหมายที่อ่านผ่าน API ได้คู่กรณี 0 ราย
+        แบบเงียบ ๆ (ไม่มี error) — user สั่ง 2026-08-03 ให้อ่านให้ครบเสมอ
+        อ่านครบทุก record ด้วย (ฝั่ง scrape อ่านได้แค่ record ที่แสดงอยู่)"""
+        for tab, target, spec in ((4, "third_parties", self._MAP_TP),
+                                  (5, "injuries", self._MAP_INJ),
+                                  (6, "assets", self._MAP_ASSET)):
+            label = self.RECORD_TABS[tab][2]
+            rows = self.list_records(case_id, tab)
+            out = []
+            for row in rows:
+                ikey = row.get("ikey")
+                if not ikey:
+                    continue
+                rec = self.get_record(case_id, tab, ikey)
+                if rec:
+                    out.append(self._apply_map(rec, spec))
+                else:
+                    log(f"   ⚠️ {label} ikey={ikey} มีในรายการแต่อ่านรายละเอียดไม่ได้")
+            setattr(d, target, out)
+            if rows:
+                log(f"   ✓ {label} {len(out)}/{len(rows)} ราย")
 
     # ------------------------------------------------------------------- รูป
     def get_images_list(self, case_id, t) -> list:
@@ -344,11 +528,10 @@ class ISurveyAPI:
             elif isinstance(v, str) and "\r" in v:
                 setattr(d, fld.name, v.replace("\r\n", "\n").replace("\r", "\n"))
 
-        # ---- คู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน ----
-        # API ยังไม่อ่าน tab-4/5/6 — เคลมแห้ง (type 2) ว่างอยู่แล้ว แต่เคลมสดจะขาดส่วนนี้
-        if d.claim_type.strip() != "2":
-            log(f"   ⚠️ เคลมนี้เป็น {d.claim_type_name()} — API ยังไม่อ่านคู่กรณี/"
-                f"ผู้บาดเจ็บ/ทรัพย์สิน (tab-4/5/6); ใช้ --scrape ถ้าต้องการส่วนนี้ครบ")
+        # ---- คู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน (tab-4/5/6) ----
+        # อ่านทุกเคลมทุกประเภท (user 2026-08-03) — เดิมข้ามทั้งชุด เคลมสด/นัดหมาย
+        # จึงได้คู่กรณี 0 ราย แบบไม่มี error แล้วไหลเข้า EMCS ต่อโดยไม่มีใครรู้
+        self.read_record_tabs(cid, d)
         if expect_claim and d.claim_value.strip() != expect_claim.strip():
             raise RuntimeError(
                 f"ISURVEY-API: ได้เคลม {d.claim_value} ไม่ตรงกับที่ขอ ({expect_claim})")
