@@ -257,11 +257,78 @@ def diff_project(spec: list) -> list:
     return rows
 
 
+# ── สร้างลิสต์ช่องบังคับให้ backend ใช้เตือนอัตโนมัติ ────────────────────────────
+# เดิมข้อความเตือนตอนนำเข้า XML เขียนมือทีละบรรทัด → EMCS เพิ่มช่องบังคับใหม่แล้ว
+# ระบบไม่รู้เรื่อง เงียบไปจนกว่าคนจะไปเจอว่าบันทึกไม่ผ่าน
+# โหมดนี้แปลงผลสกัด → TS ที่ xmlImport.service อ่านไปเตือนเอง (รันใหม่เมื่อ EMCS เปลี่ยน)
+def emit_ts(spec: list, out: Path) -> dict:
+    sys.path.insert(0, str(Path(__file__).parent))
+    import emcs_dump as D                                   # ใช้ map id→tag ตัวเดียวกัน
+
+    def id_map(pairs, block):
+        m = {}
+        for tag, src in pairs:
+            if not src:
+                continue
+            key = src.split(":")[1] if (src.startswith("@") and ":" in src) else src
+            if not key.startswith("@"):
+                m.setdefault(key, (block, tag))
+        return m
+    id2tag = {**id_map(D.CAR_MAP, "CAR"), **id_map(D.REPORT_MAP, "REPORT")}
+
+    def look(cid):
+        for k in (cid, cid.rstrip("_"), cid + "_"):
+            if k in id2tag:
+                return id2tag[k]
+        return None
+
+    rows, skipped, cond, per = [], [], 0, 0
+    for f in spec:
+        for fn, v in f["validators"].items():
+            for cid, fld in v["base"].items():
+                hit = look(cid)
+                if fld["cond"]:
+                    cond += 1
+                    continue                                # บังคับแบบมีเงื่อนไข — ยังไม่เตือนอัตโนมัติ
+                if not hit:
+                    skipped.append(f"{fld['label'] or cid} ({cid})")
+                    continue
+                block, tag = hit
+                if any(r["tag"] == tag for r in rows):
+                    continue
+                rows.append({"tag": tag, "block": block, "label": fld["label"] or cid,
+                             "emcsId": cid, "fn": fn})
+            per += sum(len(x) for x in v["per_insurer"].values())
+
+    body = ",\n".join(
+        "  { tag: '%s', block: '%s', label: '%s', emcsId: '%s' }"
+        % (r["tag"], r["block"], r["label"].replace("'", "\\'"), r["emcsId"]) for r in rows)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        "// สร้างอัตโนมัติจาก se-autokey/tools/emcs_spec.py --emit-ts — **อย่าแก้ด้วยมือ**\n"
+        "// ที่มา: ฟังก์ชัน vlid* ในหน้า EMCS จริง (อ่าน Check*Valid ไม่ใช่ดอกจัน)\n"
+        "// รันใหม่เมื่อ EMCS เปลี่ยนฟอร์ม แล้ว commit ไฟล์นี้\n"
+        "//\n"
+        "// เฉพาะช่องที่ **บังคับทุกบริษัทโดยไม่มีเงื่อนไข** เท่านั้น — ช่องที่บังคับเฉพาะ\n"
+        "// บางบริษัท/บางเงื่อนไข ไม่ใส่ไว้ เพราะตอน parse ยังไม่รู้ว่าเป็นบริษัทไหน\n"
+        "// (เตือนไปก็อาจเตือนผิด)\n\n"
+        "export interface EmcsRequiredField {\n"
+        "  /** tag ใน INSERT_SURV_REPORT_XML */\n  tag: string;\n"
+        "  /** บล็อกที่ tag อยู่ */\n  block: 'REPORT' | 'CAR';\n"
+        "  /** ป้ายบนหน้าจอ EMCS — ใช้เป็นข้อความเตือน */\n  label: string;\n"
+        "  /** id ของช่องบนหน้า EMCS (ไว้ไล่ย้อน) */\n  emcsId: string;\n}\n\n"
+        "export const EMCS_REQUIRED: EmcsRequiredField[] = [\n" + body + ",\n];\n",
+        encoding="utf-8")
+    return {"emitted": len(rows), "skipped": skipped, "conditional": cond, "per_insurer": per}
+
+
 def main():
     ap = argparse.ArgumentParser(description="สกัดสเปกฟอร์ม EMCS จาก HTML ที่เซฟไว้")
     ap.add_argument("files", nargs="+", help="ไฟล์ .html (ใส่ได้หลายไฟล์ / glob)")
     ap.add_argument("--out", default="runs/emcs_spec.json")
     ap.add_argument("--diff", action="store_true", help="เทียบกับลิสต์ในโปรเจกต์")
+    ap.add_argument("--emit-ts", metavar="PATH", default="",
+                    help="เขียนลิสต์ช่องบังคับเป็น TS ให้ backend ใช้เตือนอัตโนมัติ")
     a = ap.parse_args()
 
     paths = []
@@ -298,6 +365,13 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(spec, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\n✓ เขียน {out} ({out.stat().st_size:,} bytes)")
+
+    if a.emit_ts:
+        r = emit_ts(spec, Path(a.emit_ts))
+        print(f"\n✓ เขียน {a.emit_ts} — ช่องบังคับทุกบริษัท {r['emitted']} ช่อง")
+        print(f"  (ไม่รวม: มีเงื่อนไข {r['conditional']} · เฉพาะบางบริษัท {r['per_insurer']})")
+        if r["skipped"]:
+            print(f"  จับคู่ tag ไม่ได้ {len(r['skipped'])}: " + " · ".join(r["skipped"]))
 
     if a.diff:
         print("\n=== เทียบกับลิสต์ที่ใช้อยู่ในโปรเจกต์ ===")
