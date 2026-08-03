@@ -1517,7 +1517,8 @@ def _fill_police_and_alcohol(driver, data: ClaimData):
         set_text(driver, "txtPolice_Date_Minute", pm)
 
     # ผลตรวจแอลกอฮอล์: EMCS แยกเป็น radio "มี/ไม่มีการตรวจ" + ช่องผลตรวจ
-    # แอปมีกล่องข้อความเดียว → ตีความจากข้อความ: มีข้อความที่ไม่ใช่ 'ไม่ได้ตรวจ' = มีการตรวจ
+    # แอปมือถือใช้ dropdown ป้ายตรง EMCS แล้ว (ไม่ใช่กล่องข้อความเดียวอย่างที่เคยเขียนไว้ตรงนี้)
+    # → เทียบป้ายตรง ๆ ก่อน ส่วนการตีความจากข้อความเป็น fallback ของเคสเก่า/ISURVEY
     alc = " ".join(str(data.alcohol_test or "").split())
     res = " ".join(str(data.alcohol_result or "").split())
     if alc or res:
