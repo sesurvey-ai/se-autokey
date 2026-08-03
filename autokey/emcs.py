@@ -41,7 +41,7 @@ from .browser import (
 )
 from .car_brand import BRAND_MIN_SCORE, normalize_brand
 from .claim_data import ClaimData
-from .images import list_images
+from .images import ZIP_CAT_TO_EMCS, list_images
 
 
 def _dash(v):
@@ -2382,6 +2382,11 @@ def _se_cat_to_emcs(category):
         return _EMCS_DEFAULT_IMAGE_TYPE
     if cat in _EMCS_IMAGE_TYPES:
         return cat
+    # หมวดของ ISURVEY เป็นรหัสอังกฤษ (INS/REPORTS/OTHERS/ACC_MAP) ไม่ใช่ป้ายไทยแบบ
+    # se-survey → แปลงก่อน ไม่งั้นตกถัง 'รูปประกอบ' ทั้งกอง (เจอจริง: งานครั้งที่ 2
+    # เคลม 2026013147939 รูปรถประกัน 10 ใบขึ้น EMCS ผิดหมวด ต้องลบแล้วอัปใหม่)
+    if cat in ZIP_CAT_TO_EMCS:
+        return ZIP_CAT_TO_EMCS[cat]
     m = re.search(r"\s*(คันที่|คนที่|ชิ้นที่|รายการที่)\s*(\d+)\s*$", cat)
     base = re.sub(r"\s*(คันที่|คนที่|ชิ้นที่|รายการที่)\s*\d+\s*$", "", cat).strip()
     # ป้าย canonical ของ EMCS เอง ('รูปผู้บาดเจ็บ คนที่ 2' / 'รูปทรัพย์สิน รายการที่ 2')
@@ -2418,10 +2423,25 @@ def _group_flat_by_category(folder, file_names, fallback_type):
     # rename ชื่อไฟล์ = 'หมวด_ลำดับ' ก่อนอัป → EMCS คอลัมน์ "รายการ" โชว์หมวดจากชื่อไฟล์
     # (เหมือน flow มือถือที่ rename ฝั่ง client; เดิมอัปชื่อเดิม rn_image_picker_* = รายการเพี้ยน)
     out = []
+    new_map = {}
     for etype, paths in groups.items():
-        renamed = _rename_clean_files(sorted(paths, key=lambda p: p.name),
-                                      etype + "_{seq}", 1)
+        ordered = sorted(paths, key=lambda p: p.name)
+        renamed = _rename_clean_files(ordered, etype + "_{seq}", 1)
+        # จำหมวด "เดิม" ของแต่ละรูปไว้กับชื่อใหม่ (ดูเหตุผลด้านล่าง)
+        for old, new in zip(ordered, renamed):
+            cat = cat_map.get(old.name)
+            if cat:
+                new_map[Path(new).name] = cat
         out.append((etype, renamed))
+    # ⚠️ ต้องเขียน _categories.json ใหม่ตามชื่อที่เพิ่ง rename — ไม่งั้นรอบถัดไป
+    # (อัปซ้ำ/แก้หมวดแล้วอัปใหม่) จะจับคู่ชื่อไม่ได้สักรูป แล้วเทลงถัง 'รูปประกอบ'
+    # ทั้งกองแบบเงียบ ๆ (เจอจริงกับงานครั้งที่ 2 เคลม 2026013147939 — ต้องลบ+อัปใหม่ 2 รอบ)
+    if new_map:
+        try:
+            manifest.write_text(json.dumps(new_map, ensure_ascii=False),
+                                encoding="utf-8")
+        except Exception as e:
+            log(f"   ⚠️ อัปเดต _categories.json หลัง rename ไม่ได้ ({e})")
     return out
 
 
