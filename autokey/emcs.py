@@ -2802,10 +2802,39 @@ return out;
 """
 
 
+# ปุ่ม "บันทึกราคา" ของหน้าค่าใช้จ่าย — **id เปลี่ยนตามสถานะงาน** (`hifPostStatus`)
+# ตรวจจาก HTML จริง 2 ใบ (2026-08-03):
+#   hifPostStatus=1  งาน draft ที่เพิ่งสร้าง  → `btnSurveySave`   title='Survey บันทึก'
+#   hifPostStatus=2  ส่งงานแล้วเปิดมาแก้      → `btnSurvey_Update` title='Survey แก้ไข'
+# หน้าเดียวกันจะมีปุ่มเดียวเท่านั้น (อีกตัวไม่ถูก render) จึงต้องลองทั้งคู่
+# ⚠️ กับดักที่พลาดมาแล้ว: เคยตรวจแค่หน้า status=2 ใบเดียวแล้วสรุปว่า "ไม่มี btnSurveySave
+# อยู่จริง" → บอทหาปุ่มไม่เจอทุกครั้งที่เป็น draft ใหม่ (เคส S68426080392 ต้องกดเอง)
+_PRICE_SAVE_BUTTONS = ("btnSurveySave", "btnSurvey_Update")
+
+
+def _find_price_save_button(driver):
+    """หาปุ่ม 'บันทึกราคา' ที่ถูก render จริงบนหน้า — คืน (element, id) หรือ (None, '')
+    ปุ่มที่มีคำว่า 'ส่งงาน' ถือว่าไม่ใช่ (กันกดส่งงานพลาด) — ข้ามไปตัวถัดไป"""
+    for eid in _PRICE_SAVE_BUTTONS:
+        try:
+            el = driver.find_element(By.ID, eid)
+            if not el.is_displayed():
+                continue
+            txt = (el.get_attribute("value") or el.text or "").strip()
+            if "ส่งงาน" in txt:
+                log(f"   ⛔ {eid} มีข้อความ 'ส่งงาน' ({txt!r}) — ข้าม (กันกดส่งงานพลาด)")
+                continue
+            return el, eid
+        except Exception:
+            pass
+    return None, ""
+
+
 def _save_and_exit_billing(driver):
     """โหมด draft-park (se-survey ⚡ นำเข้า / เติม draft เดิม): บันทึกหัวบิล
-    (เลขที่ใบแจ้งหนี้ + วันที่วางบิล) ด้วย `btnSurvey_Update` — ปุ่มนี้ value='บันทึกราคา'
-    และเป็นปุ่มบันทึกเดียวของหน้า จึงเลี่ยงไม่ได้ถ้าอยากให้หัวบิลติด
+    (เลขที่ใบแจ้งหนี้ + วันที่วางบิล) ด้วยปุ่ม 'บันทึกราคา' — id ต่างกันตามสถานะงาน
+    (`btnSurveySave` draft ใหม่ / `btnSurvey_Update` เปิดมาแก้, ดู _PRICE_SAVE_BUTTONS)
+    เป็นปุ่มบันทึกเดียวของหน้า จึงเลี่ยงไม่ได้ถ้าอยากให้หัวบิลติด
     (user อนุญาตให้กดแล้ว 2026-07-27) — จากนั้นกดกลับหน้า Inbox/Outbox
     (wuMenuPage1_imbReturn_In_Out) = 'ออกจากเรื่อง' ปลดล็อกให้คนอื่นเปิดต่อได้
     ⛔ ไม่แตะ 'ส่งงานใหม่' (wuFlow1_cmdSendNew) เด็ดขาด
@@ -2813,21 +2842,28 @@ def _save_and_exit_billing(driver):
     # (1) บันทึกหัวบิล (เลขที่ใบแจ้งหนี้ + วันที่วางบิล) — verify ปุ่มไม่ใช่ 'ส่งงาน' ก่อนกด
     #     (กันกดส่งงานพลาด ตามวินัยเดียวกับตัวหาปุ่ม 'บันทึก' ที่กันคำว่า 'ส่งงาน')
     try:
-        btn = wait_clickable(driver, By.ID, "btnSurvey_Update", 15)
-        txt = (btn.get_attribute("value") or btn.text or "").strip()
-        if "ส่งงาน" in txt:
-            log(f"   ⛔ btnSurvey_Update มีข้อความ 'ส่งงาน' ({txt!r}) — ไม่กด "
-                "(กันกดส่งงานพลาด) บันทึก/ออกจากเรื่องเองบนหน้าจอ")
+        # รอให้หน้าโหลดปุ่มก่อน (postback ก่อนหน้าอาจยังไม่จบ) แล้วค่อยเลือก id ที่มีจริง
+        try:
+            wait_clickable(driver, By.CSS_SELECTOR,
+                           "#btnSurveySave, #btnSurvey_Update", 15)
+        except Exception:
+            pass
+        btn, eid = _find_price_save_button(driver)
+        if btn is None:
+            ids = "/".join(_PRICE_SAVE_BUTTONS)
+            log(f"   ⚠️ ไม่พบปุ่มบันทึกราคา ({ids}) บนหน้า — "
+                "บันทึก + ออกจากเรื่องเองบนหน้าจอ (ยังไม่กดกลับ Inbox กันข้อมูลหาย)")
             return
+        status = _field_value(driver, "hifPostStatus") or "?"
         btn.click()
         try:
             # ยืนยันจริงจาก eclaim3: ขึ้น alert 'บันทึกการแก้ไขเรียบร้อยแล้ว' → accept_alert กด 'ตกลง'
             accept_alert(driver, timeout=10)
         except Exception:
             pass
-        log("EMCS: บันทึกหน้าค่าใช้จ่าย (btnSurvey_Update) ✅")
+        log(f"EMCS: บันทึกหน้าค่าใช้จ่าย ({eid}, hifPostStatus={status}) ✅")
     except Exception as e:
-        log(f"   ⚠️ กดปุ่มบันทึก (btnSurvey_Update) ไม่ได้ ({type(e).__name__}) — "
+        log(f"   ⚠️ กดปุ่มบันทึกราคาไม่ได้ ({type(e).__name__}) — "
             "บันทึก + ออกจากเรื่องเองบนหน้าจอ (ยังไม่กดกลับ Inbox กันข้อมูลหาย)")
         return
     # (2) กลับหน้า Inbox/Outbox = ออกจากเรื่องที่ทำเสร็จ → ปลดล็อกให้คนอื่นเข้าต่อได้
@@ -2849,16 +2885,17 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
     แล้วกด "บันทึก" (เป็น draft แก้ได้ — จุดส่งงานจริงคือปุ่ม 'ส่งงานใหม่'
     ซึ่งสคริปต์ไม่กดให้เด็ดขาด ต้องตรวจแล้วกดเอง)
 
-    ⚠️ ข้อเท็จจริงของหน้านี้ (ตรวจจาก HTML จริงทั้งงานไอโออิและ draft ไทยไพบูลย์ 2026-07-27):
-    **ไม่มีปุ่ม id `btnSurveySave` อยู่จริง** — ปุ่มบันทึกเดียวของหน้าคือ
-    `btnSurvey_Update` ซึ่ง value = 'บันทึกราคา'. เดิมโค้ด/ล็อกเขียนว่า "ไม่กดบันทึกราคา"
-    ทั้งที่กดปุ่มนั้นอยู่ (guard เช็คแค่คำว่า 'ส่งงาน' จึงผ่าน) = ล็อกหลอก.
+    ⚠️ ข้อเท็จจริงของหน้านี้ (ตรวจจาก HTML จริง 2 ใบ 2026-08-03): ปุ่มบันทึกมีปุ่มเดียว
+    value='บันทึกราคา' แต่ **id เปลี่ยนตามสถานะงาน** (`hifPostStatus`) —
+    draft ใหม่ = `btnSurveySave` / เปิดมาแก้ = `btnSurvey_Update` (ดู _PRICE_SAVE_BUTTONS)
+    เดิมโค้ด/ล็อกเขียนว่า "ไม่กดบันทึกราคา" ทั้งที่กดปุ่มนั้นอยู่
+    (guard เช็คแค่คำว่า 'ส่งงาน' จึงผ่าน) = ล็อกหลอก.
     user ปรับกติกา 2026-07-27: **กด 'บันทึกราคา' ได้** เพราะเลขที่ใบแจ้งหนี้ + วันที่วางบิล
     ต้องถูกบันทึกด้วยปุ่มนี้ปุ่มเดียว. ที่ยังห้ามเด็ดขาดคือ 'ส่งงานใหม่' (wuFlow1_cmdSendNew)
 
     save_price=False (โหมด draft-park: se-survey ⚡ นำเข้า / เติม draft เดิม):
     ไม่กรอก "ราคา" ในตาราง (คนกรอกเอง) แต่ **บันทึกหัวบิล
-    (เลขที่ใบแจ้งหนี้+วันที่) ด้วย btnSurvey_Update ('บันทึกราคา')** แล้ว **กดกลับหน้า Inbox/Outbox
+    (เลขที่ใบแจ้งหนี้+วันที่) ด้วยปุ่ม 'บันทึกราคา'** แล้ว **กดกลับหน้า Inbox/Outbox
     (wuMenuPage1_imbReturn_In_Out) = ออกจากเรื่อง เพื่อปลดล็อก** (ไม่งั้นเรื่องค้างถูกล็อก
     คนอื่นเปิดต่อไม่ได้ ต้องรอ). ราคา + ส่งงาน คนทำเองภายหลัง
     navigate=False: อยู่หน้าค่าใช้จ่ายแล้ว (เช่นหลังกด 'งานต่อเนื่อง') — ไม่ต้องกดเมนูเข้าใหม่"""
@@ -2910,16 +2947,15 @@ def fill_billing(driver, data: ClaimData, save_price: bool = True,
     # (readback ของ 3 ช่องสรุปถูกถอดออกพร้อมกับการกรอก — บอทไม่แตะช่องพวกนั้นแล้ว)
 
     if not save_price:
-        # โหมด draft-park: ไม่กด 'บันทึกราคา'/'ส่งงานใหม่' — แต่บันทึกหัวบิล (btnSurvey_Update)
+        # โหมด draft-park: ไม่กรอก 'ราคา'/ไม่กด 'ส่งงานใหม่' — แต่บันทึกหัวบิล ('บันทึกราคา')
         # แล้ว 'ออกจากเรื่อง' (กลับ Inbox/Outbox) เพื่อปลดล็อก; ราคา+ส่งงาน คนทำเองภายหลัง
         log("EMCS: กรอกหน้าค่าใช้จ่ายแล้ว — บันทึกหัวบิล (เลขที่ใบแจ้งหนี้+วันที่) "
             "ด้วยปุ่ม 'บันทึกราคา'; ไม่กด 'ส่งงานใหม่' (ราคา+ส่งงาน ทำเองภายหลัง)")
         _save_and_exit_billing(driver)
         return
 
-    # ปุ่มบันทึกเดียวของหน้าคือ btnSurvey_Update (value='บันทึกราคา') — id `btnSurveySave`
-    # ที่โค้ดเดิมอ้างไม่มีอยู่จริงบนหน้า (ตรวจแล้วทั้งงานไอโออิและ draft ไทยไพบูลย์)
-    # จึงตกลง except ทุกครั้ง = โหมดนี้ไม่เคยบันทึกอะไรเลย
+    # ปุ่มบันทึกเดียวของหน้า value='บันทึกราคา' แต่ id ต่างกันตาม hifPostStatus
+    # (btnSurveySave draft ใหม่ / btnSurvey_Update เปิดมาแก้) — _save_and_exit_billing ลองทั้งคู่
     # ⛔ 'ส่งงานใหม่' (wuFlow1_cmdSendNew) ยังห้ามแตะเด็ดขาดเหมือนเดิม
     _save_and_exit_billing(driver)
     log("EMCS: บันทึกหน้าค่าใช้จ่ายแล้ว — ตรวจ/แก้ราคา แล้วกด 'ส่งงานใหม่' เอง "

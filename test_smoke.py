@@ -828,7 +828,9 @@ check("find_submit: มีทั้งคู่ → เลือก 'ส่ง�
 _btn, _lab = emcs._find_submit_button(_FakeDriver({}))
 check("find_submit: ไม่มีปุ่ม → (None,'')", _btn is None and _lab == "")
 
-# ---- 22b. _save_and_exit_billing: บันทึกหัวบิล (btnSurvey_Update) + กลับ Inbox/Outbox; กัน 'ส่งงาน' ----
+# ---- 22b. _save_and_exit_billing: บันทึกหัวบิล ('บันทึกราคา') + กลับ Inbox/Outbox; กัน 'ส่งงาน' ----
+# id ของปุ่มบันทึกราคาเปลี่ยนตาม hifPostStatus: 1 (draft ใหม่) = btnSurveySave /
+# 2 (เปิดมาแก้) = btnSurvey_Update — บอทต้องเจอทั้งคู่ (เคส S68426080392 เคยหาไม่เจอ)
 class _FakeBtn:
     def __init__(self, val=""):
         self._val, self.text, self.clicked = val, "", False
@@ -836,28 +838,41 @@ class _FakeBtn:
         return self._val if k == "value" else None
     def click(self):
         self.clicked = True
+    def is_displayed(self):
+        return True
 
-def _run_save_exit(update_val):
-    fake_update = _FakeBtn(update_val)
+def _run_save_exit(present):
+    """present = {id ปุ่ม: _FakeBtn} — จำลองว่าหน้า render ปุ่มไหน"""
     clicked_ids = []
-    _orig = (emcs.wait_clickable, emcs.click_retry, emcs.accept_alert)
-    emcs.wait_clickable = lambda d, by, value, timeout=10: (
-        fake_update if value == "btnSurvey_Update" else (_ for _ in ()).throw(Exception("x")))
+    _orig = (emcs.wait_clickable, emcs.click_retry, emcs.accept_alert,
+             emcs._field_value)
+    emcs.wait_clickable = lambda d, by, value, timeout=10: None
     emcs.click_retry = lambda d, by, value, timeout=15, attempts=3: clicked_ids.append(value)
     emcs.accept_alert = lambda d, timeout=30: ""
+    emcs._field_value = lambda d, eid: ""
     try:
-        emcs._save_and_exit_billing(None)
+        emcs._save_and_exit_billing(_FakeDriver(present))
     finally:
-        emcs.wait_clickable, emcs.click_retry, emcs.accept_alert = _orig
-    return fake_update.clicked, clicked_ids
+        (emcs.wait_clickable, emcs.click_retry, emcs.accept_alert,
+         emcs._field_value) = _orig
+    return clicked_ids
 
-_upd, _ids = _run_save_exit("บันทึก")
-check("save_exit: กด btnSurvey_Update (บันทึกหัวบิล)", _upd is True)
+_new = _FakeBtn("บันทึกราคา")
+_ids = _run_save_exit({"btnSurveySave": _new})
+check("save_exit: draft ใหม่ (hifPostStatus=1) → กด btnSurveySave", _new.clicked is True)
 check("save_exit: แล้วกดกลับ Inbox/Outbox (imbReturn_In_Out)",
       _ids == ["wuMenuPage1_imbReturn_In_Out"])
-_upd2, _ids2 = _run_save_exit("ส่งงานใหม่")
-check("save_exit: ปุ่มมีคำ 'ส่งงาน' → ไม่กด btnSurvey_Update (กันส่งงานพลาด)", _upd2 is False)
+_upd = _FakeBtn("บันทึกราคา")
+_ids = _run_save_exit({"btnSurvey_Update": _upd})
+check("save_exit: เปิดมาแก้ (hifPostStatus=2) → กด btnSurvey_Update", _upd.clicked is True)
+check("save_exit: (status 2) กดกลับ Inbox/Outbox ด้วย",
+      _ids == ["wuMenuPage1_imbReturn_In_Out"])
+_send = _FakeBtn("ส่งงานใหม่")
+_ids2 = _run_save_exit({"btnSurveySave": _send})
+check("save_exit: ปุ่มมีคำ 'ส่งงาน' → ไม่กด (กันกดส่งงานพลาด)", _send.clicked is False)
 check("save_exit: เจอ 'ส่งงาน' → ไม่กดกลับ Inbox ด้วย (หยุดทันที)", _ids2 == [])
+_ids3 = _run_save_exit({})
+check("save_exit: ไม่มีปุ่มบันทึกราคาเลย → ไม่กดกลับ Inbox (กันข้อมูลหาย)", _ids3 == [])
 
 # ---- 22c. ยี่ห้อรถ ไทย→อังกฤษ + guard กันเลือก placeholder ('-- ระบุ --') ----
 # เคส #104 (จริง): ตัวเลือก ddlCMFG ของ EMCS เป็นอังกฤษล้วน แต่ se-survey ส่ง 'เอ็มจี'

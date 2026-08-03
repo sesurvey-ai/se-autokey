@@ -328,7 +328,12 @@ test_smoke.py          ~50 test ไม่ต้องเปิด browser — �
   `txtSur_Tel`, `txtSur_Insure`, `txtSur_Claim`+`txtSur_Percent_Claim`, `txtSur_Daily` /
   อื่นๆ `txtOther_Desc`+`txtOther_UnitPrice` — พิมพ์แล้วกด **Tab** ให้ JS คำนวณ
 - ช่องอนุมัติ `txtIns_*` = disabled (ของบริษัทประกัน) แตะไม่ได้โดยโครงสร้าง
-- ปุ่มบันทึก = `btnSurveySave` "บันทึกราคา" (enable เมื่อมีราคา) → กด + alert
+- ปุ่มบันทึก = "บันทึกราคา" → กด + alert. ⚠️ **id เปลี่ยนตามสถานะงาน (`hifPostStatus`)**
+  — `1` draft เพิ่งสร้าง = `btnSurveySave` (title 'Survey บันทึก') / `2` ส่งงานแล้วเปิดมาแก้
+  = `btnSurvey_Update` (title 'Survey แก้ไข'). หน้าหนึ่งมีปุ่มเดียว บอทลองทั้งคู่
+  (`_PRICE_SAVE_BUTTONS`). **เคยพลาด:** ตรวจแค่หน้า status=2 ใบเดียวแล้วเขียนคอมเมนต์ว่า
+  "ไม่มี btnSurveySave อยู่จริง" → เวลาเป็น draft ใหม่บอทหาปุ่มไม่เจอ หัวบิลไม่ถูกบันทึก
+  (เจอกับ S68426080392 — user ต้องพิมพ์เลขที่ใบแจ้งหนี้แล้วกดบันทึกเอง)
 - ค่าระยะทาง (INS_DIST) / ค่ายกลาก (INS_CARTOW) ยังไม่มีช่อง map → log เตือนถ้ามียอด
 
 ### หน้ารายการงาน (frmMainPage) + ด่านกันเรื่องซ้ำ
