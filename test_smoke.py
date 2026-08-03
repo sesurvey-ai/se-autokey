@@ -1253,13 +1253,29 @@ _alc = _insp.getsource(emcs._fill_police_and_alcohol)
 check("แอลกอฮอล์: ตีความ 'ไม่ได้ตรวจ' เป็น 'ไม่มีการตรวจ'",
       "ไม่ได้ตรวจ" in _alc and "no_test" in _alc)
 
-# หน้าค่าใช้จ่าย: กติกา user 2026-07-27 — บอทกรอกแค่ เลขที่ใบแจ้งหนี้ + วันที่ แล้วบันทึก
+# หน้าค่าใช้จ่าย: กติกา user 2026-08-03 — กรอก "ให้ครบ" แล้วกด 'บันทึกราคา'
+# (แทนกติกา 2026-07-27 ที่ให้กรอกแค่ 2 ช่อง — ตอนนั้นถอด fill_fee_table/set_textarea ออก)
 _fb = _insp.getsource(emcs.fill_billing)
-check("ค่าใช้จ่าย: บอทไม่กรอกตารางราคา (คนกรอกเอง)", "fill_fee_table(driver" not in _fb)
-check("ค่าใช้จ่าย: บอทไม่กรอก 3 ช่องสรุป (ผลการดำเนินงาน/ความเห็น)",
-      "txtAcc_result" not in _fb and "txtSurv_Comment" not in _fb)
-check("ค่าใช้จ่าย: ยังกรอกเลขที่ใบแจ้งหนี้ + วันที่",
+check("ค่าใช้จ่าย: กรอกเลขที่ใบแจ้งหนี้ + วันที่วางบิล",
       'txtBill_No' in _fb and 'wuCale_Bill_Date_txtCalendar' in _fb)
+check("ค่าใช้จ่าย: กรอก 3 ช่องสรุป (ผลการดำเนินงาน/ความเห็นผู้ตรวจสอบ/ความเห็นเซอร์เวย์)",
+      all(i in _fb for i in ("txtAcc_result", "txtAcc_Comment", "txtSurv_Comment")))
+check("ค่าใช้จ่าย: กรอกตารางราคาคอลัมน์ 'เสนอ' จาก data.bill",
+      "fill_fee_table(driver, data.bill)" in _fb)
+check("ค่าใช้จ่าย: ตารางราคาอยู่หลัง early-return ของ save_price=False (--no-save-price ปิดได้)",
+      _fb.index("if not save_price:") < _fb.index("fill_fee_table(driver, data.bill)"))
+check("ค่าใช้จ่าย: 3 ช่องสรุปกรอกทั้ง 2 โหมด (อยู่ก่อน early-return)",
+      _fb.index("txtSurv_Comment") < _fb.index("if not save_price:"))
+# คอลัมน์อนุมัติของบริษัทประกัน (txtIns_*) disabled บนหน้าจริง — บอทต้องไม่แตะ
+# และยอดรวม/VAT JS คำนวณเอง ห้ามพิมพ์ทับ
+_ft = _insp.getsource(emcs.fill_fee_table)
+# เทียบเฉพาะ id ที่ถูกส่งเป็น string literal จริง — docstring พูดถึง txtIns_* อยู่ (อธิบายว่าไม่แตะ)
+check("ค่าใช้จ่าย: ไม่แตะคอลัมน์อนุมัติ txtIns_* (ของบริษัทประกัน)",
+      '"txtIns_' not in _ft and "'txtIns_" not in _ft)
+check("ค่าใช้จ่าย: ไม่พิมพ์ทับยอดรวม/VAT (JS คำนวณเอง)",
+      not any(i in _ft for i in ("txtTotalPrice", "txtVatPrice", "txtGrandTotalPrice")))
+check("ค่าใช้จ่าย: ไม่มี data.bill → ไม่เขียนเลขมั่ว (return ทันที)",
+      "if not bill:" in _ft)
 
 # "การเรียกร้องค่าเสียหายจากคู่กรณี" ไม่ผูกกับผลคดี — งานจริงติ๊กไว้ทั้งที่ผลคดี = รอสรุปผลคดี
 _fv = _insp.getsource(emcs.fill_verdict)

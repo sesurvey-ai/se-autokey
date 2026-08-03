@@ -328,6 +328,12 @@ test_smoke.py          ~50 test ไม่ต้องเปิด browser — �
   `txtSur_Tel`, `txtSur_Insure`, `txtSur_Claim`+`txtSur_Percent_Claim`, `txtSur_Daily` /
   อื่นๆ `txtOther_Desc`+`txtOther_UnitPrice` — พิมพ์แล้วกด **Tab** ให้ JS คำนวณ
 - ช่องอนุมัติ `txtIns_*` = disabled (ของบริษัทประกัน) แตะไม่ได้โดยโครงสร้าง
+- **บอทกรอกหน้านี้ "ให้ครบ" (กติกา user 2026-08-03)**: หัวบิล + 3 ช่องสรุป
+  (`txtAcc_result` ผลการดำเนินงาน / `txtAcc_Comment` ความเห็นผู้ตรวจสอบ /
+  `txtSurv_Comment` ความเห็นเซอร์เวย์) + ตารางราคาคอลัมน์ "เสนอ" แล้วกด "บันทึกราคา"
+  — ต้นทางไม่มีข้อมูล = ข้ามช่องนั้น (ไม่ทับของเดิม ไม่เขียนเลขมั่ว) ·
+  `--no-save-price` ปิดเฉพาะตารางราคา · ยอดรวม/VAT ปล่อย JS คำนวณ ห้ามพิมพ์ทับ
+  (แทนกติกา 2026-07-27 "กรอกแค่ 2 ช่อง" ที่ commit `9719228` ถอด fill_fee_table/set_textarea ออก)
 - ปุ่มบันทึก = "บันทึกราคา" → กด + alert. ⚠️ **id เปลี่ยนตามสถานะงาน (`hifPostStatus`)**
   — `1` draft เพิ่งสร้าง = `btnSurveySave` (title 'Survey บันทึก') / `2` ส่งงานแล้วเปิดมาแก้
   = `btnSurvey_Update` (title 'Survey แก้ไข'). หน้าหนึ่งมีปุ่มเดียว บอทลองทั้งคู่
