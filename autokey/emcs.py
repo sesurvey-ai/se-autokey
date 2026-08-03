@@ -3100,16 +3100,31 @@ def start_continuation(driver, claim: str, esurvey: str):
 
 
 def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
-                      save_price: bool = True) -> str:
+                      save_price: bool = True, images_folder=None,
+                      image_type: str = "รูปรถประกัน") -> str:
     """งานต่อเนื่อง (ครั้งถัดไปของเคลมเดิม): เปิดเรื่องเดิม → 'งานต่อเนื่อง' →
-    กรอกหน้าค่าใช้จ่าย (invoice ใหม่ + ตารางราคา) เท่านั้น — ไม่แตะหน้าหลัก/คู่กรณี
-    (ข้อมูลพวกนั้นอยู่ครั้งที่ 1 แล้ว)
+    **อัปรูปของครั้งนี้** → กรอกหน้าค่าใช้จ่าย (invoice ใหม่ + ตารางราคา)
+    ไม่แตะหน้าหลัก/คู่กรณี (ข้อมูลพวกนั้นอยู่ครั้งที่ 1 แล้ว)
+
+    รูป: user ยืนยัน 2026-08-03 ว่า **งานครั้งที่ 2 เป็นต้นไปต้องใส่รูปด้วย**
+    (เดิมค้างไว้ไม่สรุป เส้นนี้จึงไม่เคยอัปรูปเลย) — รูปใน EMCS ผูกกับ "เคลม" ไม่ใช่
+    ครั้งที่ โควตา 80 ใบจึงเป็นของทั้งเคลมร่วมกัน upload_images ตัดให้พอดีโควตาที่
+    เหลืออยู่แล้ว (image_quota_left) ครั้งที่ 2 จึงเติมต่อจากที่ครั้งแรกใช้ไป
 
     save_price=False: ไม่กด 'บันทึกราคา'. ปุ่มส่งจริงคือ 'ส่งผลงานต่อเนื่อง'
     (wuFlow1_cmdSendFollow) — สคริปต์ไม่กดให้เด็ดขาด (เหมือนปุ่ม 'ส่งงานใหม่')
     คืนเลข e-Survey เดิม (งานต่อเนื่องใช้เรื่อง/เลขเดิม ไม่สร้างใหม่)"""
     start_continuation(driver, data.claim_value, esurvey)
-    fill_billing(driver, data, save_price=save_price, navigate=False)
+    # start_continuation ทิ้งเราไว้ที่หน้าค่าใช้จ่ายอยู่แล้ว (fill_billing จึง navigate=False)
+    # แต่ upload_images กด wuMenuPage1_imbImage แล้วค้างอยู่หน้ารูป → ถ้าอัปรูป
+    # ต้องให้ fill_billing กดกลับหน้าค่าใช้จ่ายเอง ไม่งั้นหา txtBill_No ไม่เจอแล้วล้ม
+    moved = images_folder is not None
+    if moved:
+        upload_images(driver, images_folder, image_type=image_type,
+                      n_opponents=len(data.third_parties or []),
+                      n_injuries=len(data.injuries or []),
+                      n_assets=len(data.assets or []))
+    fill_billing(driver, data, save_price=save_price, navigate=moved)
     return esurvey
 
 
@@ -3138,7 +3153,8 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
         cont = continuation_esurvey(existing, data.invoice_value)
         if cont:
             log(f"EMCS: เคลมนี้มีเรื่องเดิม + invoice ใหม่ → โหมดงานต่อเนื่อง (ต่อจาก {cont})")
-            return fill_continuation(driver, cfg, data, cont, save_price=save_price)
+            return fill_continuation(driver, cfg, data, cont, save_price=save_price,
+                                     images_folder=images_folder, image_type=image_type)
         guard_duplicate_report(driver, data, force_new, existing=existing)
     else:
         guard_duplicate_report(driver, data, force_new)
@@ -3442,7 +3458,8 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
         cont = continuation_esurvey(existing, data.invoice_value)
         if cont:
             log(f"EMCS: เคลมนี้มีเรื่องเดิม + invoice ใหม่ → โหมดงานต่อเนื่อง (ต่อจาก {cont})")
-            return fill_continuation(driver, cfg, data, cont, save_price=save_price)
+            return fill_continuation(driver, cfg, data, cont, save_price=save_price,
+                                     images_folder=images_folder, image_type=image_type)
         guard_duplicate_report(driver, data, force_new, existing=existing)
     else:
         guard_duplicate_report(driver, data, force_new)
