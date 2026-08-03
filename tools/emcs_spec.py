@@ -282,7 +282,16 @@ def emit_ts(spec: list, out: Path) -> dict:
                 return id2tag[k]
         return None
 
-    rows, skipped, cond, per = [], [], 0, 0
+    # ช่องบังคับที่ "บอทเติมให้เองอยู่แล้ว" → ห้ามเตือน ไม่งั้นคนตรวจเห็นทุกไฟล์
+    # แล้วไปนั่งหาว่าจะกรอกตรงไหน ทั้งที่ไม่ต้องทำอะไร (คำเตือนที่ไม่ต้องทำอะไร
+    # สอนให้คนเมินคำเตือน — อันตรายกว่าไม่เตือน)
+    BOT_FILLS = {
+        "ddlInsurer_Name":
+            "บอทเลือกบริษัท+สาขาบนหน้า Import File XML แล้วค่าไหลมาลงช่องนี้เอง "
+            "(import_xml_report → ddlInsurerNameMajor + ddlInsurerBRList) "
+            "และยัง patch <INSURERBRID> ในไฟล์ให้เป็นรหัสสาขาที่เลือกจริงด้วย",
+    }
+    rows, skipped, cond, per, bot = [], [], 0, 0, []
     for f in spec:
         for fn, v in f["validators"].items():
             for cid, fld in v["base"].items():
@@ -290,6 +299,9 @@ def emit_ts(spec: list, out: Path) -> dict:
                 if fld["cond"]:
                     cond += 1
                     continue                                # บังคับแบบมีเงื่อนไข — ยังไม่เตือนอัตโนมัติ
+                if cid in BOT_FILLS:
+                    bot.append(f"{fld['label'] or cid} ({cid})")
+                    continue
                 if not hit:
                     skipped.append(f"{fld['label'] or cid} ({cid})")
                     continue
@@ -319,7 +331,8 @@ def emit_ts(spec: list, out: Path) -> dict:
         "  /** id ของช่องบนหน้า EMCS (ไว้ไล่ย้อน) */\n  emcsId: string;\n}\n\n"
         "export const EMCS_REQUIRED: EmcsRequiredField[] = [\n" + body + ",\n];\n",
         encoding="utf-8")
-    return {"emitted": len(rows), "skipped": skipped, "conditional": cond, "per_insurer": per}
+    return {"emitted": len(rows), "skipped": skipped, "conditional": cond,
+            "per_insurer": per, "bot_fills": bot}
 
 
 def main():
@@ -370,6 +383,8 @@ def main():
         r = emit_ts(spec, Path(a.emit_ts))
         print(f"\n✓ เขียน {a.emit_ts} — ช่องบังคับทุกบริษัท {r['emitted']} ช่อง")
         print(f"  (ไม่รวม: มีเงื่อนไข {r['conditional']} · เฉพาะบางบริษัท {r['per_insurer']})")
+        if r["bot_fills"]:
+            print("  บอทเติมเอง ไม่ต้องเตือน: " + " · ".join(r["bot_fills"]))
         if r["skipped"]:
             print(f"  จับคู่ tag ไม่ได้ {len(r['skipped'])}: " + " · ".join(r["skipped"]))
 
