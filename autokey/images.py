@@ -1,4 +1,6 @@
 """จัดการรูปภาพ: โหลดจาก ISURVEY (zip export หรือ panel) → จัดชื่อด้วย template matching"""
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -116,11 +118,52 @@ def download_images(driver, folder: Path):
     log(f"   บันทึกแล้ว {saved} รูป → {folder}")
 
 
+def _manifest_by_hash(folder: Path) -> dict:
+    """{sha1 ของไฟล์: หมวด} จาก _categories.json — ใช้ผูกหมวดกับ "เนื้อรูป" แทนชื่อไฟล์"""
+    man = folder / "_categories.json"
+    if not man.exists():
+        return {}
+    try:
+        cat_map = json.loads(man.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    out = {}
+    for name, cat in cat_map.items():
+        f = folder / name
+        if f.is_file():
+            out[hashlib.sha1(f.read_bytes()).hexdigest()] = cat
+    return out
+
+
+def _rewrite_manifest(folder: Path, by_hash: dict):
+    """เขียน _categories.json ใหม่ให้คีย์ตรงกับชื่อไฟล์ปัจจุบัน (จับคู่ด้วย sha1)"""
+    if not by_hash:
+        return
+    new = {}
+    for f in folder.iterdir():
+        if f.is_file() and f.suffix.lower() in (".jpg", ".jpeg", ".png"):
+            cat = by_hash.get(hashlib.sha1(f.read_bytes()).hexdigest())
+            if cat:
+                new[f.name] = cat
+    if new:
+        (folder / "_categories.json").write_text(
+            json.dumps(new, ensure_ascii=False), encoding="utf-8")
+        log(f"   ✓ อัปเดต _categories.json ตามชื่อไฟล์ใหม่ ({len(new)} รูป)")
+
+
 def prepare_images(folder: Path, template: Path, threshold: float = 0.75):
     """หารูปที่ตรง template (รูปใบรับงาน) ตั้งเป็น 1.jpg
-    ที่เหลือไล่ชื่อ รูปรถประกัน2.jpg, 3, ... (ใช้ processing.process_images_pro)"""
+    ที่เหลือไล่ชื่อ รูปรถประกัน2.jpg, 3, ... (ใช้ processing.process_images_pro)
+
+    ⚠️ ขั้นนี้ "เปลี่ยนชื่อไฟล์" ซึ่งทำให้ _categories.json (คีย์เป็นชื่อไฟล์ตอนโหลด)
+    ใช้ไม่ได้ทั้งแผ่น → _group_flat_by_category จับคู่ไม่ได้สักรูป แล้วเทรูปทั้งกอง
+    ลงถังกลาง "รูปประกอบ" (เจอจริงกับเคลม 2026013147939: INS 10 รูปที่ควรเป็น
+    "รูปรถประกัน" ไปอยู่ "รูปประกอบ" หมด) — จึงผูกหมวดด้วย sha1 ของเนื้อไฟล์
+    ก่อน rename แล้วเขียน manifest กลับหลัง rename"""
     log(f"จัดชื่อรูปด้วย template matching (threshold {threshold})")
+    by_hash = _manifest_by_hash(Path(folder))
     process_images_pro(str(folder), str(template), threshold=threshold)
+    _rewrite_manifest(Path(folder), by_hash)
 
 
 # ------------------------------------------------------------------ zip export
