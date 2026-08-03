@@ -312,6 +312,25 @@ def emit_ts(spec: list, out: Path) -> dict:
                              "emcsId": cid, "fn": fn})
             per += sum(len(x) for x in v["per_insurer"].values())
 
+    # ช่องบังคับ "เฉพาะบางบริษัท" — ตอนตรวจงานเรารู้บริษัทแล้ว จึงใช้ได้
+    # (ตอนอัปโหลดไฟล์ยังไม่รู้ จึงเอามาเตือนไม่ได้)
+    per_rows = {}
+    for f in spec:
+        for v in f["validators"].values():
+            for code, fields in v["per_insurer"].items():
+                for cid, fld in fields.items():
+                    hit = look(cid)
+                    if not hit or cid in BOT_FILLS or fld["cond"]:
+                        continue
+                    block, tag = hit
+                    per_rows.setdefault(code, {})[tag] = (block, fld["label"] or cid, cid)
+
+    # ชื่อบริษัท → รหัส อ่านจาก dropdown จริงของ EMCS (ไม่ต้องพิมพ์มือ ไม่หลุดตามตารางบอท)
+    ins = {}
+    for f in spec:
+        for o in f["dropdowns"].get("ddlInsurerNameMajor", []):
+            ins.setdefault(o["value"], o["label"])
+
     body = ",\n".join(
         "  { tag: '%s', block: '%s', label: '%s', emcsId: '%s' }"
         % (r["tag"], r["block"], r["label"].replace("'", "\\'"), r["emcsId"]) for r in rows)
@@ -329,7 +348,22 @@ def emit_ts(spec: list, out: Path) -> dict:
         "  /** บล็อกที่ tag อยู่ */\n  block: 'REPORT' | 'CAR';\n"
         "  /** ป้ายบนหน้าจอ EMCS — ใช้เป็นข้อความเตือน */\n  label: string;\n"
         "  /** id ของช่องบนหน้า EMCS (ไว้ไล่ย้อน) */\n  emcsId: string;\n}\n\n"
-        "export const EMCS_REQUIRED: EmcsRequiredField[] = [\n" + body + ",\n];\n",
+        "export const EMCS_REQUIRED: EmcsRequiredField[] = [\n" + body + ",\n];\n\n"
+        "/** ชื่อบริษัทตาม dropdown ของ EMCS → รหัส (ddlInsurerNameMajor) */\n"
+        "export const EMCS_INSURER_CODE: Record<string, string> = {\n"
+        + "".join("  '%s': '%s',\n" % (lab.replace("'", "\\'"), code)
+                  for code, lab in sorted(ins.items(), key=lambda x: x[1]))
+        + "};\n\n"
+        "/** ช่องบังคับ 'เฉพาะบางบริษัท' — ใช้ตอนตรวจงานได้ เพราะรู้บริษัทแล้ว\n"
+        " *  (ตอนอัปโหลดไฟล์ยังไม่รู้ จึงใช้ไม่ได้) */\n"
+        "export const EMCS_REQUIRED_BY_INSURER: Record<string, EmcsRequiredField[]> = {\n"
+        + "".join(
+            "  '%s': [\n%s\n  ],\n" % (code, ",\n".join(
+                "    { tag: '%s', block: '%s', label: '%s', emcsId: '%s' }"
+                % (tag, b, lab.replace("'", "\\'"), cid)
+                for tag, (b, lab, cid) in sorted(r_.items())))
+            for code, r_ in sorted(per_rows.items()))
+        + "};\n",
         encoding="utf-8")
     return {"emitted": len(rows), "skipped": skipped, "conditional": cond,
             "per_insurer": per, "bot_fills": bot}
