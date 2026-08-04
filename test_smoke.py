@@ -1811,5 +1811,15 @@ check("code map: ระดับบาดเจ็บที่ไม่รู้
 check("ผู้บาดเจ็บ: รหัสผู้โดยสารรับทั้ง PV และ PR",
       emcs.PERSON_TYPE_MAP.get("PV") == "03" and emcs.PERSON_TYPE_MAP.get("PR") == "03")
 
+# ความสัมพันธ์ผู้ขับขี่คู่กรณี — 3 ต้นทางให้คนละรูปแบบ ต้องรับได้ทั้งคู่
+# XML ให้รหัส EMCS ตรง ๆ (<DRI_RELATION> 19 = ญาติ) · API ให้ชื่อ · scrape ไม่มีช่องนี้
+_ftp = _insp.getsource(emcs.fill_third_parties)
+check("คู่กรณี: relation_id (รหัส XML) เลือกด้วย select_by_value",
+      'tp.get("relation_id")' in _ftp and "select_by_value(_rel_id)" in _ftp)
+check("คู่กรณี: ไม่มีรหัส → ใช้ชื่อ (relation) แบบ fuzzy",
+      "elif _rel:" in _ftp and "fuzzy_select" in _ftp)
+check("XML: อ่าน DRI_RELATION ของคู่กรณีเข้า relation_id",
+      '"relation_id": _text(car, "DRI_RELATION")' in _insp.getsource(surv_xml))
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

@@ -345,9 +345,21 @@ def fill_third_parties(driver, data: ClaimData):
         # ทำให้ validation ฟ้อง 'ชื่อผู้ขับขี่รถคู่กรณี')
         drv_full = (tp.get("drv_name", "") or owner).strip()
         set_text(driver, p + "txtDri_Name", _dash(drv_full))
-        # ความสัมพันธ์ผู้ขับขี่กับเจ้าของรถ — แอปบังคับให้กรอก แต่เดิมไม่เคยถูกส่งเข้า EMCS
-        if str(tp.get("relation") or "").strip():
-            fuzzy_select(driver, p + "ddlDri_Relation_ID", tp["relation"],
+        # ความสัมพันธ์ผู้ขับขี่กับเจ้าของรถ — แต่ละต้นทางให้มาคนละรูปแบบ
+        #   XML  → รหัส EMCS ตรง ๆ (<DRI_RELATION> 19 = ญาติ) = เลือกด้วย value
+        #   API  → ชื่อ ('ญาติ') = เลือกด้วย fuzzy_select
+        #   scrape → ไม่มี (ฟอร์ม tab 4 ของ ISURVEY ไม่ได้ render ช่องนี้)
+        _rel_id = str(tp.get("relation_id") or "").strip()
+        _rel = str(tp.get("relation") or "").strip()
+        if _rel_id:
+            try:
+                Select(driver.find_element(By.ID, p + "ddlDri_Relation_ID")
+                       ).select_by_value(_rel_id)
+                log(f"   ✓ ความสัมพันธ์คู่กรณี {n + 1} (code {_rel_id})")
+            except Exception:
+                log(f"   ⚠️ เลือกความสัมพันธ์คู่กรณี {n + 1} (code {_rel_id}) ไม่ได้")
+        elif _rel:
+            fuzzy_select(driver, p + "ddlDri_Relation_ID", _rel,
                          label=f"ความสัมพันธ์คู่กรณี {n + 1}", timeout=5)
 
         # เพศ — ว่างจาก ISURVEY → อนุมานจากคำนำหน้าในชื่อผู้ขับขี่ (fallback)

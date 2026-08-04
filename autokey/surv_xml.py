@@ -52,6 +52,10 @@ def parse_surv_report(path) -> dict:
             "engine_no": _text(car, "ENGINENO"),
             "veh_type_code": _text(car, "CTYPECODE"),
             "drv_name": _text(car, "DRI_NAME"),
+            # ความสัมพันธ์ผู้ขับขี่กับเจ้าของรถ — XML ให้มาเป็น "รหัส EMCS" ตรง ๆ
+            # (19 = ญาติ, 13 = เจ้าของรถ) ต่างจากฝั่ง API ที่ให้เป็นชื่อ
+            # เดิมไม่ได้อ่านเลย ช่อง ddlDri_Relation_ID จึงว่างทุกเคสที่มาทางนี้
+            "relation_id": _text(car, "DRI_RELATION"),
             "gender": _text(car, "DRI_GENDER"),
             "age": _text(car, "DRI_AGE"),
             "birthdate": _text(car, "DRI_BIRTHDAY"),
