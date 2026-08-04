@@ -1652,8 +1652,16 @@ _cmd, _e = _webui._build_cmd({"claims": "2026013041465", "claimmode": "dry"})
 check("build_cmd dry: ไม่มี --allow-fresh/--scrape",
       _e is None and "--allow-fresh" not in _cmd and "--scrape" not in _cmd)
 _cmd, _e = _webui._build_cmd({"claims": "2026013041465", "claimmode": "fresh"})
-check("build_cmd fresh: มี --allow-fresh + --scrape",
-      _e is None and "--allow-fresh" in _cmd and "--scrape" in _cmd)
+# ไม่บังคับ --scrape แล้ว: API อ่าน tab-4/5/6 ครบทุกประเภทเคลม และครบทุกรายการ
+# (--allow-fresh เป็น no-op แล้วเช่นกัน แต่คงส่งไว้ให้เข้ากันได้กับของเดิม)
+check("build_cmd fresh: มี --allow-fresh และไม่บังคับ --scrape",
+      _e is None and "--allow-fresh" in _cmd and "--scrape" not in _cmd)
+# ค่าที่ผู้ใช้เลือกจากแผง 🔍 ตรวจ ต้องไหลไปเป็น flag ของ main.py
+_cmd, _e = _webui._build_cmd({"claims": "2026013041465",
+                              "losstype": "ชนคู่กรณีเสียหาย", "drivertitle": "นาย"})
+check("build_cmd: ส่งค่าที่เลือกจากแผงตรวจเป็น --loss-type / --driver-title",
+      _e is None and _cmd[_cmd.index("--loss-type") + 1] == "ชนคู่กรณีเสียหาย"
+      and _cmd[_cmd.index("--driver-title") + 1] == "นาย")
 _cmd, _e = _webui._build_cmd({"claims": "2026013041465"})
 check("build_cmd ไม่ระบุโหมด: = เคลมแห้ง (ไม่ allow-fresh)",
       _e is None and "--allow-fresh" not in _cmd)
