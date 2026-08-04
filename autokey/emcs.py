@@ -54,6 +54,7 @@ from .claim_data import (  # noqa: F401
     title_from_gender_age,
 )
 from .images import ZIP_CAT_TO_EMCS, list_images
+from .loss_type_map import loss_type_from_acc_type
 
 
 def _dash(v):
@@ -146,17 +147,19 @@ def _plate(s: str) -> str:
 def resolve_loss_type(data, requested: str) -> str:
     """เลือกค่า 'ลักษณะความเสียหาย' (ddlLoss_ID) เมื่อ requested='auto'
 
-    ISURVEY **ไม่มี**ข้อมูล 'ลักษณะความเสียหาย' (มีแต่ 'ลักษณะการเกิดเหตุ'
-    = acc_type_desc และ 'ผลคดี' = acc_result) — จึงเดาให้ไม่ได้สำหรับเคลมสด
+    ISURVEY ไม่มีช่องนี้ตรง ๆ แต่มี 'ลักษณะการเกิดเหตุ' (acc_type_desc) ซึ่ง
+    ละเอียดกว่าและบอกทิศอยู่ในตัวคำ ('เฉี่ยว/เบียดคู่กรณี' = เราชน vs
+    'คู่กรณีเฉี่ยวชน' = เขาชน) → แปลงได้ 34/58 รายการ (ดู loss_type_map.py)
+    - ระบุเอง (--loss-type) → ใช้ตามนั้น
     - ไม่มีคู่กรณี (เคลมแห้ง) → 'เคลมแห้ง' (โครงสร้างเคลมระบุได้แน่นอน ไม่ใช่การเดา)
-    - มีคู่กรณี (เคลมสด) → '' : ไม่มีข้อมูลต้นทาง → fill_accident หยุดรอผู้ใช้เลือกเอง
-      บนหน้า EMCS (รูปแบบเดียวกับ field บังคับอื่น เช่น ยี่ห้อ/มีประกันภัยที่)
-    - ระบุเอง (--loss-type) → ใช้ตามนั้น"""
+      **จงใจไม่เอาตารางมาทับ** — พฤติกรรมนี้ใช้จริง/verify มานาน ถ้าจะเปลี่ยนต้องให้ user ตัดสิน
+    - มีคู่กรณี → ลองตาราง; แปลงไม่ได้ → '' : fill_accident หยุดรอผู้ใช้เลือกเอง
+      บนหน้า EMCS (รูปแบบเดียวกับ field บังคับอื่น เช่น ยี่ห้อ/มีประกันภัยที่)"""
     if requested != "auto":
         return requested
     if not data.third_parties:
         return "เคลมแห้ง"
-    return ""
+    return loss_type_from_acc_type(data.acc_type_desc)
 
 
 def _is_displayed(driver, elem_id) -> bool:

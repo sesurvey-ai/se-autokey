@@ -16,7 +16,8 @@ def check(name, cond, detail=""):
 
 
 # ---- 1. import ทุกโมดูล ----
-from autokey import browser, claim_data, config, emcs, images, isurvey  # noqa: E402
+from autokey import (browser, claim_data, config, emcs, images,  # noqa: E402
+                     isurvey, loss_type_map)
 from autokey.processing import process_images_pro, natural_sort_key  # noqa: E402
 check("import ทุกโมดูลใน autokey", True)
 
@@ -560,15 +561,45 @@ _tp_both = claim_data.ClaimData(
     acc_result="รถประกันเป็นฝ่ายถูกและผิด", third_parties=[{"plate_no": "x"}])
 check("loss auto: เคลมแห้ง (ไม่มีคู่กรณี)",
       emcs.resolve_loss_type(_dry, "auto") == "เคลมแห้ง")
-# เคลมสด (มีคู่กรณี): ISURVEY ไม่มีข้อมูลลักษณะความเสียหาย → '' เสมอ (หยุดรอคนเลือก)
-check("loss auto: มีคู่กรณี+ประกันผิด → '' (คนเลือกเอง)",
+# มีคู่กรณีแต่ไม่มี 'ลักษณะการเกิดเหตุ' ให้แปลง → '' (หยุดรอคนเลือก)
+check("loss auto: มีคู่กรณี+ไม่มีลักษณะการเกิดเหตุ → '' (คนเลือกเอง)",
       emcs.resolve_loss_type(_tp_we_wrong, "auto") == "")
-check("loss auto: มีคู่กรณี+คู่กรณีผิด → '' (คนเลือกเอง)",
-      emcs.resolve_loss_type(_tp_they_wrong, "auto") == "")
-check("loss auto: มีคู่กรณี+ก้ำกึ่ง → '' (คนเลือกเอง)",
-      emcs.resolve_loss_type(_tp_both, "auto") == "")
 check("loss ระบุเองไม่ถูกทับ",
       emcs.resolve_loss_type(_tp_both, "เคลมแห้ง") == "เคลมแห้ง")
+
+# ---- 11b. ตารางแปลง ลักษณะการเกิดเหตุ (ISURVEY) → ลักษณะความเสียหาย (EMCS) ----
+# ทิศอยู่ในตัวคำ ไม่ต้องพึ่งผลคดี: 'เฉี่ยว/เบียดคู่กรณี'=เราชน / 'คู่กรณีเฉี่ยวชน'=เขาชน
+_tp = [{"plate_no": "x"}]
+check("loss map: 'เฉี่ยว/เบียดคู่กรณี' → ชนคู่กรณีเสียหาย (เราชนเขา)",
+      emcs.resolve_loss_type(claim_data.ClaimData(
+          third_parties=_tp, acc_type_desc="เฉี่ยว/เบียดคู่กรณี"),
+          "auto") == "ชนคู่กรณีเสียหาย")
+check("loss map: 'คู่กรณีเฉี่ยวชน' → ถูกคู่กรณีชน (เขาชนเรา)",
+      emcs.resolve_loss_type(claim_data.ClaimData(
+          third_parties=_tp, acc_type_desc="คู่กรณีเฉี่ยวชน"),
+          "auto") == "ถูกคู่กรณีชน")
+check("loss map: ผลคดีไม่มีผลกับการแปลง (ทิศมาจากตัวคำ)",
+      emcs.resolve_loss_type(claim_data.ClaimData(
+          third_parties=_tp, acc_type_desc="คู่กรณีเฉี่ยวชน",
+          acc_result="รถประกันเป็นฝ่ายผิด"), "auto") == "ถูกคู่กรณีชน")
+check("loss map: คำกำกวม ('ชนคู่กรณีและถูกชน') → '' ไม่เดา",
+      emcs.resolve_loss_type(claim_data.ClaimData(
+          third_parties=_tp, acc_type_desc="ชนคู่กรณีและถูกชน"), "auto") == "")
+check("loss map: คำที่ไม่รู้จัก → '' ไม่เดา",
+      loss_type_map.loss_type_from_acc_type("อะไรก็ไม่รู้") == ""
+      and loss_type_map.loss_type_from_acc_type("") == "")
+# ค่าปลายทางต้องเป็นป้ายจริงของ ddlLoss_ID เท่านั้น — พิมพ์ผิด = fuzzy ไม่ติดแบบเงียบ
+check("loss map: ค่าที่แปลงออกมาอยู่ในตัวเลือกจริงของ EMCS ทุกตัว",
+      all(v in loss_type_map.EMCS_LOSS_TYPES
+          for v in loss_type_map.ACC_TYPE_TO_LOSS.values()))
+check("loss map: ไม่มีคำซ้ำระหว่าง 'แปลงได้' กับ 'จงใจไม่แปลง'",
+      not (set(loss_type_map.ACC_TYPE_TO_LOSS)
+           & set(loss_type_map.ACC_TYPE_UNMAPPED)))
+# master ของ ISURVEY มี 58 รายการ — ตารางต้องครอบคลุมครบ (แปลงได้ 34 + จงใจไม่แปลง 24)
+check("loss map: ครอบคลุม masterAccType ครบ 58 รายการ",
+      len(loss_type_map.ACC_TYPE_TO_LOSS)
+      + len(loss_type_map.ACC_TYPE_UNMAPPED) == 58,
+      f"{len(loss_type_map.ACC_TYPE_TO_LOSS)}+{len(loss_type_map.ACC_TYPE_UNMAPPED)}")
 
 # ---- 12. parser ค่าสำรวจ (bill) ----
 bill_xmls = list(pathlib.Path("runs/xml").glob("2026013043395_*.txt"))
