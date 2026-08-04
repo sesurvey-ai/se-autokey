@@ -994,7 +994,8 @@ def _run_save_main(alerts, is_new, answered=False, click_ok=True):
     emcs.accept_alert = _alert
     emcs.wait_for_manual_fill = _manual
     emcs._refill_missing_fields = lambda d, data, txt: False
-    emcs._diagnose_save_click = lambda d: "validForm() คืน false โดยไม่บอกเหตุผล"
+    emcs._diagnose_save_click = (
+        lambda d, bid="": "validForm() คืน false โดยไม่บอกเหตุผล")
     emcs.WebDriverWait = _NeverReady
     emcs._click_save_button = _click
     try:
@@ -1032,6 +1033,25 @@ check("save_main: คลิกไม่ติด → ลองกดใหม่
 check("save_main: คลิกไม่ติด → เหตุผลบอกว่า 'กดปุ่มบันทึกไม่ติด' ไม่ใช่ validation เปล่า",
       isinstance(_out4, RuntimeError) and "กดปุ่มบันทึกไม่ติด" in str(_out4),
       str(_out4)[:80])
+
+
+# _report_visible_buttons: จับ "บอทกดผิดปุ่ม" — EMCS เปลี่ยนชุดปุ่มตามสถานะเรื่อง
+# (สร้างใหม่ = บันทึก/บันทึกฉบับร่าง · บันทึกแล้ว = ยกเลิก/แก้ไข)
+class _JSDriver:
+    def __init__(self, buttons):
+        self._b = buttons
+    def execute_script(self, script, *a):
+        return self._b
+
+_btns_edit = [{"id": "btnCancel", "label": "ยกเลิก", "disabled": False, "onclick": True},
+              {"id": "btnUpdate", "label": "แก้ไข", "disabled": False, "onclick": True}]
+check("ปุ่ม: บอทกด id ที่อยู่ในชุดปุ่มจริง → ไม่ฟ้องว่ากดผิดปุ่ม",
+      emcs._report_visible_buttons(_JSDriver(_btns_edit), "btnUpdate") == "")
+_msg = emcs._report_visible_buttons(_JSDriver(_btns_edit), "btnSave")
+check("ปุ่ม: บอทกด id ที่ไม่มีในชุดปุ่มของสถานะนี้ → บอกว่ากดผิดปุ่ม + ลิสต์ปุ่มจริง",
+      "กดผิดปุ่ม" in _msg and "แก้ไข" in _msg, _msg[:90])
+check("ปุ่ม: อ่านปุ่มไม่ได้/ไม่มีปุ่มเลย → ไม่เดา (คืนค่าว่าง)",
+      emcs._report_visible_buttons(_JSDriver([]), "btnSave") == "")
 
 # ---- 22c. ยี่ห้อรถ ไทย→อังกฤษ + guard กันเลือก placeholder ('-- ระบุ --') ----
 # เคส #104 (จริง): ตัวเลือก ddlCMFG ของ EMCS เป็นอังกฤษล้วน แต่ se-survey ส่ง 'เอ็มจี'

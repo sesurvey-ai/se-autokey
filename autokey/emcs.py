@@ -1903,7 +1903,46 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
     return False
 
 
-def _diagnose_save_click(driver) -> str:
+_JS_VISIBLE_BUTTONS = """
+return Array.prototype.slice.call(document.querySelectorAll(
+    'input[type=submit],input[type=button],button,input[type=image]'))
+  .filter(function(e){ return e.offsetParent !== null; })
+  .map(function(e){ return {
+      id: e.id || '(ไม่มี id)',
+      label: ((e.value || e.textContent || e.alt || '') + '').trim().slice(0, 40),
+      disabled: !!e.disabled,
+      onclick: !!(e.getAttribute('onclick'))
+  }; });
+"""
+
+
+def _report_visible_buttons(driver, button_id: str = "") -> str:
+    """ลิสต์ปุ่มที่ 'มองเห็นจริง' บนหน้า EMCS ตอนนี้ + สถานะของปุ่มที่บอทกด
+
+    EMCS เปลี่ยนชุดปุ่มตามสถานะเรื่อง (สร้างใหม่ = บันทึก/บันทึกฉบับร่าง,
+    บันทึกแล้ว = ยกเลิก/แก้ไข) ถ้าบอทกด id ที่ยังอยู่ใน DOM แต่ไม่ใช่ปุ่มที่ใช้งาน
+    จริงในสถานะนั้น จะเงียบสนิทแบบหาสาเหตุไม่เจอ — ลิสต์นี้ทำให้เห็นทันที"""
+    try:
+        btns = driver.execute_script(_JS_VISIBLE_BUTTONS) or []
+    except Exception as e:
+        return f"อ่านรายการปุ่มบนหน้าไม่ได้ ({type(e).__name__})"
+    if not btns:
+        return ""
+    log("   ปุ่มที่มองเห็นบนหน้า EMCS ตอนนี้:")
+    for b in btns[:25]:
+        mark = " ← ปุ่มที่บอทกด" if b.get("id") == button_id else ""
+        state = "ปิดอยู่" if b.get("disabled") else "กดได้"
+        log(f"     · {b.get('id')} = '{b.get('label')}' ({state})"
+            f"{'' if b.get('onclick') else ' [ไม่มี onclick]'}{mark}")
+    ids = [b.get("id") for b in btns]
+    if button_id and button_id not in ids:
+        return (f"ปุ่ม {button_id} ไม่ได้อยู่ในชุดปุ่มที่ใช้งานได้ของสถานะนี้ "
+                f"(หน้าโชว์: {', '.join(repr(b.get('label')) for b in btns[:6])}) "
+                "— บอทกดผิดปุ่ม")
+    return ""
+
+
+def _diagnose_save_click(driver, button_id: str = "") -> str:
     """หาเหตุผลที่กดปุ่มบันทึกแล้ว EMCS เงียบสนิท (ไม่มีทั้ง alert และ postback)
 
     onclick ของ btnSave คือ
@@ -1917,6 +1956,12 @@ def _diagnose_save_click(driver) -> str:
     เรียก validForm() เองแล้วเก็บผล/ข้อความ error มาบอก — ถ้ามันเด้ง alert ตอนเรียก
     ก็ยิ่งดี เพราะนั่นคือข้อความ validation ที่เราอยากได้ตั้งแต่แรก
     คืนข้อความอธิบาย ('' = บอกไม่ได้)"""
+    # 1) กดผิดปุ่มหรือเปล่า — เช็คก่อนอย่างอื่น เพราะถ้าใช่ ที่เหลือไม่ต้องเดาแล้ว
+    wrong = _report_visible_buttons(driver, button_id)
+    if wrong:
+        return wrong
+
+    # 2) validForm() ว่ายังไง
     res, err = None, ""
     try:
         res = driver.execute_script(
@@ -1937,6 +1982,11 @@ def _diagnose_save_click(driver) -> str:
                 "ฟอร์มนี้ไม่มีช่องที่สคริปต์ EMCS อ้างถึง กรอก/บันทึกเองบนหน้าจอ")
     if isinstance(res, dict) and res.get("ok") is False:
         return "validForm() คืน false โดยไม่บอกเหตุผล — ตรวจช่องดอกจันแดงบนหน้าจอ"
+    if isinstance(res, dict) and res.get("ok") is True:
+        # validForm ผ่านตอนเราเรียกเอง แต่กดปุ่มแล้วไม่เกิดอะไร = ปัญหาอยู่ที่การกด
+        # ไม่ใช่ข้อมูล (verify: คนกดปุ่มเดียวกันบนหน้าเดียวกันแล้วผ่าน — 2026013059072)
+        return ("validForm() ผ่านตอนเรียกเอง แต่กดปุ่มแล้วไม่มีอะไรเกิดขึ้น — "
+                "ปัญหาอยู่ที่การกดปุ่ม ไม่ใช่ข้อมูลไม่ครบ (ลองกดปุ่มเองบนหน้าจอ)")
     return ""
 
 
@@ -1977,7 +2027,7 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
                 # ตกลงมาที่ "หยุดรอคนกรอก" เหมือน validation ปกติ (เคลม 2026013059072)
                 log("   ⚠️ กดบันทึกแล้ว EMCS เงียบ ไม่มี alert ตอบกลับ — ปุ่มถูก "
                     "validForm() ฝั่ง JS ปัดตก (ไม่ยิง postback)")
-                _why = _diagnose_save_click(driver)
+                _why = _diagnose_save_click(driver, button_id)
                 if _why:
                     log(f"   ↳ {_why}")
                     alert_text = _why
