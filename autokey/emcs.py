@@ -44,6 +44,7 @@ from .car_brand import BRAND_MIN_SCORE, normalize_brand
 # ไว้ที่นี่เพื่อให้ผู้เรียกเดิม (main.py, webui.py, test_smoke.py) ไม่ต้องแก้
 from .claim_data import (  # noqa: F401
     CHILD_TITLE_AGE,
+    DRY_CLAIM_TYPE,
     THAI_TITLES,
     TITLE_GENDER,
     WEAK_TITLES,
@@ -150,16 +151,26 @@ def resolve_loss_type(data, requested: str) -> str:
     ISURVEY ไม่มีช่องนี้ตรง ๆ แต่มี 'ลักษณะการเกิดเหตุ' (acc_type_desc) ซึ่ง
     ละเอียดกว่าและบอกทิศอยู่ในตัวคำ ('เฉี่ยว/เบียดคู่กรณี' = เราชน vs
     'คู่กรณีเฉี่ยวชน' = เขาชน) → แปลงได้ 34/58 รายการ (ดู loss_type_map.py)
+    ลำดับ:
     - ระบุเอง (--loss-type) → ใช้ตามนั้น
-    - ไม่มีคู่กรณี (เคลมแห้ง) → 'เคลมแห้ง' (โครงสร้างเคลมระบุได้แน่นอน ไม่ใช่การเดา)
-      **จงใจไม่เอาตารางมาทับ** — พฤติกรรมนี้ใช้จริง/verify มานาน ถ้าจะเปลี่ยนต้องให้ user ตัดสิน
-    - มีคู่กรณี → ลองตาราง; แปลงไม่ได้ → '' : fill_accident หยุดรอผู้ใช้เลือกเอง
-      บนหน้า EMCS (รูปแบบเดียวกับ field บังคับอื่น เช่น ยี่ห้อ/มีประกันภัยที่)"""
+    - **ประเภทเคลมของ ISURVEY = 'เคลมแห้ง'** (claim_MtypeID=2) → 'เคลมแห้ง'
+      เชื่อค่าที่ ISURVEY แจ้งมาเอง ไม่ใช่เดาจาก 'ไม่มีคู่กรณี' อย่างเดิม —
+      ตัวแทนนั้นพลาดได้ (เคลมสดที่ยังไม่ระบุคู่กรณี เช่น ชนแล้วหนี จะถูกมองเป็นเคลมแห้ง)
+    - ที่เหลือ (เคลมสด/ติดตาม/เจรจาสินไหม) → แปลงจาก 'ลักษณะการเกิดเหตุ'
+    - แปลงไม่ได้ → '' : fill_accident หยุดรอผู้ใช้เลือกเองบนหน้า EMCS
+      (รูปแบบเดียวกับ field บังคับอื่น เช่น ยี่ห้อ/มีประกันภัยที่)"""
     if requested != "auto":
         return requested
-    if not data.third_parties:
+    ct = (data.claim_type or "").strip().lstrip("0")
+    if ct == DRY_CLAIM_TYPE:
         return "เคลมแห้ง"
-    return loss_type_from_acc_type(data.acc_type_desc)
+    mapped = loss_type_from_acc_type(data.acc_type_desc)
+    if mapped:
+        return mapped
+    # ไม่รู้ประเภทเคลม (ข้อมูลเก่า/อ่านไม่ติด) → ถอยไปใช้เกณฑ์เดิม ไม่ให้แย่กว่าก่อนแก้
+    if not ct and not data.third_parties:
+        return "เคลมแห้ง"
+    return ""
 
 
 def _is_displayed(driver, elem_id) -> bool:

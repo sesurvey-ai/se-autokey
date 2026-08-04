@@ -559,13 +559,33 @@ _tp_they_wrong = claim_data.ClaimData(
     third_parties=[{"plate_no": "x"}])
 _tp_both = claim_data.ClaimData(
     acc_result="รถประกันเป็นฝ่ายถูกและผิด", third_parties=[{"plate_no": "x"}])
-check("loss auto: เคลมแห้ง (ไม่มีคู่กรณี)",
+check("loss auto: ไม่รู้ประเภทเคลม + ไม่มีคู่กรณี → เคลมแห้ง (เกณฑ์เดิม)",
       emcs.resolve_loss_type(_dry, "auto") == "เคลมแห้ง")
 # มีคู่กรณีแต่ไม่มี 'ลักษณะการเกิดเหตุ' ให้แปลง → '' (หยุดรอคนเลือก)
 check("loss auto: มีคู่กรณี+ไม่มีลักษณะการเกิดเหตุ → '' (คนเลือกเอง)",
       emcs.resolve_loss_type(_tp_we_wrong, "auto") == "")
 check("loss ระบุเองไม่ถูกทับ",
       emcs.resolve_loss_type(_tp_both, "เคลมแห้ง") == "เคลมแห้ง")
+
+# ประเภทเคลมที่ ISURVEY แจ้งมา (claim_MtypeID) ชนะการเดาจากจำนวนคู่กรณี
+check("loss: ประเภทเคลม='2' (เคลมแห้ง) → เคลมแห้ง แม้ลักษณะการเกิดเหตุแปลงได้",
+      emcs.resolve_loss_type(claim_data.ClaimData(
+          claim_type="2", acc_type_desc="ชนวัสดุ/สิ่งของ เช่น เสา,กำแพง,ประตู ฯลฯ"),
+          "auto") == "เคลมแห้ง")
+check("loss: เคลมสด ('1') ไม่มีคู่กรณี + แปลงได้ → ใช้ค่าที่แปลง ไม่ใช่ 'เคลมแห้ง'",
+      emcs.resolve_loss_type(claim_data.ClaimData(
+          claim_type="1", acc_type_desc="ถูกขูดขีด/กลั่นแกล้ง"),
+          "auto") == "ถูกขูดขีดกลั่นแกล้ง")
+check("loss: เคลมสด ไม่มีคู่กรณี + แปลงไม่ได้ → '' (ไม่เดาว่าเคลมแห้ง)",
+      emcs.resolve_loss_type(claim_data.ClaimData(
+          claim_type="1", acc_type_desc="ตกหลุม"), "auto") == "")
+check("loss: รหัสเติมศูนย์ ('02') อ่านได้เหมือน '2'",
+      emcs.resolve_loss_type(claim_data.ClaimData(claim_type="02"),
+                             "auto") == "เคลมแห้ง")
+# ป้ายประเภทเคลมต้องตรง master จริง (masterClaimMType) — 03/04 เคยใส่ผิด
+check("ประเภทเคลม: ป้ายตรง master ISURVEY (1 เคลมสด/2 เคลมแห้ง/3 ติดตาม/4 เจรจาสินไหม)",
+      [claim_data.ClaimData(claim_type=c).claim_type_name()
+       for c in "1234"] == ["เคลมสด", "เคลมแห้ง", "ติดตาม", "เจรจาสินไหม"])
 
 # ---- 11b. ตารางแปลง ลักษณะการเกิดเหตุ (ISURVEY) → ลักษณะความเสียหาย (EMCS) ----
 # ทิศอยู่ในตัวคำ ไม่ต้องพึ่งผลคดี: 'เฉี่ยว/เบียดคู่กรณี'=เราชน / 'คู่กรณีเฉี่ยวชน'=เขาชน
@@ -622,8 +642,8 @@ check("type 2 ไม่มีคู่กรณี = เคลมแห้งแ
       _dry2.fresh_claim_note() == "")
 check("type 1 = บล็อก (เคลมสด)",
       "เคลมสด" in _fresh1.fresh_claim_note())
-check("type 3 = บล็อก (เคลมนัดหมาย)",
-      "เคลมนัดหมาย" in _appt3.fresh_claim_note())
+check("type 3 = บล็อก (ติดตาม — ป้ายตาม masterClaimMType ไม่ใช่ 'เคลมนัดหมาย')",
+      "ติดตาม" in _appt3.fresh_claim_note())
 check("type 2 แต่มีคู่กรณี = บล็อก (กันข้อมูลเพี้ยน)",
       "คู่กรณี" in _dry2_tp.fresh_claim_note())
 

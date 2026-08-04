@@ -31,8 +31,14 @@ FIELD_LABELS = {
 }
 
 # ประเภทเคลมของ ISURVEY → ชื่อ (ตรงกับ radio ฟอร์ม EMCS index = type-1)
+# ประเภทเคลม = claim_MtypeID ของ ISURVEY — ป้ายยกมาจาก master จริง
+# (list/masterClaimMType.php: 01 เคลมสด / 02 เคลมแห้ง / 03 ติดตาม / 04 เจรจาสินไหม)
+# ISURVEY ส่งรหัสมาแบบไม่เติมศูนย์ ('1','2') จึง key ด้วยเลขล้วน
+# หมายเหตุ: อย่าสับสนกับ claim_typeID (masterClaimType: 01 ส่งพนักงาน / 02 เคลมแห้ง)
+# ซึ่งคือ "ประเภทการจ่าย" เก็บที่ field pay_type
 CLAIM_TYPE_NAMES = {"1": "เคลมสด", "2": "เคลมแห้ง",
-                    "3": "เคลมนัดหมาย", "4": "งานติดตาม"}
+                    "3": "ติดตาม", "4": "เจรจาสินไหม"}
+DRY_CLAIM_TYPE = "2"        # เคลมแห้ง
 
 # field ที่ EMCS ต้องใช้จริง — ถ้าว่างถือว่าผิดปกติ ต้องให้คนตรวจ
 CRITICAL_FIELDS = {
@@ -149,7 +155,7 @@ class ClaimData:
     invoice_value: str = ""        # เลขเซอร์เวย์
     notify_value: str = ""         # เลขรับแจ้ง
     policy_value: str = ""         # เลขกรมธรรม์
-    claim_type: str = ""           # ประเภทเคลม (1-4)
+    claim_type: str = ""           # ประเภทเคลม = claim_MtypeID (ดู CLAIM_TYPE_NAMES)
     pay_type: str = ""             # ประเภทการจ่าย (เช่น ส่งพนักงาน)
     third_party_condition: str = ""  # เงื่อนไขฝ่ายถูก
     branch: str = ""               # ศูนย์
@@ -362,7 +368,7 @@ class ClaimData:
 
     # ------------------------------------------------------------------
     def claim_type_name(self) -> str:
-        t = self.claim_type.strip()
+        t = self.claim_type.strip().lstrip("0")
         return CLAIM_TYPE_NAMES.get(t, f"ไม่ทราบประเภท ({t or 'ว่าง'})")
 
     def fresh_claim_note(self) -> str:
@@ -372,7 +378,7 @@ class ClaimData:
         (เดิมชื่อ dry_claim_block_reason ใช้หยุดไม่ให้กรอกเคลมสด เพราะตอนนั้น
         API อ่าน tab-4/5/6 ไม่ได้ → คู่กรณีหายเงียบ ๆ. แก้ที่ต้นเหตุแล้ว
         2026-08-03: อ่านครบทุกประเภทเคลม ด่านจึงไม่มีเหตุผลให้อยู่ต่อ)"""
-        if self.claim_type.strip() != "2":
+        if self.claim_type.strip().lstrip("0") != DRY_CLAIM_TYPE:
             return f"ประเภทเคลม = {self.claim_type_name()} (ไม่ใช่เคลมแห้ง)"
         if self.third_parties or self.injuries or self.assets:
             return (f"มีคู่กรณี {len(self.third_parties)} / ผู้บาดเจ็บ "
