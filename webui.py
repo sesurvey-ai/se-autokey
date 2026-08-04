@@ -139,6 +139,72 @@ def fetch_isurvey_cases(date_from: str = "", date_to: str = "",
         return None, f"อ่านรายการจาก ISURVEY ไม่ได้: {type(e).__name__}: {e}"
 
 
+def check_sesurvey_case(case_id: str):
+    """ตรวจก่อนนำเข้าฝั่ง se-survey — คืน (ผลตรวจ, error)
+
+    ต่างจากฝั่ง ISURVEY: ที่นี่ข้อมูลมาจากแอปมือถือซึ่งฟิลด์ตรง EMCS เกือบหมด
+    (ลักษณะความเสียหาย/คำนำหน้ามาครบ) จึงไม่ต้องให้เลือกค่าบนหน้าเว็บ —
+    สิ่งที่พลาดได้คือ "ดึงของไม่ครบ" (XML/report ดึงไม่ได้, ไม่มีความเสียหาย ฯลฯ)
+
+    ตรวจจาก XML + report ของจริง **ไม่เปิด Chrome ไม่แตะ EMCS** — เร็วกว่ารัน dry-run
+    แล้วไล่อ่าน log เอง (ซึ่งเป็นวิธีเดิม)
+    """
+    import importlib
+    xml_bytes, err = fetch_sesurvey_xml(case_id)
+    if err:
+        return None, f"ดึง XML ไม่ได้: {err}"
+
+    warnings, blockers = [], []
+    counts = {"opponents": 0, "injuries": 0, "assets": 0, "damage": 0}
+    try:
+        import tempfile
+        from autokey.surv_xml import parse_surv_report
+        with tempfile.NamedTemporaryFile("wb", suffix=".txt", delete=False) as f:
+            f.write(xml_bytes)
+            tmp = f.name
+        parsed = parse_surv_report(tmp)
+        Path(tmp).unlink(missing_ok=True)
+        counts["opponents"] = len(parsed.get("third_parties") or [])
+        counts["injuries"] = len(parsed.get("injuries") or [])
+        counts["assets"] = len(parsed.get("assets") or [])
+    except Exception as e:
+        blockers.append(f"อ่านไฟล์ XML ไม่ได้ ({type(e).__name__}) — เคสนี้ยังนำเข้าไม่ได้")
+
+    # report = ค่าไทยที่ fill_* ต้องใช้เลือก dropdown บังคับของ EMCS
+    # (ประเภทรถ/จังหวัด/ยี่ห้อ/คำนำหน้า/ลักษณะความเสียหาย) — ขาดแล้วบอทจะหยุดรอกลางทาง
+    info = {}
+    try:
+        url, token = _sesurvey_cfg()
+        req = urllib.request.Request(f"{url}/api/integrations/cases/{case_id}/report",
+                                     headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            rep = (json.loads(resp.read().decode("utf-8")).get("data") or {})
+        _main = importlib.import_module("main")
+        from autokey.claim_data import ClaimData
+        d = ClaimData()
+        loss_type = _main._populate_claim_from_report(d, rep)
+        counts["damage"] = len(d.damage or [])
+        info = {"loss_type": loss_type, "severity": str(rep.get("damage_level") or "").strip(),
+                "car_type": d.prb_car_type, "acc_province": d.acc_province,
+                "driver_title": d.driver_title, "claim_no": d.claim_value or rep.get("claim_no", ""),
+                "survey_no": d.invoice_value or rep.get("survey_job_no", "")}
+        for label, val in (("ลักษณะความเสียหาย", loss_type), ("ประเภทรถ", d.prb_car_type),
+                           ("จังหวัดที่เกิดเหตุ", d.acc_province)):
+            if not str(val or "").strip() or str(val).strip() == "auto":
+                blockers.append(f"{label} ว่าง — EMCS บังคับ บอทจะหยุดรอกรอกเองกลางทาง")
+        if not str(d.driver_title or "").strip():
+            warnings.append("ไม่มีคำนำหน้าผู้ขับขี่ (บอทจะลองอนุมานจากชื่อผู้เอาประกัน)")
+    except Exception as e:
+        blockers.append(f"ดึง report ของเคสไม่ได้ ({type(e).__name__}) — "
+                        "ค่าไทยของ dropdown บังคับจะขาด")
+
+    if counts["damage"] == 0:
+        warnings.append("ไม่มีรายการความเสียหาย")
+    return {"case_id": str(case_id), "counts": counts, "info": info,
+            "blockers": blockers, "warnings": warnings,
+            "ready": not blockers}, None
+
+
 def _spec_options(dropdown_id: str) -> list:
     """ตัวเลือกจริงของ dropdown EMCS จาก runs/emcs_spec.json — [] ถ้ายังไม่ได้สกัดสเปก"""
     try:
@@ -684,6 +750,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(502, {"error": err})
             else:
                 self._send(200, {"cases": cases})
+        elif u.path == "/sesurvey-check":
+            cid = ((parse_qs(u.query).get("case_id") or [""])[0]).strip()
+            case_id, rerr = resolve_case_ref(cid)
+            if rerr:
+                self._send(400, {"error": rerr})
+            else:
+                res, err = check_sesurvey_case(case_id)
+                self._send(502 if err else 200, {"error": err} if err else res)
         elif u.path == "/isurvey-check":
             q = parse_qs(u.query)
             claim = ((q.get("claim") or [""])[0]).strip()
@@ -991,6 +1065,15 @@ PAGE = r"""<!doctype html>
         <button class="run" id="serunbtn" style="padding:11px 14px">⚡ นำเข้า</button>
         <button class="run" id="sedrybtn" style="padding:11px 14px;background:#64748b" title="ดึง+ตรวจ XML+รูป แล้วหยุด ไม่แตะ EMCS">🧪 ทดสอบ</button>
       </div>
+      <div id="setoolbar" hidden style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 2px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="seall"> เลือกทั้งหมด
+        </label>
+        <span id="secount" style="color:var(--muted);font-size:13px"></span>
+        <button class="run" id="sechkall" style="margin-left:auto;padding:7px 12px;font-size:13px;background:#64748b">🔍 ตรวจที่เลือก</button>
+        <button class="run" id="serunall" style="padding:7px 12px;font-size:13px">⚡ นำเข้าที่เลือก</button>
+      </div>
+      <div id="sequeue" hidden style="margin:8px 0;padding:8px 10px;border-radius:8px;background:#0f172a11;font-size:13px"></div>
       <div id="secasesbox" class="caselist" style="margin-top:12px"></div>
       <div class="note" style="margin-top:12px">
         • ต้องตั้ง <b>SESURVEY_API_TOKEN</b> ใน .env ให้ตรงกับ INTEGRATION_TOKEN ของ server<br>
@@ -1552,14 +1635,20 @@ function renderSeCasesFromCache(){
       act = '<button class="run seact" data-id="'+id+'" data-claim="'+claim+'" data-mode="import" data-live="1">⚡ นำเข้า EMCS</button>'
           + '<button class="run seact" data-id="'+id+'" data-claim="'+claim+'" data-mode="import" style="background:#64748b" title="ดึง+ตรวจ ไม่แตะ EMCS">🧪 ทดสอบ</button>';
     }
+    if (!imported) act = '<button class="run sechk" data-id="'+id+'" style="background:#64748b">🔍 ตรวจ</button>' + act;
     act += '<button class="xmlbtn" data-id="'+id+'" style="background:transparent;color:var(--muted);border:1px solid var(--line)" title="ดาวน์โหลด XML (.txt) ไป import EMCS เอง — สำรอง">📄 XML</button>';
     return '<div class="case-item">'
       + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">'
-      +   '<span class="case-sv">'+escHtml(c.survey_job_no||"(ไม่มีเลขเซอร์เวย์)")+'</span>'+statusBadge
+      +   '<span style="display:flex;align-items:center;gap:8px;min-width:0">'
+      +     '<input type="checkbox" class="sesel"' + (imported ? ' disabled' : '')
+      +       ' data-id="'+id+'" data-claim="'+claim+'">'
+      +     '<span class="case-sv">'+escHtml(c.survey_job_no||"(ไม่มีเลขเซอร์เวย์)")+'</span>'
+      +   '</span>'+statusBadge
       + '</div>'
       + '<div class="case-claim">'+escHtml(c.claim_no||"-")+'</div>'
       + '<div class="case-meta">'+escHtml(c.insurance_company||"-")+' · '+escHtml(who)+'</div>'
       + '<div class="case-btns">'+act+'</div>'
+      + '<div class="sepanel" data-for="'+id+'" hidden style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#0f172a11;font-size:12.5px"></div>'
       + '</div>';
   }).join("");
   seCasesBox.querySelectorAll(".seact").forEach(b => {
@@ -1568,7 +1657,104 @@ function renderSeCasesFromCache(){
   seCasesBox.querySelectorAll(".xmlbtn").forEach(b => {
     b.addEventListener("click", () => downloadXml(b.dataset.id));
   });
+  seCasesBox.querySelectorAll(".sechk").forEach(b => {
+    b.addEventListener("click", () => checkSeCase(b.dataset.id));
+  });
+  seCasesBox.querySelectorAll(".sesel").forEach(c => c.addEventListener("change", updateSeCount));
+  $("#setoolbar").hidden = !seCasesCache.some(c => !c.emcs_imported_at);
+  $("#seall").checked = false;
+  updateSeCount();
 }
+
+const seSelected = () => [...seCasesBox.querySelectorAll(".sesel:checked")];
+function updateSeCount(){
+  const n = seSelected().length;
+  $("#secount").textContent = n ? ("เลือกไว้ " + n + " เคส") : "";
+  $("#serunall").textContent = n ? ("⚡ นำเข้าที่เลือก (" + n + ")") : "⚡ นำเข้าที่เลือก";
+}
+$("#seall").addEventListener("change", e => {
+  seCasesBox.querySelectorAll(".sesel:not([disabled])").forEach(c => { c.checked = e.target.checked; });
+  updateSeCount();
+});
+
+// ตรวจก่อนนำเข้า — อ่าน XML + report ของจริง ไม่เปิด Chrome ไม่แตะ EMCS
+async function checkSeCase(caseId){
+  const panel = seCasesBox.querySelector('.sepanel[data-for="' + caseId + '"]');
+  if (!panel) return;
+  panel.hidden = false;
+  panel.innerHTML = 'กำลังตรวจ…';
+  try{
+    const r = await fetch("/sesurvey-check?case_id=" + encodeURIComponent(caseId));
+    const d = await r.json();
+    if (!r.ok){ panel.innerHTML = '<span style="color:var(--err)">' + escHtml(d.error||"ตรวจไม่สำเร็จ") + '</span>'; return d; }
+    const c = d.counts || {}, i = d.info || {};
+    let h = '<div style="color:var(--muted)">คู่กรณี ' + c.opponents + ' · ผู้บาดเจ็บ ' + c.injuries
+          + ' · ทรัพย์สิน ' + c.assets + ' · ความเสียหาย ' + c.damage + ' รายการ</div>'
+          + '<div style="color:var(--muted);margin-top:2px">' + escHtml(i.car_type||"-") + ' · '
+          + escHtml(i.acc_province||"-") + ' · ' + escHtml(i.loss_type||"-") + '</div>';
+    h += d.ready ? '<div style="color:#16a34a;font-weight:600;margin-top:6px">✅ พร้อมนำเข้า</div>'
+                 : d.blockers.map(b => '<div style="color:var(--err);margin-top:6px">⛔ ' + escHtml(b) + '</div>').join("");
+    if ((d.warnings||[]).length)
+      h += '<div style="color:#d97706;margin-top:6px">⚠️ ' + escHtml(d.warnings.join(" · ")) + '</div>';
+    panel.innerHTML = h;
+    return d;
+  }catch(e){ panel.innerHTML = '<span style="color:var(--err)">ติดต่อเซิร์ฟเวอร์ไม่ได้</span>'; }
+}
+
+$("#sechkall").addEventListener("click", async () => {
+  const sel = seSelected();
+  if (!sel.length){ alert("ยังไม่ได้เลือกเคส"); return; }
+  for (const c of sel) await checkSeCase(c.dataset.id);
+});
+
+// คิวนำเข้า — รันทีละเคสเสมอ (EMCS ล็อกเรื่องรายตัว + โควตารูปเป็นของเคลม)
+$("#serunall").addEventListener("click", async () => {
+  const sel = seSelected();
+  if (!sel.length){ alert("ยังไม่ได้เลือกเคส"); return; }
+  if (!confirm("นำเข้า EMCS จริง " + sel.length + " เคส (สร้าง draft) ?\n\n"
+      + "• รันทีละเคส กรอกฟอร์ม + อัปรูป + บันทึก draft — ไม่กดส่งงาน\n"
+      + "• draft ที่สร้างลบไม่ได้ (ยกเลิกได้อย่างเดียว)")) return;
+  const qBox = $("#sequeue");
+  qBox.hidden = false;
+  $("#serunall").disabled = true; $("#sechkall").disabled = true;
+  let done = 0;
+  for (const c of sel){
+    const id = c.dataset.id;
+    qBox.innerHTML = 'ตรวจเคส #' + escHtml(id) + ' (' + (done + 1) + '/' + sel.length + ')…';
+    const chk = await checkSeCase(id);              // ตรวจก่อนทุกเคส — ไม่พร้อมก็ข้าม
+    if (chk && !chk.ready){
+      qBox.innerHTML = '<span style="color:var(--err)">⛔ เคส #' + escHtml(id)
+        + ' ยังไม่พร้อม (ดูรายละเอียดใต้เคส) — หยุดคิว</span>';
+      break;
+    }
+    qBox.innerHTML = 'กำลังนำเข้า #' + escHtml(id) + ' (' + (done + 1) + '/' + sel.length + ')…'
+      + '<div style="color:var(--muted);margin-top:4px">รันทีละเคส — EMCS ล็อกเรื่องรายตัว</div>';
+    let runId = null;
+    try{
+      const {ok, data} = await postJSON("/api/import-sesurvey",
+                                        {case_id: id, mode: "import", live: true});
+      if (!ok){ qBox.innerHTML = '<span style="color:var(--err)">#' + escHtml(id) + ': '
+                + escHtml(data.error || "เริ่มงานไม่สำเร็จ") + ' — หยุดคิว</span>'; break; }
+      runId = data.run_id;
+    }catch(e){ qBox.innerHTML = '<span style="color:var(--err)">ติดต่อเซิร์ฟเวอร์ไม่ได้ — หยุดคิว</span>'; break; }
+    while (true){
+      await new Promise(r => setTimeout(r, 1500));
+      let st = null;
+      try{
+        const {data} = await postJSON("/poll", {});
+        st = (data.runs || []).find(x => x.id === runId);
+      }catch(e){ /* เน็ตสะดุด — วนรอต่อ */ }
+      if (st && st.status !== "running") break;
+    }
+    done++;
+    c.checked = false;
+    seSent.add(String(id));
+  }
+  updateSeCount();
+  if (done === sel.length) qBox.innerHTML = '✅ นำเข้าครบ ' + done + '/' + sel.length
+    + ' เคส — ตรวจ draft บน EMCS แล้วกดส่งงานเอง';
+  $("#serunall").disabled = false; $("#sechkall").disabled = false;
+});
 loadCasesBtn.addEventListener("click", async () => {
   loadCasesBtn.disabled = true;
   seCasesBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">กำลังโหลด…</div>';
