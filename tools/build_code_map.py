@@ -64,6 +64,25 @@ def match(isv: dict, emcs_opts: list, label: str, cutoff: float = 0.86):
     return out
 
 
+# --- ตารางเชิงความหมาย (จับคู่ด้วยชื่อไม่ได้ เพราะปลายทางเป็นรหัสย่อ ไม่ใช่ป้าย) ---
+# ประเภทผู้บาดเจ็บ: ISURVEY masterRelateAccident → รหัสแบบ XML (DV/PR/ON) ที่บอทรับ
+# EMCS ฝั่งฟอร์มมีแค่ 3 กลุ่ม (ผู้ขับขี่รถประกัน / ผู้โดยสารรถประกัน / บุคคลภายนอกรถ)
+# → อะไรที่ไม่ใช่ "รถประกัน" ตกกลุ่มบุคคลภายนอกทั้งหมด
+# ✅ ยืนยันกับ XML จริงของเคลม 2026013058298: 2→DV · 17→PR · 4→ON
+PERSON_TYPE = {
+    "2": "DV", "10": "DV",                                  # ผู้ขับขี่รถประกัน
+    "3": "PR", "11": "PR", "17": "PR",                      # ผู้โดยสารรถประกัน
+    "4": "ON", "5": "ON", "6": "ON", "18": "ON", "19": "ON",  # คู่กรณี/บุคคลภายนอก
+}
+
+# ระดับการบาดเจ็บ: ISURVEY injury_type → ddlWounded_Type ของ EMCS (01-06)
+# ⚠️ ISURVEY ไม่มีตาราง master ให้ และตัวอย่างจริงที่มีคือ 'I' อย่างเดียว (3 ราย)
+# ซึ่ง XML ที่ ISURVEY ส่งออกเองแปลงเป็น '02' ทุกราย → ทำตามนั้น (ไม่ได้แปลว่าประเมิน
+# อาการจริงว่า "ปานกลาง" แต่คือทำให้ตรงกับสิ่งที่ระบบเดิมส่งเข้า EMCS อยู่แล้ว)
+# ค่าอื่นที่ยังไม่เคยเจอ → '' ปล่อยว่างให้คนเลือก ห้ามเดา
+WOUNDED_TYPE = {"I": "02"}
+
+
 def main():
     ap = argparse.ArgumentParser(description="สร้างตารางแปลงรหัส ISURVEY → EMCS")
     ap.add_argument("--dry", action="store_true", help="ไม่เขียนไฟล์ แค่โชว์ผล")
@@ -101,10 +120,27 @@ PROVINCE_TO_EMCS = {json.dumps(prov, ensure_ascii=False, indent=4)}
 # {{รหัสประเภทใบขับขี่ ISURVEY: รหัส EMCS}}
 LICENSE_TO_EMCS = {json.dumps(lic, ensure_ascii=False, indent=4)}
 
+# {{related_accidentID ของ ISURVEY: รหัสประเภทผู้บาดเจ็บแบบ XML (DV/PR/ON)}}
+PERSON_TYPE_TO_XML = {json.dumps(PERSON_TYPE, ensure_ascii=False, indent=4)}
+
+# {{injury_type ของ ISURVEY: รหัส ddlWounded_Type ของ EMCS}}
+WOUNDED_TYPE_TO_EMCS = {json.dumps(WOUNDED_TYPE, ensure_ascii=False, indent=4)}
+
 
 def province(isurvey_code) -> str:
     """รหัสจังหวัด ISURVEY → EMCS ('' เมื่อแปลงไม่ได้ — อย่าเดา ปล่อยว่างให้คนเลือก)"""
     return PROVINCE_TO_EMCS.get(str(isurvey_code or "").strip(), "")
+
+
+def person_type(isurvey_related_accident_id) -> str:
+    """related_accidentID ของ ISURVEY → รหัสประเภทผู้บาดเจ็บแบบ XML (DV/PR/ON)
+    บอทแปลงต่อเป็น value ของ ddlPerson_Type เองใน emcs.PERSON_TYPE_MAP"""
+    return PERSON_TYPE_TO_XML.get(str(isurvey_related_accident_id or "").strip(), "")
+
+
+def wounded_type(isurvey_injury_type) -> str:
+    """injury_type ของ ISURVEY → รหัส ddlWounded_Type ของ EMCS ('' = ไม่รู้ ปล่อยว่าง)"""
+    return WOUNDED_TYPE_TO_EMCS.get(str(isurvey_injury_type or "").strip(), "")
 
 
 def license_type(isurvey_code) -> str:

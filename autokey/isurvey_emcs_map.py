@@ -1,6 +1,6 @@
 """ตารางแปลงรหัส ISURVEY → EMCS — **ไฟล์นี้ถูกสร้างอัตโนมัติ อย่าแก้ด้วยมือ**
 
-สร้างโดย tools/build_code_map.py เมื่อ 2026-08-04 00:12
+สร้างโดย tools/build_code_map.py เมื่อ 2026-08-04 09:14
 จับคู่ด้วย "ชื่อ" จาก dropdown จริงของ EMCS (runs/emcs_spec.json) กับตาราง master ของ ISURVEY
 
 ทำไมต้องแปลง: สองระบบใช้รหัสคนละชุดกับของอย่างเดียวกัน —
@@ -108,10 +108,40 @@ LICENSE_TO_EMCS = {
     "99": "26"
 }
 
+# {related_accidentID ของ ISURVEY: รหัสประเภทผู้บาดเจ็บแบบ XML (DV/PR/ON)}
+PERSON_TYPE_TO_XML = {
+    "2": "DV",
+    "10": "DV",
+    "3": "PR",
+    "11": "PR",
+    "17": "PR",
+    "4": "ON",
+    "5": "ON",
+    "6": "ON",
+    "18": "ON",
+    "19": "ON"
+}
+
+# {injury_type ของ ISURVEY: รหัส ddlWounded_Type ของ EMCS}
+WOUNDED_TYPE_TO_EMCS = {
+    "I": "02"
+}
+
 
 def province(isurvey_code) -> str:
     """รหัสจังหวัด ISURVEY → EMCS ('' เมื่อแปลงไม่ได้ — อย่าเดา ปล่อยว่างให้คนเลือก)"""
     return PROVINCE_TO_EMCS.get(str(isurvey_code or "").strip(), "")
+
+
+def person_type(isurvey_related_accident_id) -> str:
+    """related_accidentID ของ ISURVEY → รหัสประเภทผู้บาดเจ็บแบบ XML (DV/PR/ON)
+    บอทแปลงต่อเป็น value ของ ddlPerson_Type เองใน emcs.PERSON_TYPE_MAP"""
+    return PERSON_TYPE_TO_XML.get(str(isurvey_related_accident_id or "").strip(), "")
+
+
+def wounded_type(isurvey_injury_type) -> str:
+    """injury_type ของ ISURVEY → รหัส ddlWounded_Type ของ EMCS ('' = ไม่รู้ ปล่อยว่าง)"""
+    return WOUNDED_TYPE_TO_EMCS.get(str(isurvey_injury_type or "").strip(), "")
 
 
 def license_type(isurvey_code) -> str:

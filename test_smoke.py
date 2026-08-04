@@ -319,8 +319,8 @@ except RuntimeError:
     check("pick: ไม่มี draft + หลายเรื่อง → error", True)
 
 # ---- 9.5 ผู้บาดเจ็บ/ทรัพย์สิน (Tab 5/6) ----
-check("PERSON_TYPE_MAP: DV→01 / PV→03 / ON→05",
-      emcs.PERSON_TYPE_MAP == {"DV": "01", "PV": "03", "ON": "05"})
+check("PERSON_TYPE_MAP: DV→01 / PV,PR→03 / ON→05",
+      emcs.PERSON_TYPE_MAP == {"DV": "01", "PV": "03", "PR": "03", "ON": "05"})
 check("INJ/ASSET prefix + count cap",
       emcs.INJ_PREFIX.format(n=0) == "dtlInj_ctl00_wuInj_"
       and emcs.ASSET_PREFIX.format(n=1) == "dtlAsset_ctl01_wuAsset_"
@@ -1326,8 +1326,9 @@ check("ผู้บาดเจ็บ: ครบทั้ง 5 ตัวเล�
               ['ผู้ขับขี่ - รถประกัน', 'ผู้ขับขี่ - รถคู่กรณี', 'ผู้โดยสาร - รถประกัน',
                'ผู้โดยสาร - รถคู่กรณี', 'บุคคลภายนอกรถ']})
       == ['01', '02', '03', '04', '05'])
-check("ผู้บาดเจ็บ: รหัส XML เดิม (ISURVEY) ยังใช้ได้",
-      emcs.PERSON_TYPE_MAP == {'DV': '01', 'PV': '03', 'ON': '05'})
+# ผู้โดยสารมี 2 ตัวสะกดในของจริง — 'PR' เจอใน XML ของเคลม 2026013058298
+check("ผู้บาดเจ็บ: รหัส XML เดิม (ISURVEY) ยังใช้ได้ + รองรับ PR",
+      emcs.PERSON_TYPE_MAP == {'DV': '01', 'PV': '03', 'PR': '03', 'ON': '05'})
 
 # EMCS ฝั่งคู่กรณีไม่มี dropdown คำนำหน้าที่ใช้จริง — งานจริงใส่ในชื่อ ('นาย พาสกรณ์ มากพูน')
 _d_tp = claim_data.ClaimData()
@@ -1796,6 +1797,19 @@ check("code map: อำเภอไม่ตรงจังหวัดที่
 check("code map: รหัสที่ไม่รู้จัก → '' ไม่เดา",
       _cmap.province("9999") == "" and _cmap.license_type("zz") == ""
       and _cmap.district("", "") == "")
+
+# ผู้บาดเจ็บ/ทรัพย์สิน — ยืนยันกับเคลมจริง 2026013058298 (บาดเจ็บ 3 ราย + ทรัพย์สิน 1)
+# เทียบ 48 ช่องกับ XML รูปแบบ EMCS ที่ ISURVEY ส่งออกเอง ตรงทั้งหมด
+check("code map: ผู้ขับขี่รถประกัน (2) → DV", _cmap.person_type("2") == "DV")
+check("code map: ผู้โดยสารรถประกันที่เป็นญาติ (17) → PR", _cmap.person_type("17") == "PR")
+check("code map: ผู้ขับขี่รถคู่กรณี (4) → ON (EMCS มีแค่ 3 กลุ่ม)",
+      _cmap.person_type("4") == "ON")
+check("code map: ระดับบาดเจ็บ I → 02 (ตามที่ ISURVEY ส่งออกเอง)",
+      _cmap.wounded_type("I") == "02")
+check("code map: ระดับบาดเจ็บที่ไม่รู้จัก → '' ไม่เดา", _cmap.wounded_type("D") == "")
+# ผู้โดยสารในของจริงมี 2 ตัวสะกด — รับทั้งคู่ ไม่งั้นไม่ถูกเลือกประเภทแบบเงียบ ๆ
+check("ผู้บาดเจ็บ: รหัสผู้โดยสารรับทั้ง PV และ PR",
+      emcs.PERSON_TYPE_MAP.get("PV") == "03" and emcs.PERSON_TYPE_MAP.get("PR") == "03")
 
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

@@ -251,17 +251,21 @@ class ISurveyAPI:
         "damage_memo": ("damage_memo", None), "repairer": ("req_fix_place", None),
         "memo": ("memo", None),
     }
-    # ⚠️ ยังไม่เคยเทียบกับเคลมที่มีผู้บาดเจ็บจริง (เคลมที่ใช้พัฒนามี 0 ราย)
-    # map เฉพาะช่องที่ตรงกันตรง ๆ — ช่องที่เป็น "รหัส EMCS" (person_type = DV/ON,
-    # wounded_type) เว้นว่างไว้ก่อน เพราะรหัส ISURVEY เป็นคนละชุดกับ EMCS
-    # (บทเรียนเดียวกับ plate_province_id) เติมเมื่อมีเคลมจริงให้เทียบแล้วเท่านั้น
+    # ✅ เทียบกับเคลมจริงที่มีผู้บาดเจ็บ 3 ราย + ทรัพย์สิน 1 รายการแล้ว (2026013058298)
+    # คีย์ผลลัพธ์ใช้คำศัพท์เดียวกับ surv_xml.py เพราะ emcs.fill_injuries อ่านชุดนั้น
+    # person_type/wounded_type เป็นรหัสแบบ XML — emcs.py แปลงต่อเป็น value ของ dropdown เอง
     _MAP_INJ = {
         "name": ("person_name", None), "gender": ("gender", None),
         "age": ("age", None), "citizen_id": ("IDcard_no", None),
-        "job": ("occupation", None), "address": ("address", None),
+        "job": ("occupation", None), "address": ("@address", None),
         "tel_no": ("person_phone", None), "hospital": ("hospital", None),
         "cost": ("medical_cost", None), "injure": ("injury_detail", None),
+        "person_type": ("related_accidentID", "persontype"),
+        "wounded_type": ("injury_type", "woundtype"),
+        "work_place": ("work_place", None), "income": ("salary", None),
     }
+    # ⚠️ ที่อยู่เจ้าของทรัพย์สิน "ไม่ต่อ" ตำบล/อำเภอ/จังหวัด — ยืนยันจาก XML จริง
+    # (ของผู้บาดเจ็บต่อ แต่ของทรัพย์สินเป็นบ้านเลขที่ล้วน '613 ม.1')
     _MAP_ASSET = {
         "name": ("prop_name", None), "damage_detail": ("prop_damage_detail", None),
         "damage_cost": ("damage_cost", None), "owner_name": ("owner_name", None),
@@ -280,6 +284,7 @@ class ISurveyAPI:
                                               "policy_type").get(str(c or ""), ""),
             # แปลงรหัส ISURVEY → รหัส EMCS (ตารางสร้างจาก tools/build_code_map.py)
             "provcode": emcs_map.province, "liccode": emcs_map.license_type,
+            "persontype": emcs_map.person_type, "woundtype": emcs_map.wounded_type,
             "racc": lambda c: self.master("masterRelateAccident", "raccID", "racc_desc")
                                   .get(str(c or ""), ""),
             "proptype": lambda c: self.master("masterPropType", "prop_typeID", "pt_desc")

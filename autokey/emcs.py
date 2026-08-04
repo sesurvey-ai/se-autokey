@@ -89,7 +89,10 @@ ASSET_PREFIX = "dtlAsset_ctl{n:02d}_wuAsset_"  # imbAsset / ddlAsset_Count / btn
 MAX_INJURIES = 32   # dtlInj_ctl00..ctl31 (ddlInj_Count มีถึง 32)
 MAX_ASSETS = 30     # dtlAsset_ctl00..ctl29 (ddlAsset_Count มีถึง 30)
 # ประเภทบุคคล: code XML (PERSON_TYPE) → value ของ ddlPerson_Type
-PERSON_TYPE_MAP = {"DV": "01", "PV": "03", "ON": "05"}  # ผู้ขับขี่ / ผู้โดยสาร / บุคคลภายนอก
+# ผู้ขับขี่ / ผู้โดยสาร / บุคคลภายนอก — รหัสแบบ XML → value ของ ddlPerson_Type
+# ⚠️ ผู้โดยสารมี 2 ตัวสะกดในของจริง: 'PV' (ที่เคยเจอ) และ 'PR' (XML ของเคลม
+# 2026013058298 ใช้ตัวนี้) — รับทั้งคู่ ไม่งั้นผู้โดยสารจะไม่ถูกเลือกประเภทแบบเงียบ ๆ
+PERSON_TYPE_MAP = {"DV": "01", "PV": "03", "PR": "03", "ON": "05"}
 # ป้ายไทยจากแอปมือถือ (kPersonTypes) → value ของ ddlPerson_Type โดยตรง
 # XML มีรหัสแค่ DV/PV/ON (3 จาก 5) จึงแยก "ฝั่งคู่กรณี" ไม่ได้ — ป้ายจากแอปแยกได้
 # งานจริงของพนักงานใช้ '02 ผู้ขับขี่ - รถคู่กรณี' จริง (เคลมไอโออิ 2026013058298)
