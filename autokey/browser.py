@@ -407,39 +407,74 @@ def today_buddhist() -> str:
 
 # ----------------------------------------------- หยุดรอให้คนกรอกข้อมูลเอง
 
-def wait_for_manual_fill(field_label, reason="", select_id=None):
-    """หยุดรอให้ผู้ใช้กรอก/เลือกข้อมูลช่องนี้เองบนหน้า EMCS แล้วค่อยทำงานต่อ
+def _parse_choice(line: str, options) -> str:
+    """อ่านค่าที่ผู้ใช้เลือกจากหน้าเว็บ — คืน '' ถ้าไม่ได้เลือก/อ่านไม่ได้
+
+    รับได้ทั้ง {"choice": "เก๋งเอเชีย"} (เลือกจาก dropdown) และ newline เปล่า
+    (กด 'ดำเนินการต่อ' เฉย ๆ = กรอกเองบนหน้า EMCS แล้ว)
+    ตรวจว่าค่าอยู่ในลิสต์จริง — กันค่าแปลกปลอมหลุดไปเข้า fuzzy_select"""
+    s = (line or "").strip()
+    if not s or not s.startswith("{"):
+        return ""
+    try:
+        val = str((json.loads(s) or {}).get("choice") or "").strip()
+    except Exception:
+        return ""
+    if not val:
+        return ""
+    return val if (not options or val in options) else ""
+
+
+def wait_for_manual_fill(field_label, reason="", select_id=None, options=None):
+    """หยุดรอให้ผู้ใช้กรอก/เลือกข้อมูลช่องนี้ แล้วค่อยทำงานต่อ
 
     ใช้เมื่อข้อมูลจาก ISURVEY ไม่ครบ หรือกรอกอัตโนมัติไม่ได้ — ดีกว่าปล่อย
-    error จบโปรแกรม คนจะได้กรอกช่องที่ขาดให้ครบแล้วสั่งไปต่อ
-    - หน้าเว็บ (webui.py): ส่ง marker ให้เว็บโชว์ปุ่ม "ดำเนินการต่อ"
-      เมื่อกดปุ่ม webui จะส่ง newline เข้า stdin มาปลดล็อก
+    error จบโปรแกรม คนจะได้เติมช่องที่ขาดให้ครบแล้วสั่งไปต่อ
+
+    - **หน้าเว็บ + ส่ง options มา**: เว็บโชว์ dropdown ให้เลือกได้ในหน้าเว็บเลย
+      ไม่ต้องสลับไปหน้าต่าง EMCS (ผู้เรียกเอาค่าที่คืนไปเลือกลงช่องเอง)
+    - หน้าเว็บ ไม่มี options: โชว์ปุ่ม 'ดำเนินการต่อ' เฉย ๆ (คนไปกรอกบน EMCS)
     - console จริง: ผู้ใช้กด Enter ที่หน้าต่างเอง
     - ไม่มี console/stdin ปิด (รันแบบไม่มีคนเฝ้า): readline คืน "" ทันที →
       ไปต่อ ไม่ค้าง (อาศัย EOF ของ stdin ไม่พึ่ง isatty ที่บน Windows เชื่อถือไม่ได้)
     ไม่ขึ้นกับ -y (นี่คือการหยุดเพราะข้อมูลไม่ครบ ไม่ใช่ถามยืนยัน)
-    คืน True ถ้าผู้ใช้สั่งต่อจริง, False ถ้าไม่มีใครตอบ (EOF) แล้วไปต่อเอง
+
+    คืน:
+      str ที่ผู้ใช้เลือก — เมื่อเลือกจาก dropdown บนหน้าเว็บ
+      True  — ผู้ใช้สั่งต่อโดยไม่ได้เลือกค่า (ไปกรอกบน EMCS เองแล้ว)
+      False — ไม่มีใครตอบ (EOF) แล้วไปต่อเอง
+    (str ที่ไม่ว่างเป็น truthy ผู้เรียกเดิมที่เช็ค `if wait_for_manual_fill(...)` ใช้ได้เหมือนเดิม)
     """
+    options = [o for o in (options or []) if str(o).strip()]
     log_plain("")
     log(f"⏸️  ต้องกรอกข้อมูลเอง: {field_label}")
     if reason:
         log(f"     สาเหตุ: {reason}")
-    log("     → กรอก/เลือกข้อมูลช่องนี้ในหน้าต่าง EMCS (Chrome) ให้เรียบร้อย แล้ว"
-        + ("กดปุ่ม 'ดำเนินการต่อ' บนหน้าเว็บ"
-           if _WEBUI else "กลับมากด Enter ที่หน้าต่างนี้") + " เพื่อทำงานต่อ")
+    if _WEBUI and options:
+        log(f"     → เลือกค่าบนหน้าเว็บได้เลย ({len(options)} ตัวเลือก) "
+            "ไม่ต้องสลับไปหน้าต่าง EMCS")
+    else:
+        log("     → กรอก/เลือกข้อมูลช่องนี้ในหน้าต่าง EMCS (Chrome) ให้เรียบร้อย แล้ว"
+            + ("กดปุ่ม 'ดำเนินการต่อ' บนหน้าเว็บ"
+               if _WEBUI else "กลับมากด Enter ที่หน้าต่างนี้") + " เพื่อทำงานต่อ")
     if _WEBUI:
-        # marker บรรทัดเดียว ให้ webui จับไปโชว์กล่องแจ้งเตือน + ปุ่มดำเนินการต่อ
+        # marker บรรทัดเดียว ให้ webui จับไปโชว์กล่องแจ้งเตือน + dropdown (ถ้ามี)
         print(MANUAL_MARKER + json.dumps(
-            {"label": field_label, "reason": reason}, ensure_ascii=False),
-            flush=True)
+            {"label": field_label, "reason": reason,
+             "select_id": select_id or "", "options": options},
+            ensure_ascii=False), flush=True)
     try:
-        line = sys.stdin.readline()   # block จนได้ Enter (console)/\n (webui); "" ถ้า EOF
+        line = sys.stdin.readline()   # block จนได้ Enter (console)/payload (webui); "" ถ้า EOF
     except Exception:
         line = ""
     if line == "":
         # stdin ปิด/EOF = ไม่มีคนเฝ้า → ไปต่อ ไม่ค้าง (ช่องนี้ต้องกรอกเองภายหลัง)
         log("     (ไม่มีการตอบกลับจาก stdin — ไปต่อ ตรวจ/กรอกช่องนี้เองภายหลัง)")
         return False
+    choice = _parse_choice(line, options)
+    if choice:
+        log(f"     ▶️ ผู้ใช้เลือก '{choice}' จากหน้าเว็บ — กรอกให้เลย")
+        return choice
     log(f"     ▶️ ดำเนินการต่อ ({field_label})")
     return True
 
@@ -650,9 +685,8 @@ def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
     if value is None or str(value).strip() == "":
         if required:
             log(f"   ⚠️ ไม่มีข้อมูล {name} จาก ISURVEY (เป็น field บังคับ)")
-            wait_for_manual_fill(name, "ISURVEY ไม่มีข้อมูลช่องนี้",
-                                 select_id=select_id)
-            return _current_select_text(driver, select_id), 0
+            return _manual_pick(driver, select_id, name, None, None,
+                                "ISURVEY ไม่มีข้อมูลช่องนี้")
         log(f"   - ข้าม dropdown {name} (ค่าต้นทางว่าง)")
         return None
 
@@ -714,10 +748,12 @@ def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
             if text == ph or _is_placeholder_option(text) or score < min_score:
                 log(f"   ⚠️ {name}: '{value}' ไม่ตรงกับตัวเลือกไหนเลย "
                     f"(ใกล้สุด '{text}' score {score:.0f}) — ไม่เลือกให้")
-                wait_for_manual_fill(
-                    name, f"ไม่มีตัวเลือกที่ตรงกับ '{value}' ในดรอปดาวน์นี้",
-                    select_id=select_id)
-                return _current_select_text(driver, select_id), 0
+                # ส่งตัวเลือก "จริงจากหน้านี้ตอนนี้" ไปให้เว็บ (ไม่ใช่จากสเปกที่ดัมป์ไว้)
+                # — dropdown ที่ผูกกับช่องก่อนหน้า (ยี่ห้อ←ประเภทรถ, อำเภอ←จังหวัด)
+                # ลิสต์ต่างกันไปตามที่เลือกไว้ ต้องอ่านสด ๆ ถึงจะตรง
+                return _manual_pick(
+                    driver, select_id, name, options, ph,
+                    f"ไม่มีตัวเลือกที่ตรงกับ '{value}' ในดรอปดาวน์นี้")
 
             mark = "⚠️" if score < FUZZY_WARN_SCORE else "✓"
             log(f"   {mark} {name}: '{value}' → '{text}' (score {score:.0f})")
@@ -737,6 +773,38 @@ def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
     # → หยุดรอให้คนเลือกเอง แทนการ error จบโปรแกรม
     log(f"   ⚠️ เลือก {name} อัตโนมัติไม่ได้ "
         f"({type(last_err).__name__ if last_err else 'unknown'})")
-    wait_for_manual_fill(name, f"เลือก '{value}' อัตโนมัติไม่ได้ — dropdown ไม่พร้อม",
-                         select_id=select_id)
+    return _manual_pick(driver, select_id, name, _live_options(driver, select_id), None,
+                        f"เลือก '{value}' อัตโนมัติไม่ได้ — dropdown ไม่พร้อม")
+
+
+def _live_options(driver, select_id) -> list:
+    """ข้อความของตัวเลือกทั้งหมดใน dropdown นี้ "ตอนนี้" — [] ถ้าอ่านไม่ได้"""
+    try:
+        return [o.text for o in Select(driver.find_element(By.ID, select_id)).options]
+    except Exception:
+        return []
+
+
+def _manual_pick(driver, select_id, name, options, placeholder, reason):
+    """หยุดรอคนเลือกค่าให้ dropdown นี้ — ถ้าเลือกจากหน้าเว็บมา ก็เลือกลงช่องให้เลย
+
+    คืน (ข้อความที่อยู่ในช่องตอนจบ, score) แบบเดียวกับ fuzzy_select"""
+    if options is None:      # ผู้เรียกยังไม่ได้อ่านลิสต์ — รอ dropdown โหลดสักครู่แล้วอ่านเอง
+        try:
+            WebDriverWait(driver, 5).until(
+                lambda d: len(Select(d.find_element(By.ID, select_id)).options) > 1)
+        except Exception:
+            pass
+        options = _live_options(driver, select_id)
+    picks = [o for o in (options or [])
+             if o and o != placeholder and not _is_placeholder_option(o)]
+    ans = wait_for_manual_fill(name, reason, select_id=select_id, options=picks)
+    if isinstance(ans, str) and ans:
+        try:
+            Select(driver.find_element(By.ID, select_id)).select_by_visible_text(ans)
+            log(f"   ✓ {name}: เลือก '{ans}' ตามที่ผู้ใช้ระบุจากหน้าเว็บ")
+            return ans, 100
+        except Exception as e:
+            log(f"   ⚠️ เลือก '{ans}' ลงช่องไม่สำเร็จ ({type(e).__name__}) — "
+                "เลือกเองบนหน้า EMCS")
     return _current_select_text(driver, select_id), 0

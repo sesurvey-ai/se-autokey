@@ -1009,6 +1009,8 @@ PAGE = r"""<!doctype html>
   .pause-worktype{margin-top:10px;padding:10px 12px;background:#fff;
     border:1px solid #fde68a;border-radius:10px}
   .pause-injury{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+  .pause-pick{margin-top:10px}
+  .pause-pick .pick-sel{width:100%;max-width:380px;padding:6px 8px;font:inherit}
   .inj-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 12px;
     background:#fff;border:1px solid #fde68a;border-radius:10px}
   .inj-name{font-weight:600;color:#334155;font-size:13.5px;min-width:160px}
@@ -1326,6 +1328,13 @@ function buildWorkType(c, r){
     '<input type="text" class="wt-mix-input" placeholder="SEABI-... (เลข invoice)">';
   applyWtState(c);
 }
+function buildPicker(c, options){
+  // ตัวเลือกมาจาก dropdown จริงบนหน้า EMCS ตอนนั้น (ไม่ใช่จากสเปกที่ดัมป์ไว้)
+  if (!options.length){ c.pickWrap.hidden = true; c.pickWrap.innerHTML = ""; return; }
+  c.pickWrap.innerHTML = '<select class="pick-sel"><option value="">— เลือกค่า —</option>'
+    + options.map(o => '<option>' + escHtml(o) + '</option>').join("") + '</select>';
+  c.pickWrap.hidden = false;
+}
 function buildInjuryForm(c, r){
   const persons = (r.pause && r.pause.persons) || [];
   const opts = (r.pause && r.pause.person_type_options) || [];
@@ -1381,6 +1390,7 @@ function makeCard(r){
     +       '<div class="gal-grid"></div>'
     +     '</div>'
     +     '<div class="pause-injury" hidden></div>'
+    +     '<div class="pause-pick" hidden></div>'
     +     '<button class="continue"></button>'
     +   '</div>'
     + '</div>'
@@ -1404,6 +1414,7 @@ function makeCard(r){
     wtMix: root.querySelector(".wt-mix"), wtMixList: root.querySelector(".wt-mix-list"),
     wtMixAdd: root.querySelector(".wt-mix-add"), wtSig: null,
     injWrap: root.querySelector(".pause-injury"), injSig: null,
+    pickWrap: root.querySelector(".pause-pick"), pickSig: null,
   };
   c.stopBtn.addEventListener("click", async () => {
     if (!confirm("ต้องการหยุดงาน " + (r.title || ("#"+r.id)) + " ?")) return;
@@ -1439,6 +1450,12 @@ function makeCard(r){
       body.payload = {persons: rows.map(row => ({
         person_type: row.querySelector(".inj-type").value,
         car_regno: row.querySelector(".inj-plate").value.trim()}))};
+    } else {
+      // เลือกค่าจาก dropdown ในหน้าเว็บ → ส่งให้บอทกรอกลงช่องเอง
+      // ไม่ได้เลือก = คนไปกรอกบนหน้า EMCS เองแล้ว (พฤติกรรมเดิม)
+      const sel = c.pickWrap.querySelector(".pick-sel");
+      const val = sel ? sel.value.trim() : "";
+      if (val) body.payload = {choice: val};
     }
     c.contBtn.disabled = true;
     try{ await postJSON("/continue", body); }catch(e){}
@@ -1446,6 +1463,7 @@ function makeCard(r){
     c.galWrap.style.display = "none"; c.galSig = null;
     c.wtWrap.hidden = true; c.wtSig = null;
     c.injWrap.hidden = true; c.injSig = null;
+    c.pickWrap.hidden = true; c.pickSig = null;
   });
   c.galAll.addEventListener("click", () => setAllChecks(c, true));
   c.galNone.addEventListener("click", () => setAllChecks(c, false));
@@ -1527,9 +1545,19 @@ function renderRun(r){
       c.galWrap.style.display = "none"; c.galSig = null;
       c.wtWrap.hidden = true; c.wtSig = null;
       c.ptitle.textContent = "ต้องกรอกข้อมูลเอง: " + (r.pause.label || "ข้อมูลที่ขาด");
-      c.phint.innerHTML = "ข้อมูลจาก ISURVEY ไม่ครบหรือกรอกอัตโนมัติไม่ได้ — "
-        + "กรอก/เลือกช่องนี้ในหน้าต่าง EMCS (Chrome) <b>ของงานนี้</b> ให้เรียบร้อย แล้วกดปุ่ม";
-      c.contBtn.textContent = "✓ กรอกเสร็จแล้ว — ดำเนินการต่อ";
+      // มีตัวเลือกมาด้วย = เลือกในหน้าเว็บได้เลย ไม่ต้องสลับไปหน้าต่าง EMCS
+      const popts = r.pause.options || [];
+      const psig = (r.pause.label || "") + "|" + popts.length;
+      if (c.pickSig !== psig){ buildPicker(c, popts); c.pickSig = psig; }
+      if (popts.length){
+        c.phint.innerHTML = "ISURVEY ไม่มีข้อมูลช่องนี้ — <b>เลือกค่าด้านล่างได้เลย</b> "
+          + "บอทจะกรอกลงหน้า EMCS ให้เอง (ไม่ต้องสลับหน้าต่าง)";
+        c.contBtn.textContent = "✓ กรอกให้เลย";
+      } else {
+        c.phint.innerHTML = "ข้อมูลจาก ISURVEY ไม่ครบหรือกรอกอัตโนมัติไม่ได้ — "
+          + "กรอก/เลือกช่องนี้ในหน้าต่าง EMCS (Chrome) <b>ของงานนี้</b> ให้เรียบร้อย แล้วกดปุ่ม";
+        c.contBtn.textContent = "✓ กรอกเสร็จแล้ว — ดำเนินการต่อ";
+      }
       c.contBtn.className = "continue";
     }
     c.contBtn.disabled = false;
@@ -1539,6 +1567,7 @@ function renderRun(r){
     c.galWrap.style.display = "none"; c.galSig = null;
     c.wtWrap.hidden = true; c.wtSig = null;
     c.injWrap.hidden = true; c.injSig = null;
+    c.pickWrap.hidden = true; c.pickSig = null;
   }
   updateEmpty();
 }

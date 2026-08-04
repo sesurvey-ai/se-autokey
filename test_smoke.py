@@ -756,6 +756,36 @@ check("parse_selected: ไม่มีคีย์ selected → None",
 check("parse_selected: selected ไม่ใช่ list → None",
       browser._parse_selected('{"selected":"x"}', _files) is None)
 
+# ---- 17.2 browser._parse_choice: ค่าที่ผู้ใช้เลือกจาก dropdown บนหน้าเว็บ ----
+# ปิดช่อง select_id — เลือกค่าในหน้าเว็บได้เลย ไม่ต้องสลับไปหน้าต่าง EMCS
+_ct = ["รถจักรยานยนต์", "เก๋งเอเชีย", "กระบะ"]
+check("parse_choice: เลือกค่าที่มีในลิสต์ → คืนค่านั้น",
+      browser._parse_choice('{"choice":"เก๋งเอเชีย"}', _ct) == "เก๋งเอเชีย")
+check("parse_choice: กดดำเนินการต่อเฉย ๆ (newline) → '' (ไปกรอกบน EMCS เอง)",
+      browser._parse_choice("\n", _ct) == "" and browser._parse_choice("", _ct) == "")
+# ค่านอกลิสต์ = ข้อมูลเพี้ยน/ของเก่าค้าง — ห้ามส่งต่อให้ไปเลือกลง dropdown
+check("parse_choice: ค่าที่ไม่มีในลิสต์ → '' (ไม่ยอมรับ)",
+      browser._parse_choice('{"choice":"เรือ"}', _ct) == "")
+check("parse_choice: JSON พัง / ไม่มีคีย์ choice → ''",
+      browser._parse_choice("ขยะ", _ct) == ""
+      and browser._parse_choice('{"foo":1}', _ct) == "")
+check("parse_choice: ไม่มีลิสต์ให้เทียบ → รับค่าตามที่ส่งมา",
+      browser._parse_choice('{"choice":"อะไรก็ได้"}', []) == "อะไรก็ได้")
+# marker ต้องพก options ไปให้เว็บ ไม่งั้นเว็บโชว์ dropdown ไม่ได้
+import inspect as _insp_pick  # noqa: E402
+_mk = _insp_pick.getsource(browser.wait_for_manual_fill)
+check("manual_fill: marker ส่ง select_id + options ไปหน้าเว็บ",
+      '"select_id"' in _mk and '"options"' in _mk)
+check("manual_fill: ค่าที่เลือกถูกคืนกลับให้ผู้เรียก (ไม่ใช่แค่ True/False)",
+      "return choice" in _mk)
+# _manual_pick ต้องอ่านตัวเลือก "สด" จากหน้า ไม่ใช่จากสเปกที่ดัมป์ไว้
+# (ยี่ห้อกรองตามประเภทรถ / อำเภอกรองตามจังหวัด — ลิสต์ต่างกันตามที่เลือกไว้)
+_mp = _insp_pick.getsource(browser._manual_pick)
+check("manual_pick: กรอง placeholder ออกก่อนส่งให้เว็บ",
+      "_is_placeholder_option" in _mp)
+check("manual_pick: เลือกค่าที่ผู้ใช้ระบุลงช่องให้เอง",
+      "select_by_visible_text" in _mp)
+
 # ---- 17.5 wait_for_injury_inputs: marker + parse ค่าจาก webui ----
 import io as _io
 _spec = [{"name": "นาย ก", "person_type_value": "05", "car_regno": ""}]
