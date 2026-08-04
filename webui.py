@@ -984,6 +984,15 @@ PAGE = r"""<!doctype html>
         <input type="date" id="isvsince" style="width:150px;padding:6px 8px">
         <button class="run" id="loadisvbtn" style="padding:7px 12px;font-size:13px">↻ โหลดรายการ</button>
       </div>
+      <div id="isvtoolbar" hidden style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 2px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="isvall"> เลือกทั้งหมด
+        </label>
+        <span id="isvcount" style="color:var(--muted);font-size:13px"></span>
+        <button class="run" id="isvchkall" style="margin-left:auto;padding:7px 12px;font-size:13px;background:#64748b">🔍 ตรวจที่เลือก</button>
+        <button class="run" id="isvrunall" style="padding:7px 12px;font-size:13px">⚡ นำเข้าที่เลือก</button>
+      </div>
+      <div id="isvqueue" hidden style="margin:8px 0;padding:8px 10px;border-radius:8px;background:#0f172a11;font-size:13px"></div>
       <div id="isvcasesbox" class="caselist"></div>
       <div class="note" style="margin:10px 0 18px">
         • แสดงเฉพาะสถานะ <b>“จบงาน”</b> — เรียงงานที่ปิดล่าสุดขึ้นก่อน<br>
@@ -1556,6 +1565,8 @@ function renderIsvCases(rows){
   isvBox.innerHTML = rows.map(r => {
     const closed = (r.close_datetime || "").replace("T", " ");
     return '<div class="caseitem" style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">'
+      + '<input type="checkbox" class="isvsel" style="flex:none" '
+      +   'data-claim="' + escHtml(r.claim_no || "") + '" data-inv="' + escHtml(r.survey_no || "") + '">'
       + '<div style="flex:1;min-width:0">'
       +   '<div style="font-weight:600;font-size:13px">' + escHtml(r.claim_no || "") + '</div>'
       +   '<div style="color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
@@ -1576,7 +1587,101 @@ function renderIsvCases(rows){
   isvBox.querySelectorAll(".isvact").forEach(b => {
     b.addEventListener("click", () => runIsvCase(b.dataset.claim, b.dataset.inv));
   });
+  isvBox.querySelectorAll(".isvsel").forEach(c => c.addEventListener("change", updateIsvCount));
+  $("#isvtoolbar").hidden = !rows.length;
+  $("#isvall").checked = false;
+  updateIsvCount();
 }
+
+const isvSelected = () => [...isvBox.querySelectorAll(".isvsel:checked")];
+function updateIsvCount(){
+  const n = isvSelected().length;
+  $("#isvcount").textContent = n ? ("เลือกไว้ " + n + " เรื่อง") : "";
+  $("#isvrunall").textContent = n ? ("⚡ นำเข้าที่เลือก (" + n + ")") : "⚡ นำเข้าที่เลือก";
+}
+$("#isvall").addEventListener("change", e => {
+  isvBox.querySelectorAll(".isvsel").forEach(c => { c.checked = e.target.checked; });
+  updateIsvCount();
+});
+$("#isvchkall").addEventListener("click", async () => {
+  const sel = isvSelected();
+  if (!sel.length){ alert("ยังไม่ได้เลือกเรื่อง"); return; }
+  for (const c of sel){
+    const btn = isvBox.querySelector('.isvchk[data-claim="' + c.dataset.claim + '"]');
+    if (btn) await checkIsvCase(btn);      // ทีละเรื่อง — ISURVEY ยิงรัวแล้ว timeout บ่อย
+  }
+});
+
+// เก็บค่าที่เลือกในแผงตรวจของเรื่องหนึ่ง — คืน null ถ้ายังเลือกไม่ครบ
+function isvPickOf(claim){
+  const panel = isvBox.querySelector('.isvpanel[data-for="' + claim + '"]');
+  if (!panel || panel.hidden) return {};        // ยังไม่ได้ตรวจ = ไม่มีค่าให้ส่ง
+  const pick = {};
+  let missing = false;
+  panel.querySelectorAll(".isvpick").forEach(s => {
+    if (!s.value){ missing = true; s.style.borderColor = "var(--err)"; }
+    else pick[s.dataset.field] = s.value;
+  });
+  return missing ? null : pick;
+}
+
+// คิวนำเข้า: รัน "ทีละเรื่อง" เสมอ — EMCS ล็อกเรื่องรายตัว + โควตารูปเป็นของเคลม
+// รันขนานจะชนกันเอง ไม่ใช่แค่ช้า
+$("#isvrunall").addEventListener("click", async () => {
+  const sel = isvSelected();
+  if (!sel.length){ alert("ยังไม่ได้เลือกเรื่อง"); return; }
+  const qBox = $("#isvqueue");
+  qBox.hidden = false;
+
+  // ตรวจก่อนว่าทุกเรื่องเลือกค่าที่จำเป็นครบแล้ว — ไม่งั้นคิวจะไปค้างกลางทาง
+  const jobs = [], needPick = [];
+  for (const c of sel){
+    const pick = isvPickOf(c.dataset.claim);
+    if (pick === null) needPick.push(c.dataset.claim);
+    else jobs.push({claim: c.dataset.claim, inv: c.dataset.inv, pick});
+  }
+  if (needPick.length){
+    qBox.innerHTML = '<span style="color:var(--err)">⛔ ยังเลือกค่าไม่ครบ ' + needPick.length
+      + ' เรื่อง: ' + escHtml(needPick.join(", ")) + ' — เลือกในแผงตรวจให้ครบก่อน</span>';
+    return;
+  }
+
+  $("#isvrunall").disabled = true; $("#isvchkall").disabled = true;
+  let done = 0;
+  for (const j of jobs){
+    qBox.innerHTML = 'กำลังนำเข้า ' + escHtml(j.claim) + ' (' + (done + 1) + '/' + jobs.length + ')…'
+      + '<div style="color:var(--muted);margin-top:4px">รันทีละเรื่อง — EMCS ล็อกเรื่องรายตัว</div>';
+    const body = {claims: j.claim, invoice: j.inv, severity: $("#severity").value,
+                  claimmode: $("#claimmode").value, readonly: $("#readonly").checked,
+                  skipimages: $("#skipimages").checked, nosaveprice: $("#nosaveprice").checked,
+                  forcenew: $("#forcenew").checked, importxml: $("#importxml").checked,
+                  checklicense: $("#checklicense").checked, ...j.pick};
+    let runId = null;
+    try{
+      const {ok, data} = await postJSON("/run", body);
+      if (!ok){ qBox.innerHTML = '<span style="color:var(--err)">' + escHtml(j.claim) + ': '
+                + escHtml(data.error || "เริ่มงานไม่สำเร็จ") + ' — หยุดคิว</span>'; break; }
+      runId = data.run_id;      // /run คืนคีย์ run_id (ไม่ใช่ id — poll ถึงใช้ x.id)
+    }catch(e){ qBox.innerHTML = '<span style="color:var(--err)">ติดต่อเซิร์ฟเวอร์ไม่ได้ — หยุดคิว</span>'; break; }
+
+    // รอเรื่องนี้จบก่อนค่อยเริ่มเรื่องถัดไป
+    while (true){
+      await new Promise(r => setTimeout(r, 1500));
+      let st = null;
+      try{
+        const {data} = await postJSON("/poll", {});
+        st = (data.runs || []).find(x => x.id === runId);
+      }catch(e){ /* เน็ตสะดุด — วนรอต่อ */ }
+      if (st && st.status !== "running") break;
+    }
+    done++;
+    sel.find(c => c.dataset.claim === j.claim).checked = false;
+  }
+  updateIsvCount();
+  if (done === jobs.length) qBox.innerHTML = '✅ นำเข้าครบ ' + done + '/' + jobs.length
+    + ' เรื่อง — ตรวจ draft บน EMCS แล้วกดส่งงานเอง';
+  $("#isvrunall").disabled = false; $("#isvchkall").disabled = false;
+});
 
 // รันเรื่องหนึ่ง — เติมลงฟอร์มด้านล่างแล้วกดรัน (ตัวเลือกที่ตั้งไว้ยังมีผล)
 // pick = ค่าที่ผู้ใช้เลือกจากแผงตรวจ (ลักษณะความเสียหาย / คำนำหน้า) ส่งต่อเป็น flag
