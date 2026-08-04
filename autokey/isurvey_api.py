@@ -320,7 +320,7 @@ class ISurveyAPI:
 
         เดิมข้ามทั้งชุด ทำให้เคลมสด/นัดหมายที่อ่านผ่าน API ได้คู่กรณี 0 ราย
         แบบเงียบ ๆ (ไม่มี error) — user สั่ง 2026-08-03 ให้อ่านให้ครบเสมอ
-        อ่านครบทุก record ด้วย (ฝั่ง scrape อ่านได้แค่ record ที่แสดงอยู่)"""
+        อ่านครบทุก record (ฝั่ง scrape ก็วนครบแล้วเช่นกันตั้งแต่ 2026-08-04)"""
         for tab, target, spec in ((4, "third_parties", self._MAP_TP),
                                   (5, "injuries", self._MAP_INJ),
                                   (6, "assets", self._MAP_ASSET)):

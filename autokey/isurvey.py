@@ -532,9 +532,11 @@ def _read_record_tab(driver, tab_no: int, anchor_id: str, fields: dict,
     async — รอ anchor โผล่ แล้วโพลอ่านค่าซ้ำจนกว่าจะมีค่าหรือครบ wait_data
     วินาที (เคลมที่ไม่มีข้อมูลจะเสียเวลารอเท่า wait_data แล้วคืน list ว่าง)
 
-    หมายเหตุ: ถ้าเคลมมีหลาย record (เช่น คู่กรณีหลายคัน) หน้าเว็บจะมี dropdown
-    เลือกคัน ซึ่ง id เป็นแบบสุ่ม (combo-NNNN) ยัง iterate อัตโนมัติไม่ได้ —
-    ตอนนี้อ่าน record ที่แสดงอยู่ จะมี warning ใน validation ช่วยเตือน
+    เคลมที่มีหลาย record (คู่กรณีหลายคัน / ผู้บาดเจ็บหลายคน) หน้าเว็บมี dropdown
+    เลือก record — วนอ่านครบทุกตัวด้วย _combo_records + _combo_select
+    (เดิมอ่านแค่ตัวที่แสดงอยู่ = ข้อมูลหายเงียบ ๆ เช่นผู้บาดเจ็บ 3 คนได้มา 1 คน
+    คอมเมนต์เดิมเขียนว่า 'ยัง iterate อัตโนมัติไม่ได้' ซึ่งล้าสมัย — helper 3 ตัวนี้
+    มีอยู่แล้วและ enrich_third_parties_from_tab4 ใช้วนอ่านสำเร็จมาตลอด)
     """
     log(f"ISURVEY: อ่าน Tab {tab_no} {label}")
     _click_tab(driver, tab_no)
@@ -545,17 +547,41 @@ def _read_record_tab(driver, tab_no: int, anchor_id: str, fields: dict,
         return []
 
     ids = list(fields.values())
-    deadline = time.time() + wait_data
-    while True:
-        values = driver.execute_script(_JS_GET_VALUES, ids)
-        record = dict(zip(fields.keys(), values))
-        if any(str(v).strip() for v in record.values()):
-            log(f"   ✓ พบข้อมูล{label}")
-            return [record]
-        if time.time() >= deadline:
-            log(f"   ไม่มีข้อมูล{label}")
-            return []
-        time.sleep(1)
+
+    def _read_current(wait_s):
+        """อ่านค่าที่แสดงอยู่ตอนนี้ (โพลจนกว่าจะมีค่า) — None = ว่างทั้งฟอร์ม"""
+        deadline = time.time() + wait_s
+        while True:
+            record = dict(zip(fields.keys(),
+                              driver.execute_script(_JS_GET_VALUES, ids)))
+            if any(str(v).strip() for v in record.values()):
+                return record
+            if time.time() >= deadline:
+                return None
+            time.sleep(1)
+
+    # มี dropdown เลือก record → วนอ่านทีละตัว (ต้อง expand ก่อน store ถึงโหลด)
+    cid = _find_record_combo(driver)
+    recs = _combo_records(driver, cid) if cid else []
+    # เลือกทุกกรณีที่มี record แม้แค่ตัวเดียว — บางแท็บฟอร์มยังว่างจนกว่าจะเลือก
+    # (เคลม 2026013058298: คู่กรณี/ทรัพย์สินมีอย่างละ 1 แต่อ่านได้ '' ถ้าไม่เลือกก่อน)
+    if recs:
+        log(f"   {label} มี {len(recs)} รายการใน dropdown — วนอ่านทีละตัว")
+        out = []
+        for i, r in enumerate(recs, 1):
+            _combo_select(driver, cid, r["ikey"])
+            time.sleep(2)                      # รอฟอร์มโหลดค่าของ record ที่เลือก
+            rec = _read_current(wait_data)
+            if rec:
+                out.append(rec)
+            else:
+                log(f"   ⚠️ {label} รายการที่ {i} ({r.get('disp','')}) อ่านค่าไม่ได้ — ข้าม")
+        log(f"   ✓ พบข้อมูล{label} {len(out)}/{len(recs)} รายการ")
+        return out
+
+    rec = _read_current(wait_data)
+    log(f"   ✓ พบข้อมูล{label}" if rec else f"   ไม่มีข้อมูล{label}")
+    return [rec] if rec else []
 
 
 def read_tab4_third_party(driver, data: ClaimData):
