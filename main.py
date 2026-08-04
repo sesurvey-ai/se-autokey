@@ -102,6 +102,10 @@ def parse_args():
                         "ระบุชื่อเองได้ / ใส่ \"\" เพื่อข้าม)")
     p.add_argument("--image-type", default="รูปรถประกัน",
                    help="ประเภทรูปตอนอัปโหลด (default 'รูปรถประกัน')")
+    p.add_argument("--driver-title", default="",
+                   help="คำนำหน้าผู้ขับขี่รถประกัน (นาย/นาง/นางสาว/...) — ใส่เมื่อ "
+                        "ISURVEY ไม่มีข้อมูลและอนุมานจากชื่อผู้เอาประกันไม่ได้ "
+                        "(ไม่ใส่ = บอทหยุดรอให้เลือกบนหน้า EMCS)")
     p.add_argument("--severity", choices=["เบา", "หนัก"], default="เบา",
                    help="รถเสียหาย หนัก/เบา (field บังคับของ EMCS, default เบา)")
     p.add_argument("--force-new", action="store_true",
@@ -1714,6 +1718,11 @@ def main():
         banner("จบโหมดอ่านอย่างเดียว (--read-only)")
         driver.quit()
         return
+
+    # คำนำหน้าผู้ขับขี่จาก CLI (หน้าเว็บส่งมาเมื่อผู้ใช้เลือกเอง) — ทับค่าที่อนุมานไม่ได้
+    if getattr(args, "driver_title", "").strip() and not (data.driver_title or "").strip():
+        data.driver_title = args.driver_title.strip()
+        log_plain(f"\nℹ️ ใช้คำนำหน้าผู้ขับขี่ที่ระบุมา: {data.driver_title}")
 
     # ---------------- ส่วนที่ 2: กรอกข้อมูลลง EMCS ----------------
     # ด่าน "เคลมแห้งเท่านั้น" (user 2026-06-11) ถอดออกแล้ว 2026-08-03 — เหตุผลเดิมคือ

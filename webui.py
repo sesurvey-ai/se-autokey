@@ -117,6 +117,83 @@ def fetch_isurvey_cases(since: str = "", status: str = ISURVEY_STATUS_DONE):
         return None, f"อ่านรายการจาก ISURVEY ไม่ได้: {type(e).__name__}: {e}"
 
 
+def _spec_options(dropdown_id: str) -> list:
+    """ตัวเลือกจริงของ dropdown EMCS จาก runs/emcs_spec.json — [] ถ้ายังไม่ได้สกัดสเปก"""
+    try:
+        spec = json.loads(Path("runs/emcs_spec.json").read_text(encoding="utf-8"))
+        for f in spec:
+            opts = (f.get("dropdowns") or {}).get(dropdown_id)
+            if opts:
+                return [o["label"] for o in opts
+                        if o.get("label") and not o["label"].startswith("-")]
+    except Exception:
+        pass
+    return []
+
+
+def check_isurvey_case(claim: str, invoice: str = ""):
+    """ตรวจก่อนนำเข้า: เรื่องนี้บอทกรอกจนจบเองได้ไหม — คืน (ผลตรวจ, error)
+
+    แยกเป็น 2 ระดับ (ตั้งใจให้ต่างกัน — ปนกันแล้วคนจะเลิกอ่าน):
+    - **blockers** = บอทกรอกต่อไม่ได้ ต้องให้คนเลือกก่อน (ส่งตัวเลือกไปให้เลือกบนหน้าเว็บ
+      แล้วส่งต่อเป็น --loss-type / --driver-title) ไม่ใช่ "ข้อมูลไม่ครบ" แต่คือ
+      "ต้นทางไม่มีช่องนี้เลย" เช่นลักษณะความเสียหายของเคลมสด — ทุกใบจะติดเหมือนกันหมด
+    - **warnings** = ช่องสำคัญที่ว่าง ให้คนดูก่อนกด แต่บอทยังเดินต่อได้
+    """
+    global _isv_client
+    try:
+        from autokey.config import load_config
+        from autokey import emcs
+        from autokey.isurvey_api import ISurveyAPI
+        if _isv_client is None:
+            _isv_client = ISurveyAPI(load_config())
+            _isv_client.login()
+        try:
+            data = _isv_client.read_claim(claim, invoice, expect_claim=claim)
+        except Exception:
+            _isv_client.login()
+            data = _isv_client.read_claim(claim, invoice, expect_claim=claim)
+    except Exception as e:
+        _isv_client = None
+        return None, f"อ่านเคลม {claim} ไม่ได้: {type(e).__name__}: {e}"
+
+    blockers = []
+    # 1) ลักษณะความเสียหาย — ISURVEY ไม่มีช่องนี้ (XML ก็ว่าง) เคลมแห้งเดาได้จากโครงสร้าง
+    if data.third_parties:
+        blockers.append({
+            "field": "losstype", "label": "ลักษณะความเสียหาย",
+            "why": "ISURVEY ไม่มีข้อมูลช่องนี้ (มีแต่ 'ลักษณะการเกิดเหตุ' ซึ่งคนละเรื่อง) "
+                   "— เคลมที่มีคู่กรณีต้องเลือกเอง",
+            "options": _spec_options("ddlLoss_ID"),
+        })
+    # 2) คำนำหน้าผู้ขับขี่ — อนุมานจากชื่อผู้เอาประกันได้บ้าง ไม่ได้ก็ต้องเลือก
+    title, src = emcs._derive_insured_title(data)
+    if not title:
+        blockers.append({
+            "field": "drivertitle", "label": "คำนำหน้าผู้ขับขี่",
+            "why": "ISURVEY ไม่มีคำนำหน้า และชื่อผู้ขับขี่ไม่ตรงกับผู้เอาประกัน "
+                   "จึงยกมาใช้ไม่ได้ (เพศบอกได้แค่ ชาย/หญิง แยก นาง/นางสาว ไม่ได้)",
+            "options": _spec_options("ddlDri_Title_ID"),
+        })
+
+    v = data.validate()
+    return {
+        "claim": data.claim_value, "invoice": data.invoice_value,
+        "plate": data.insure_plate, "car": f"{data.car_brand} {data.insure_model}".strip(),
+        "insured": data.insure_name, "driver": f"{data.driver_name} {data.driver_surname}".strip(),
+        "acc_result": data.acc_result,
+        "counts": {"opponents": len(data.third_parties or []),
+                   "injuries": len(data.injuries or []),
+                   "assets": len(data.assets or []),
+                   "damage": len(data.damage or [])},
+        "bill_net": (data.bill or {}).get("total_net", ""),
+        "blockers": blockers,
+        "warnings": v.get("critical", []) + v.get("warnings", []),
+        "ready": not blockers,
+        "title_from": src,
+    }, None
+
+
 def fetch_sesurvey_xml(case_id: str):
     """ดึงไฟล์ XML (INSERT_SURV_REPORT_XML) ของเคสจาก se-survey — คืน (bytes, error)
     proxy ฝั่ง server แนบ token; เบราว์เซอร์ดาวน์โหลดผ่าน webui (same-origin) ไม่ต้องรู้ token
@@ -230,16 +307,27 @@ def _build_cmd(params: dict):
     if params.get("checklicense"):
         cmd += ["--check-license"]
 
+    # ค่าที่ผู้ใช้เลือกจากแผง "🔍 ตรวจ" — ช่องที่ ISURVEY ไม่มีข้อมูลให้บอทเดา
+    # ส่งมาแล้วบอทกรอกต่อได้จนจบ ไม่ต้องหยุดรอบนหน้า EMCS กลางทาง
+    losstype = (params.get("losstype") or "").strip()
+    if losstype:
+        cmd += ["--loss-type", losstype]
+    drivertitle = (params.get("drivertitle") or "").strip()
+    if drivertitle:
+        cmd += ["--driver-title", drivertitle]
+
     # โหมดนำเข้า XML: ให้ EMCS import ฟอร์มหลักจาก SURV_REPORT XML แทนกรอกเอง
     # (run_import_xml อ่านเคลมด้วย scrape เองเพื่อโหลด XML + คู่กรณีครบ) — ทำได้ทีละเคลม
     if params.get("importxml"):
         cmd += ["--import-xml"]
 
-    # โหมดเคลมสด/นัดหมาย/ติดตาม: ปลดด่านเคลมแห้ง (--allow-fresh) + อ่านด้วย scrape
-    # (--scrape) เพื่อดึงคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินจาก XML — API อ่าน tab-4/5/6 ไม่ได้
-    # (ผู้บาดเจ็บ/ทรัพย์สินยังต้องกรอกเองบน EMCS — ฟังก์ชันกรอกยังไม่รองรับ)
+    # โหมดเคลมสด/นัดหมาย/ติดตาม
+    # ⚠️ เหตุผลเดิมของ --scrape ("API อ่าน tab-4/5/6 ไม่ได้") ไม่จริงแล้วตั้งแต่ 2026-08-03
+    # — API อ่านคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินครบทุกประเภทเคลม และอ่านได้ครบทุกรายการ
+    # (scrape อ่านได้แค่รายการที่แสดงอยู่จนถึง 2026-08-04) จึงไม่ต้องบังคับ --scrape แล้ว
+    # --allow-fresh กลายเป็น no-op (ถอดด่านเคลมแห้งแล้ว) คงไว้ให้เข้ากันได้กับของเดิม
     if params.get("claimmode") == "fresh":
-        cmd += ["--allow-fresh", "--scrape"]
+        cmd += ["--allow-fresh"]
 
     # ไม่มี console ให้กด Enter — ต้องข้ามการหยุดถามเสมอ
     # (ปลอดภัย: การกรอก EMCS เป็นแค่บันทึก draft สคริปต์ไม่กด "ส่งงานใหม่")
@@ -574,6 +662,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(502, {"error": err})
             else:
                 self._send(200, {"cases": cases})
+        elif u.path == "/isurvey-check":
+            q = parse_qs(u.query)
+            claim = ((q.get("claim") or [""])[0]).strip()
+            inv = ((q.get("invoice") or [""])[0]).strip()
+            if not claim:
+                self._send(400, {"error": "ไม่ได้ระบุเลขเคลม"})
+            else:
+                res, err = check_isurvey_case(claim, inv)
+                self._send(502 if err else 200, {"error": err} if err else res)
         elif u.path == "/isurvey-cases":
             since = ((parse_qs(u.query).get("since") or [""])[0]).strip()
             rows, err = fetch_isurvey_cases(since=since)
@@ -1324,7 +1421,10 @@ runBtn.addEventListener("click", async () => {
     forcenew: $("#forcenew").checked,
     importxml: $("#importxml").checked,
     checklicense: $("#checklicense").checked,
+    // ค่าที่ผู้ใช้เลือกจากแผง 🔍 ตรวจ (ช่องที่ ISURVEY ไม่มีข้อมูลให้)
+    ...(window.__isvPick || {}),
   };
+  window.__isvPick = null;   // ใช้ครั้งเดียว กันติดไปกับการรันรอบถัดไป
   try{
     const {ok,data} = await postJSON("/run", body);
     if (!ok){ alert(data.error || "เริ่มงานไม่สำเร็จ"); runBtn.disabled=false; return; }
@@ -1463,18 +1563,75 @@ function renderIsvCases(rows){
       +     ' · ปิดงาน ' + escHtml(closed) + (r.acc_province ? ' · ' + escHtml(r.acc_province) : '')
       +   '</div>'
       + '</div>'
+      + '<button class="run isvchk" style="padding:7px 12px;font-size:13px;white-space:nowrap;background:#64748b" '
+      +   'data-claim="' + escHtml(r.claim_no || "") + '" data-inv="' + escHtml(r.survey_no || "") + '">🔍 ตรวจ</button>'
       + '<button class="run isvact" style="padding:7px 12px;font-size:13px;white-space:nowrap" '
       +   'data-claim="' + escHtml(r.claim_no || "") + '" data-inv="' + escHtml(r.survey_no || "") + '">⚡ นำเข้า</button>'
-      + '</div>';
+      + '</div><div class="isvpanel" data-for="' + escHtml(r.claim_no || "") + '" hidden '
+      + 'style="padding:10px 12px;margin:0 0 8px;background:var(--bg2,#0f172a11);border-radius:8px;font-size:13px"></div>';
   }).join("");
-  isvBox.querySelectorAll(".isvact").forEach(b => {
-    b.addEventListener("click", () => {
-      // เติมลงฟอร์มด้านล่างแล้วรัน — ตัวเลือก (ความเสียหาย/ประเภทเคลม/ฯลฯ) ที่ตั้งไว้ยังมีผล
-      $("#claims").value = b.dataset.claim;
-      $("#invoice").value = b.dataset.inv;
-      runBtn.click();
-    });
+  isvBox.querySelectorAll(".isvchk").forEach(b => {
+    b.addEventListener("click", () => checkIsvCase(b));
   });
+  isvBox.querySelectorAll(".isvact").forEach(b => {
+    b.addEventListener("click", () => runIsvCase(b.dataset.claim, b.dataset.inv));
+  });
+}
+
+// รันเรื่องหนึ่ง — เติมลงฟอร์มด้านล่างแล้วกดรัน (ตัวเลือกที่ตั้งไว้ยังมีผล)
+// pick = ค่าที่ผู้ใช้เลือกจากแผงตรวจ (ลักษณะความเสียหาย / คำนำหน้า) ส่งต่อเป็น flag
+function runIsvCase(claim, inv, pick){
+  $("#claims").value = claim;
+  $("#invoice").value = inv || "";
+  window.__isvPick = pick || null;
+  runBtn.click();
+}
+
+async function checkIsvCase(btn){
+  const panel = isvBox.querySelector('.isvpanel[data-for="' + btn.dataset.claim + '"]');
+  panel.hidden = false;
+  panel.innerHTML = 'กำลังอ่านเคลมจาก ISURVEY…';
+  btn.disabled = true;
+  try{
+    const r = await fetch("/isurvey-check?claim=" + encodeURIComponent(btn.dataset.claim)
+                          + "&invoice=" + encodeURIComponent(btn.dataset.inv || ""));
+    const d = await r.json();
+    if (!r.ok){ panel.innerHTML = '<span style="color:var(--err)">' + escHtml(d.error||"ตรวจไม่สำเร็จ") + '</span>'; return; }
+    const c = d.counts || {};
+    let h = '<div style="margin-bottom:6px">' + escHtml(d.car || "") + ' · ' + escHtml(d.plate || "")
+          + ' · ' + escHtml(d.acc_result || "") + '</div>'
+          + '<div style="color:var(--muted);margin-bottom:8px">คู่กรณี ' + c.opponents
+          + ' · ผู้บาดเจ็บ ' + c.injuries + ' · ทรัพย์สิน ' + c.assets
+          + ' · ความเสียหาย ' + c.damage + ' รายการ · สุทธิ ' + escHtml(d.bill_net || "-") + '</div>';
+    if (d.ready){
+      h += '<div style="color:#16a34a;font-weight:600">✅ ข้อมูลครบ นำเข้าได้เลย</div>';
+    } else {
+      h += d.blockers.map(b =>
+        '<div style="margin:8px 0">'
+        + '<div style="font-weight:600">⛔ ต้องเลือกก่อน: ' + escHtml(b.label) + '</div>'
+        + '<div style="color:var(--muted);margin:2px 0 4px">' + escHtml(b.why) + '</div>'
+        + '<select class="isvpick" data-field="' + b.field + '" style="width:100%;padding:6px 8px">'
+        + '<option value="">— เลือก —</option>'
+        + b.options.map(o => '<option>' + escHtml(o) + '</option>').join("")
+        + '</select></div>').join("");
+    }
+    if ((d.warnings || []).length){
+      h += '<div style="color:#d97706;margin-top:8px">⚠️ ตรวจด้วย: ' + escHtml(d.warnings.join(" · ")) + '</div>';
+    }
+    h += '<div style="margin-top:10px"><button class="run isvgo" style="padding:7px 14px;font-size:13px">⚡ นำเข้า EMCS</button></div>';
+    panel.innerHTML = h;
+    panel.querySelector(".isvgo").addEventListener("click", () => {
+      const pick = {};
+      let missing = false;
+      panel.querySelectorAll(".isvpick").forEach(s => {
+        if (!s.value){ missing = true; s.style.borderColor = "var(--err)"; }
+        else pick[s.dataset.field] = s.value;
+      });
+      if (missing){ alert("ยังเลือกไม่ครบ — ช่องที่ขอบแดงต้องเลือกก่อน\\n\\n(ไม่เลือก บอทจะไปหยุดรอกลางทางบนหน้า EMCS)"); return; }
+      runIsvCase(btn.dataset.claim, btn.dataset.inv, pick);
+    });
+  }catch(e){ panel.innerHTML = '<span style="color:var(--err)">ติดต่อเซิร์ฟเวอร์ไม่ได้</span>'; }
+  finally{ btn.disabled = false; }
 }
 
 loadIsvBtn.addEventListener("click", async () => {
