@@ -111,6 +111,11 @@ def parse_args():
     p.add_argument("--force-new", action="store_true",
                    help="สร้างเรื่องใหม่แม้เคลมนี้จะมีเรื่องใน EMCS อยู่แล้ว "
                         "(ปกติระบบจะหยุดกันเปิดเรื่องซ้ำ)")
+    p.add_argument("--fill-existing", action="store_true",
+                   help="เรื่องมีอยู่แล้วบน EMCS → เปิดเรื่องเดิม กด 'แก้ไข' แล้วกรอกต่อ "
+                        "(ไม่สร้างเรื่องใหม่ ไม่ต้องยกเลิกของเดิม). ระบุเรื่องด้วย "
+                        "--esurvey ถ้ามีหลายเรื่อง. ⚠️ ใช้กับเรื่องที่ยังไม่ได้เติม "
+                        "คู่กรณี/ความเสียหาย/รูป ไม่งั้นอาจเพิ่มรายการซ้ำ")
     # --no-save-price = ชื่อเดิม (คงไว้ให้คำสั่งที่จดไว้ยังใช้ได้) — ความหมายจริงคือ
     # "กรอกหน้าค่าใช้จ่ายแบบย่อ" ไม่ได้แปลว่าไม่กดบันทึก (กดเสมอ ไม่งั้นหัวบิลไม่ติด)
     p.add_argument("--no-full-billing", "--no-save-price", action="store_true",
@@ -1755,15 +1760,29 @@ def main():
         images_folder = resolve_images_dir(cfg, data.claim_value, for_read=False)
 
     try:
-        esurvey = emcs.run_fill(
-            driver, cfg, data,
-            images_folder=images_folder,
-            loss_type=args.loss_type,
-            image_type=args.image_type,
-            severity=args.severity,
-            force_new=args.force_new,
-            full_billing=not args.no_save_price,
-        )
+        if args.fill_existing:
+            # เรื่องมีอยู่แล้วบน EMCS (เช่นหน้าหลักถูกบันทึกไปแล้วแต่ส่วนที่เหลือยังว่าง)
+            # → เปิดเรื่องเดิม กด "แก้ไข" แล้วกรอกต่อ ไม่ต้องยกเลิกทิ้งแล้วทำใหม่
+            # (ตราบใดที่ยังไม่กด "ส่งงานใหม่" ที่หน้าค่าใช้จ่าย ยังแก้ได้ — กติกา user 2026-08-04)
+            esurvey = emcs.fill_existing_report(
+                driver, cfg, data,
+                esurvey=args.esurvey,
+                images_folder=images_folder,
+                loss_type=args.loss_type,
+                image_type=args.image_type,
+                severity=args.severity,
+                full_billing=not args.no_save_price,
+            )
+        else:
+            esurvey = emcs.run_fill(
+                driver, cfg, data,
+                images_folder=images_folder,
+                loss_type=args.loss_type,
+                image_type=args.image_type,
+                severity=args.severity,
+                force_new=args.force_new,
+                full_billing=not args.no_save_price,
+            )
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs",
                             tag=f"error_emcs_{data.claim_value}")

@@ -416,6 +416,12 @@ def _build_cmd(params: dict):
         cmd += ["--no-save-price"]
     if params.get("forcenew"):
         cmd += ["--force-new"]
+    # เรื่องมีอยู่แล้วบน EMCS (หน้าหลักบันทึกไปแล้ว ส่วนที่เหลือยังว่าง) → กรอกต่อบนเรื่องเดิม
+    if params.get("fillexisting"):
+        cmd += ["--fill-existing"]
+        _es = (params.get("esurvey") or "").strip()
+        if _es:
+            cmd += ["--esurvey", _es]
     if params.get("checklicense"):
         cmd += ["--check-license"]
 

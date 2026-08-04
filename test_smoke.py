@@ -1436,8 +1436,9 @@ _main_src = _insp.getsource(_main) if hasattr(_main, "__file__") else open(
     "main.py", encoding="utf-8").read()
 check("call site: เส้นทาง se-survey ส่ง full_billing=False",
       _main_src.count("full_billing=False") == 2)
-check("call site: เส้นทาง ISURVEY ส่ง full_billing=not args.no_save_price",
-      _main_src.count("full_billing=not args.no_save_price") == 2)
+# 3 จุด: run_fill (สร้างใหม่) / run_import (นำเข้า XML) / fill_existing_report (กรอกต่อเรื่องเดิม)
+check("call site: ทุกเส้นทาง ISURVEY ส่ง full_billing=not args.no_save_price",
+      _main_src.count("full_billing=not args.no_save_price") == 3)
 # คอลัมน์อนุมัติของบริษัทประกัน (txtIns_*) disabled บนหน้าจริง — บอทต้องไม่แตะ
 # และยอดรวม/VAT JS คำนวณเอง ห้ามพิมพ์ทับ
 _ft = _insp.getsource(emcs.fill_fee_table)
@@ -1830,6 +1831,21 @@ check("build_cmd nosaveprice: มี --no-save-price",
 _cmd, _e = _webui._build_cmd({"claims": "2026013041465"})
 check("build_cmd default: ไม่มี --no-save-price (บันทึกราคาตามปกติ)",
       _e is None and "--no-save-price" not in _cmd)
+# กรอกต่อบนเรื่องเดิม — ตราบใดที่ยังไม่กด 'ส่งงานใหม่' EMCS ยังกด 'แก้ไข' ได้
+# (กติกา user 2026-08-04) จึงไม่ต้องยกเลิก draft แล้วสร้างใหม่
+_cmd, _e = _webui._build_cmd({"claims": "2026013059072", "fillexisting": True,
+                              "esurvey": "S68426080794"})
+check("build_cmd fillexisting: ส่ง --fill-existing + --esurvey",
+      _e is None and "--fill-existing" in _cmd
+      and _cmd[_cmd.index("--esurvey") + 1] == "S68426080794")
+check("build_cmd fillexisting: ต้องไม่พ่วง --force-new (คนละเรื่องกัน)",
+      "--force-new" not in _cmd)
+_cmd, _e = _webui._build_cmd({"claims": "2026013059072", "fillexisting": True})
+check("build_cmd fillexisting: ไม่ระบุเลขเรื่อง → ไม่ส่ง --esurvey (ให้บอทเลือก draft เอง)",
+      _e is None and "--fill-existing" in _cmd and "--esurvey" not in _cmd)
+_cmd, _e = _webui._build_cmd({"claims": "2026013059072"})
+check("build_cmd default: ไม่มี --fill-existing (สร้างเรื่องใหม่ตามปกติ)",
+      _e is None and "--fill-existing" not in _cmd)
 # forcenew → --force-new (สร้างเรื่องใหม่แม้มีเรื่องเดิม); ไม่ติ๊ก = ไม่มี (กันเปิดซ้ำ)
 _cmd, _e = _webui._build_cmd({"claims": "2026013048453", "forcenew": True})
 check("build_cmd forcenew: มี --force-new",
