@@ -247,7 +247,7 @@ class ISurveyAPI:
         "policy_no": ("oth_policy_no", None),
         "prb_company": ("oth_comp_insurer", None), "prb_no": ("oth_comp_no", None),
         "claim_no": ("oth_accident_no", None),
-        "cost_damage": ("D_TOTAL", None),
+        "cost_damage": ("@cost_damage", None),
         "damage_memo": ("damage_memo", None), "repairer": ("req_fix_place", None),
         "memo": ("memo", None),
     }
@@ -295,6 +295,15 @@ class ISurveyAPI:
         for key, (col, kind) in spec.items():
             # '@address' = ที่อยู่เต็มแบบเดียวกับ XML: บ้านเลขที่,ตำบล,อำเภอ
             # (API แยกเป็นคนละคอลัมน์ ถ้าส่งแค่ address จะได้แค่ '215 หมู่ 13')
+            # '@cost_damage' = ค่าเสียหายรวมของคู่กรณี — API ไม่มีช่องยอดรวมให้
+            # ต้องบวกเอง (อะไหล่ + ค่าแรง + อื่นๆ) เหมือนที่หน้าจอคำนวณให้
+            # ⚠️ อย่าใช้ 'total' จาก list_records — คนละยอด (เคลม 2026013058298
+            # ให้ 33000 แต่ค่าเสียหายจริงคือ 16500 ตามที่ XML ส่งออก)
+            if col == "@cost_damage":
+                total = sum(_money(flat.get(k))
+                            for k in ("D_SPRP", "D_LABOUR", "D_OTH"))
+                out[key] = f"{total:g}" if total else ""
+                continue
             # '@district' = รหัสอำเภอของ EMCS (ต้องใช้ทั้งรหัสอำเภอ+จังหวัดของ ISURVEY)
             if col == "@district":
                 out[key] = emcs_map.district(
