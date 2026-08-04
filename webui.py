@@ -265,6 +265,21 @@ def check_isurvey_case(claim: str, invoice: str = ""):
         })
 
     v = data.validate()
+    warnings = list(v.get("critical", []) + v.get("warnings", []))
+
+    # ยอดค่าสำรวจเป็น 0 — งานสถานะ "จบงาน" ปกติต้องมียอดแล้ว (กติกา user)
+    # ถ้าเป็น 0 แปลว่ายอดยังตามมาทีหลัง → นำเข้าตอนนี้บอทจะกรอกตารางราคาเป็น 0
+    # ให้เตือน ไม่บล็อก (บางงานอาจไม่มีค่าสำรวจจริง ๆ — คนตัดสิน)
+    # เจอจริง: เคลม 2026013160275 จบงานแล้วแต่ INS_*/SUR_* เป็น 0 ทั้งชุด
+    _bill = data.bill or {}
+    try:
+        _net = float(str(_bill.get("total_net") or 0).replace(",", "").strip() or 0)
+    except ValueError:
+        _net = 0.0
+    if _net <= 0:
+        warnings.insert(0, "ยอดค่าสำรวจเป็น 0 — ถ้านำเข้าตอนนี้ตารางราคาใน EMCS "
+                           "จะเป็น 0 ด้วย (รอยอดก่อน หรือกรอกเองภายหลัง)")
+
     return {
         "claim": data.claim_value, "invoice": data.invoice_value,
         "plate": data.insure_plate, "car": f"{data.car_brand} {data.insure_model}".strip(),
@@ -275,8 +290,9 @@ def check_isurvey_case(claim: str, invoice: str = ""):
                    "assets": len(data.assets or []),
                    "damage": len(data.damage or [])},
         "bill_net": (data.bill or {}).get("total_net", ""),
+        "bill_zero": _net <= 0,
         "blockers": blockers,
-        "warnings": v.get("critical", []) + v.get("warnings", []),
+        "warnings": warnings,
         "ready": not blockers,
         "title_from": src,
     }, None
@@ -1931,11 +1947,14 @@ async function checkIsvCase(btn){
     const d = await r.json();
     if (!r.ok){ panel.innerHTML = '<span style="color:var(--err)">' + escHtml(d.error||"ตรวจไม่สำเร็จ") + '</span>'; return; }
     const c = d.counts || {};
+    const netTxt = d.bill_zero
+      ? '<b style="color:#d97706">สุทธิ ' + escHtml(d.bill_net || "0.00") + ' ⚠️</b>'
+      : 'สุทธิ ' + escHtml(d.bill_net || "-");
     let h = '<div style="margin-bottom:6px">' + escHtml(d.car || "") + ' · ' + escHtml(d.plate || "")
           + ' · ' + escHtml(d.acc_result || "") + '</div>'
           + '<div style="color:var(--muted);margin-bottom:8px">คู่กรณี ' + c.opponents
           + ' · ผู้บาดเจ็บ ' + c.injuries + ' · ทรัพย์สิน ' + c.assets
-          + ' · ความเสียหาย ' + c.damage + ' รายการ · สุทธิ ' + escHtml(d.bill_net || "-") + '</div>';
+          + ' · ความเสียหาย ' + c.damage + ' รายการ · ' + netTxt + '</div>';
     if (d.ready){
       h += '<div style="color:#16a34a;font-weight:600">✅ ข้อมูลครบ นำเข้าได้เลย</div>';
     } else {
