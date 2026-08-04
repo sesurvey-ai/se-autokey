@@ -100,6 +100,12 @@ def main():
     lic = match(api.master("masterDrvLicense", "dvlTID", "dvl_type"),
                 dd["ddlEmcs_License_Type"], "ประเภทใบขับขี่")
 
+    # ชื่อบริษัทประกัน: ฟอร์ม ISURVEY โชว์ "รหัส" ไม่ใช่ชื่อ (ช่องคู่กรณีโชว์ '1')
+    # เส้น scrape จึงต้องแปลงเองแบบ offline — EMCS เลือกด้วยชื่อ
+    company = {k: v for k, v in
+               api.master("masterLtCompany", "companyID", "companyName").items() if v}
+    print(f"\n=== บริษัทประกัน: เก็บชื่อไว้ {len(company)} รายการ (ใช้ตอน scrape)")
+
     if a.dry:
         print("\n(--dry: ไม่เขียนไฟล์)")
         return
@@ -126,6 +132,9 @@ PERSON_TYPE_TO_XML = {json.dumps(PERSON_TYPE, ensure_ascii=False, indent=4)}
 # {{injury_type ของ ISURVEY: รหัส ddlWounded_Type ของ EMCS}}
 WOUNDED_TYPE_TO_EMCS = {json.dumps(WOUNDED_TYPE, ensure_ascii=False, indent=4)}
 
+# {{รหัสบริษัทประกัน ISURVEY: ชื่อบริษัท}} — ใช้ตอนอ่านผ่าน scrape ที่ฟอร์มโชว์แต่รหัส
+COMPANY_NAME = {json.dumps(company, ensure_ascii=False, indent=4)}
+
 
 def province(isurvey_code) -> str:
     """รหัสจังหวัด ISURVEY → EMCS ('' เมื่อแปลงไม่ได้ — อย่าเดา ปล่อยว่างให้คนเลือก)"""
@@ -141,6 +150,12 @@ def person_type(isurvey_related_accident_id) -> str:
 def wounded_type(isurvey_injury_type) -> str:
     """injury_type ของ ISURVEY → รหัส ddlWounded_Type ของ EMCS ('' = ไม่รู้ ปล่อยว่าง)"""
     return WOUNDED_TYPE_TO_EMCS.get(str(isurvey_injury_type or "").strip(), "")
+
+
+def company(isurvey_code) -> str:
+    """รหัสบริษัทประกัน ISURVEY → ชื่อบริษัท (master เก็บรหัส 5 หลักเติมศูนย์)"""
+    c = str(isurvey_code or "").strip()
+    return COMPANY_NAME.get(c) or COMPANY_NAME.get(c.zfill(5), "") if c else ""
 
 
 def license_type(isurvey_code) -> str:

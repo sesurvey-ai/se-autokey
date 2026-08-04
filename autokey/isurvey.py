@@ -22,6 +22,7 @@ from .browser import (
     wait_visible,
 )
 from .claim_data import ClaimData
+from . import isurvey_emcs_map as emcs_map
 from .images import download_images
 
 # แถบ tab ของหน้ารายละเอียดเคลม (ExtJS ไม่มี id ที่อ่านง่าย จึงยังต้องใช้
@@ -409,6 +410,25 @@ _JS_GET_VALUES = (
     "});"
 )
 
+# อ่าน "รหัสดิบ" ที่อยู่หลังช่อง combo (เช่นจังหวัด ช่องโชว์ 'ชลบุรี' แต่ค่าจริงคือ 20)
+# ต้องใช้เพราะ EMCS รับเป็นรหัส ไม่ใช่ชื่อ — และรหัสที่ได้ตรงกับที่ ISURVEY API คืนเป๊ะ
+# (พิสูจน์กับเคลม 2026013147939: provinceID 36 · amphurID 3607 · lic_typeID 15 · gender M)
+# datefield คืน object ที่ serialize ไม่ได้ → ตกไปใช้ค่าที่แสดงบนจอแทน
+_JS_GET_RAW = (
+    "return arguments[0].map(id => {"
+    "  const e = document.getElementById(id);"
+    "  if (!e) return '';"
+    "  try {"
+    "    const c = Ext.getCmp(e.id.replace('-inputEl',''));"
+    "    if (c && c.getValue) {"
+    "      const v = c.getValue();"
+    "      if (v !== null && v !== undefined && typeof v !== 'object') return String(v);"
+    "    }"
+    "  } catch (err) {}"
+    "  return e.value || '';"
+    "});"
+)
+
 # แผนที่ field ของ Tab 4-6 (ได้จากการ probe หน้าเว็บจริง — prefix ไม่ใช่ tabN_)
 THIRD_PARTY_FIELDS = {
     "plate_no": "othercar_plate_no-inputEl",
@@ -549,12 +569,17 @@ def _read_record_tab(driver, tab_no: int, anchor_id: str, fields: dict,
     ids = list(fields.values())
 
     def _read_current(wait_s):
-        """อ่านค่าที่แสดงอยู่ตอนนี้ (โพลจนกว่าจะมีค่า) — None = ว่างทั้งฟอร์ม"""
+        """อ่านค่าที่แสดงอยู่ตอนนี้ (โพลจนกว่าจะมีค่า) — None = ว่างทั้งฟอร์ม
+
+        เก็บ '_raw' (รหัสดิบหลัง combo) ควบไปด้วย เพราะ EMCS รับรหัสไม่ใช่ชื่อ
+        ตัวแปลง _*_to_emcs_vocab จะหยิบไปใช้แล้วทิ้งคีย์นี้"""
         deadline = time.time() + wait_s
         while True:
             record = dict(zip(fields.keys(),
                               driver.execute_script(_JS_GET_VALUES, ids)))
             if any(str(v).strip() for v in record.values()):
+                record["_raw"] = dict(zip(
+                    fields.keys(), driver.execute_script(_JS_GET_RAW, ids)))
                 return record
             if time.time() >= deadline:
                 return None
@@ -584,22 +609,100 @@ def _read_record_tab(driver, tab_no: int, anchor_id: str, fields: dict,
     return [rec] if rec else []
 
 
+def _thai_date_to_iso(s: str) -> str:
+    """'18/12/1985' → '1985-12-18' (ค.ศ. อยู่แล้ว) — emcs.py แปลงเป็น พ.ศ. เองต่อ"""
+    m = re.match(r"(\d{2})/(\d{2})/(\d{4})$", (s or "").strip())
+    return f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else (s or "").strip()
+
+
+def _tp_to_emcs_vocab(rec: dict) -> dict:
+    """แปลง record คู่กรณีจากฟอร์ม → คำศัพท์เดียวกับที่ surv_xml/emcs.py ใช้
+
+    ทำไมต้องแปลง: ฟอร์มให้ "ชื่อ" (ชัยภูมิ / ใบขับขี่รถยนต์ส่วนบุคคล) แต่ EMCS รับ "รหัส"
+    ของตัวเอง และคีย์ก็คนละชื่อ (drv_gender vs gender) — ส่งดิบ ๆ = เลือกผิด/หายเงียบ ๆ
+    รหัสดิบของ ISURVEY อ่านจาก _raw (ExtJS getValue) แล้วแปลงด้วย isurvey_emcs_map
+    แปลงไม่ได้ = ปล่อยว่าง ให้คนเลือกเอง ไม่เดา"""
+    raw = rec.get("_raw", {})
+    prov_id, amph_id = raw.get("drv_province", ""), raw.get("drv_amphur", "")
+    addr = [rec.get("address", ""), rec.get("drv_tumbon", ""),
+            rec.get("drv_amphur", ""), rec.get("drv_province", "")]
+    return {
+        "opo_name": rec.get("owner_name", ""), "opo_address": rec.get("owner_address", ""),
+        "plate_no": rec.get("plate_no", ""), "plate_province": rec.get("plate_province", ""),
+        "plate_province_id": emcs_map.province(raw.get("plate_province", "")),
+        "car_brand": rec.get("car_brand", ""), "car_model": rec.get("car_model", ""),
+        "car_color": rec.get("car_color", ""), "veh_type": rec.get("veh_type", ""),
+        "chassis_no": rec.get("chassis_no", ""), "engine_no": rec.get("engine_no", ""),
+        "drv_name": rec.get("drv_name", ""), "gender": raw.get("drv_gender", ""),
+        "relation": rec.get("relation", ""), "age": rec.get("age", ""),
+        "birthdate": _thai_date_to_iso(rec.get("birthdate", "")),
+        "idcard": rec.get("idcard", ""), "phone": rec.get("phone", ""),
+        "address": ",".join(p for p in addr if str(p).strip()),
+        "province_id": emcs_map.province(prov_id),
+        "district_id": emcs_map.district(amph_id, prov_id),
+        "lic_no": rec.get("lic_no", ""),
+        "lic_type": emcs_map.license_type(raw.get("lic_type", "")),
+        "lic_place": rec.get("lic_issue_province", ""),
+        "lic_issue_date": _thai_date_to_iso(rec.get("lic_issue_date", "")),
+        "lic_expire_date": _thai_date_to_iso(rec.get("lic_expire_date", "")),
+        "insurer": emcs_map.company(raw.get("insurer", "")),
+        "insure_type": rec.get("insure_type", ""), "policy_no": rec.get("policy_no", ""),
+        "prb_company": rec.get("prb_company", ""), "prb_no": rec.get("prb_no", ""),
+        "claim_no": rec.get("accident_no", ""), "cost_damage": rec.get("damage_total", ""),
+        "damage_memo": rec.get("damage_memo", ""), "repairer": rec.get("fix_place", ""),
+        "memo": rec.get("memo", ""),
+    }
+
+
 def read_tab4_third_party(driver, data: ClaimData):
-    data.third_parties = _read_record_tab(
-        driver, 4, "othercar_plate_no-inputEl", THIRD_PARTY_FIELDS, "คู่กรณี"
-    )
+    data.third_parties = [
+        _tp_to_emcs_vocab(r) for r in _read_record_tab(
+            driver, 4, "othercar_plate_no-inputEl", THIRD_PARTY_FIELDS, "คู่กรณี")
+    ]
+
+
+def _inj_to_emcs_vocab(rec: dict) -> dict:
+    """แปลง record ผู้บาดเจ็บจากฟอร์ม → คำศัพท์เดียวกับ surv_xml/emcs.py
+    (ที่อยู่ต่อ ตำบล,อำเภอ,จังหวัด เหมือน XML — ยืนยันจากเคลม 2026013058298)"""
+    raw = rec.get("_raw", {})
+    addr = [rec.get("address", ""), rec.get("tumbon", ""),
+            rec.get("amphur", ""), rec.get("province", "")]
+    return {
+        "name": rec.get("name", ""), "gender": raw.get("gender", ""),
+        "age": rec.get("age", ""), "citizen_id": rec.get("idcard", ""),
+        "job": rec.get("occupation", ""), "tel_no": rec.get("phone", ""),
+        "address": ",".join(p for p in addr if str(p).strip()),
+        "hospital": rec.get("hospital", ""), "cost": rec.get("medical_cost", ""),
+        "injure": rec.get("injury_detail", ""),
+        "person_type": emcs_map.person_type(raw.get("related", "")),
+        "wounded_type": emcs_map.wounded_type(raw.get("injury_type", "")),
+    }
+
+
+def _asset_to_emcs_vocab(rec: dict) -> dict:
+    """แปลง record ทรัพย์สินจากฟอร์ม → คำศัพท์เดียวกับ surv_xml/emcs.py
+    ⚠️ ที่อยู่เจ้าของ "ไม่ต่อ" ตำบล/อำเภอ/จังหวัด (ต่างจากผู้บาดเจ็บ — ยืนยันจาก XML จริง)"""
+    return {
+        "name": rec.get("name", ""), "damage_detail": rec.get("damage_detail", ""),
+        "damage_cost": rec.get("damage_cost", ""),
+        "owner_name": rec.get("owner_name", ""),
+        "owner_address": rec.get("owner_address", ""),
+        "owner_phone": rec.get("owner_phone", ""),
+    }
 
 
 def read_tab5_injury(driver, data: ClaimData):
-    data.injuries = _read_record_tab(
-        driver, 5, "injury_person_name-inputEl", INJURY_FIELDS, "ผู้บาดเจ็บ"
-    )
+    data.injuries = [
+        _inj_to_emcs_vocab(r) for r in _read_record_tab(
+            driver, 5, "injury_person_name-inputEl", INJURY_FIELDS, "ผู้บาดเจ็บ")
+    ]
 
 
 def read_tab6_asset(driver, data: ClaimData):
-    data.assets = _read_record_tab(
-        driver, 6, "property_prop_name-inputEl", ASSET_FIELDS, "ทรัพย์สิน"
-    )
+    data.assets = [
+        _asset_to_emcs_vocab(r) for r in _read_record_tab(
+            driver, 6, "property_prop_name-inputEl", ASSET_FIELDS, "ทรัพย์สิน")
+    ]
 
 
 # ----------------------------------------- คู่กรณี: เติมจากหน้าจอ Tab 4 (combo)
