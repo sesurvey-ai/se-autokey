@@ -16,6 +16,7 @@ subprocess ทุกอย่างจึงทำงานเหมือนร
 
 ใช้ไลบรารีมาตรฐานของ Python ล้วน — ไม่ต้องติดตั้งอะไรเพิ่ม
 """
+from datetime import datetime, timedelta
 import argparse
 import json
 import os
@@ -64,6 +65,56 @@ def fetch_sesurvey_cases():
         return None, f"server ตอบ {e.code}"
     except Exception as e:
         return None, f"เชื่อมต่อ se-survey ไม่ได้: {e}"
+
+
+_isv_client = None      # cache ไว้ทั้ง process — login ใหม่ทุก request ช้าและโดน rate
+
+
+# สถานะงานของ ISURVEY (masterStatus) — 100 = จบงาน คือสถานะที่พร้อมนำเข้า EMCS
+# ⚠️ ไม่ใช่ `close_datetime` (ว่างทุกแถวแม้งานจบแล้ว — เคยเข้าใจผิด)
+ISURVEY_STATUS_DONE = "100"
+
+
+def fetch_isurvey_cases(since: str = "", status: str = ISURVEY_STATUS_DONE):
+    """รายการงาน ISURVEY ตามสถานะ (ค่าเริ่มต้น = "จบงาน") — คืน (rows, error)
+
+    ข้อจำกัดของ listcases.php ที่ต้องรู้ (probe แล้ว 2026-08-04):
+    - **ต้องส่ง claim_status เสมอ** ไม่ส่ง = ได้สถานะ default (40 รอตรวจข้อมูล)
+    - **paging ใช้ไม่ได้** start/page เท่าไหร่ก็คืนชุดเดิม → เลื่อนหน้าไม่ได้
+    - **sort ถูกเมิน** เรียงเก่า→ใหม่เสมอ (ไม่ใส่วันที่ = ได้งานปี 2020)
+    - `claim_date` = "ตั้งแต่วันที่นี้เป็นต้นไป" และคืนสูงสุด 50 เรื่อง
+    → วิธีเดียวที่จะได้งานล่าสุดคือ **ระบุวันที่เริ่ม** ไม่ใช่เลื่อนหน้า
+
+    listcases ให้แค่ 15 ฟิลด์ ไม่มีลักษณะความเสียหาย/คำนำหน้า → หน้านี้แสดงเฉพาะ
+    ข้อมูลระบุตัวงาน ส่วนการตรวจว่า "นำเข้าได้ไหม" ทำตอนกดรายเรื่อง
+    (ยิง getcaseinfo ทีละเรื่องตอนโหลดหน้า = ช้ามากและ ISURVEY timeout บ่อย)
+    """
+    global _isv_client
+    if not since:
+        since = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    try:
+        from autokey.config import load_config
+        from autokey.isurvey_api import ISurveyAPI
+        if _isv_client is None:
+            _isv_client = ISurveyAPI(load_config())
+            _isv_client.login()
+
+        def _list():
+            return _isv_client._get("supervisor/listcases.php", claim_no="",
+                                    claim_status=status, claim_date=since,
+                                    page=1, start=0, limit=50)
+        try:
+            d = _list()
+        except Exception:
+            _isv_client.login()          # session หมดอายุ → login ใหม่แล้วลองอีกรอบ
+            d = _list()
+        rows = [c for c in (d.get("cases") or [])
+                if str(c.get("sttcase_ID") or "") == str(status)]
+        rows.sort(key=lambda r: str(r.get("close_datetime") or ""), reverse=True)
+        return rows, None
+    except Exception as e:
+        _isv_client = None
+        return None, f"อ่านรายการจาก ISURVEY ไม่ได้: {type(e).__name__}: {e}"
 
 
 def fetch_sesurvey_xml(case_id: str):
@@ -523,6 +574,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(502, {"error": err})
             else:
                 self._send(200, {"cases": cases})
+        elif u.path == "/isurvey-cases":
+            since = ((parse_qs(u.query).get("since") or [""])[0]).strip()
+            rows, err = fetch_isurvey_cases(since=since)
+            if err:
+                self._send(502, {"error": err})
+            else:
+                self._send(200, {"cases": rows})
         elif u.path == "/sesurvey-xml":
             # ดาวน์โหลดไฟล์ XML สำรอง (proxy แนบ token) — ไป import EMCS เอง
             ref = ((parse_qs(u.query).get("case_id") or [""])[0]).strip()
@@ -823,6 +881,19 @@ PAGE = r"""<!doctype html>
 
     <div class="tabpane" id="pane-isurvey" hidden>
      <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <h2 style="font-size:16px;margin:0">✅ งานจบแล้ว (ISURVEY)</h2>
+        <label class="fld" for="isvsince" style="margin:0 0 0 auto;font-weight:400">ตั้งแต่วันที่</label>
+        <input type="date" id="isvsince" style="width:150px;padding:6px 8px">
+        <button class="run" id="loadisvbtn" style="padding:7px 12px;font-size:13px">↻ โหลดรายการ</button>
+      </div>
+      <div id="isvcasesbox" class="caselist"></div>
+      <div class="note" style="margin:10px 0 18px">
+        • แสดงเฉพาะสถานะ <b>“จบงาน”</b> — เรียงงานที่ปิดล่าสุดขึ้นก่อน<br>
+        • ISURVEY คืนได้ <b>สูงสุด 50 เรื่องต่อครั้ง</b> และ<b>เลื่อนหน้าไม่ได้</b> → ถ้าไม่เจอ ให้เลื่อนวันที่เริ่มมาใกล้ขึ้น<br>
+        • กด <b>⚡ นำเข้า</b> = เติมเลขเคลม+เลขเซอร์เวย์ลงฟอร์มด้านล่างแล้วรันด้วยตัวเลือกที่ตั้งไว้
+      </div>
+
       <h2 style="font-size:16px;margin:0 0 12px">🖊 กรอกเคลมอัตโนมัติ (ISURVEY)</h2>
       <label class="fld" for="claims">เลขเคลม <span style="color:var(--muted);font-weight:400">(หลายเคลมได้ — บรรทัดละเลข)</span></label>
       <textarea id="claims"></textarea>
@@ -1370,6 +1441,52 @@ loadCasesBtn.addEventListener("click", async () => {
     renderSeCasesFromCache();
   }catch(e){ seCasesBox.innerHTML = '<div style="color:var(--err);font-size:13px;padding:8px 0">ติดต่อเซิร์ฟเวอร์ไม่ได้</div>'; }
   finally{ loadCasesBtn.disabled = false; }
+});
+
+// ---- รายการงานจบแล้วฝั่ง ISURVEY ----
+const isvBox = $("#isvcasesbox"), isvSince = $("#isvsince"), loadIsvBtn = $("#loadisvbtn");
+isvSince.value = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
+
+function renderIsvCases(rows){
+  if (!rows.length){
+    isvBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">'
+      + 'ไม่พบงานสถานะ “จบงาน” ตั้งแต่วันที่นี้ — ลองเลื่อนวันที่ให้เก่าลง</div>';
+    return;
+  }
+  isvBox.innerHTML = rows.map(r => {
+    const closed = (r.close_datetime || "").replace("T", " ");
+    return '<div class="caseitem" style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">'
+      + '<div style="flex:1;min-width:0">'
+      +   '<div style="font-weight:600;font-size:13px">' + escHtml(r.claim_no || "") + '</div>'
+      +   '<div style="color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+      +     escHtml(r.survey_no || "") + ' · ' + escHtml(r.surveyor_name || "-")
+      +     ' · ปิดงาน ' + escHtml(closed) + (r.acc_province ? ' · ' + escHtml(r.acc_province) : '')
+      +   '</div>'
+      + '</div>'
+      + '<button class="run isvact" style="padding:7px 12px;font-size:13px;white-space:nowrap" '
+      +   'data-claim="' + escHtml(r.claim_no || "") + '" data-inv="' + escHtml(r.survey_no || "") + '">⚡ นำเข้า</button>'
+      + '</div>';
+  }).join("");
+  isvBox.querySelectorAll(".isvact").forEach(b => {
+    b.addEventListener("click", () => {
+      // เติมลงฟอร์มด้านล่างแล้วรัน — ตัวเลือก (ความเสียหาย/ประเภทเคลม/ฯลฯ) ที่ตั้งไว้ยังมีผล
+      $("#claims").value = b.dataset.claim;
+      $("#invoice").value = b.dataset.inv;
+      runBtn.click();
+    });
+  });
+}
+
+loadIsvBtn.addEventListener("click", async () => {
+  loadIsvBtn.disabled = true;
+  isvBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">กำลังโหลด…</div>';
+  try{
+    const r = await fetch("/isurvey-cases?since=" + encodeURIComponent(isvSince.value));
+    const data = await r.json();
+    if (!r.ok){ isvBox.innerHTML = '<div style="color:var(--err);font-size:13px;padding:8px 0">'+escHtml(data.error||"โหลดไม่สำเร็จ")+'</div>'; return; }
+    renderIsvCases(data.cases || []);
+  }catch(e){ isvBox.innerHTML = '<div style="color:var(--err);font-size:13px;padding:8px 0">ติดต่อเซิร์ฟเวอร์ไม่ได้</div>'; }
+  finally{ loadIsvBtn.disabled = false; }
 });
 
 // แท็บสลับ SE Survey / ISURVEY (client-side toggle หน้าเดียว)
