@@ -1862,6 +1862,43 @@ def verify_car_saved(driver, data: ClaimData, save_fn=None) -> bool:
     return False
 
 
+def _diagnose_save_click(driver) -> str:
+    """หาเหตุผลที่กดปุ่มบันทึกแล้ว EMCS เงียบสนิท (ไม่มีทั้ง alert และ postback)
+
+    onclick ของ btnSave คือ
+        if (validForm() == false) { return false; } ... __doPostBack('btnSave','')
+    ดังนั้นเงียบได้ 2 แบบ:
+      1. `validForm()` คืน false — ปกติมันจะ alert เอง แต่บาง path คืน false เฉย ๆ
+      2. `validForm()` **โยน JS error** — EMCS render ฟิลด์ไม่เท่ากันทุกบริษัท/ทุกสถานะ
+         `getElementById(...)` ที่หาไม่เจอจะได้ null แล้ว `.value` ระเบิด → onclick
+         ตายกลางทาง ไม่มีอะไรโผล่ให้เห็นเลย
+
+    เรียก validForm() เองแล้วเก็บผล/ข้อความ error มาบอก — ถ้ามันเด้ง alert ตอนเรียก
+    ก็ยิ่งดี เพราะนั่นคือข้อความ validation ที่เราอยากได้ตั้งแต่แรก
+    คืนข้อความอธิบาย ('' = บอกไม่ได้)"""
+    res, err = None, ""
+    try:
+        res = driver.execute_script(
+            "try { return {ok: validForm() === true, err: '' }; }"
+            " catch (e) { return {ok: false, err: String((e && e.message) || e)}; }")
+    except UnexpectedAlertPresentException:
+        pass                       # validForm เด้ง alert ระหว่างเรียก — เก็บข้างล่าง
+    except Exception as e:
+        return f"เรียก validForm() ไม่ได้ ({type(e).__name__})"
+    try:                           # เก็บ alert ที่ validForm อาจเพิ่งเด้ง
+        err = (accept_alert(driver, timeout=3) or "").strip()
+    except Exception:
+        pass
+    if err:
+        return f"EMCS แจ้ง: {err[:300]}"
+    if isinstance(res, dict) and res.get("err"):
+        return (f"validForm() ของ EMCS พังกลางทาง ({res['err'][:160]}) — "
+                "ฟอร์มนี้ไม่มีช่องที่สคริปต์ EMCS อ้างถึง กรอก/บันทึกเองบนหน้าจอ")
+    if isinstance(res, dict) and res.get("ok") is False:
+        return "validForm() คืน false โดยไม่บอกเหตุผล — ตรวจช่องดอกจันแดงบนหน้าจอ"
+    return ""
+
+
 def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
                    is_new: bool = True):
     """กดบันทึกหน้าหลัก แล้ว "ตรวจว่าบันทึกสำเร็จจริง"
@@ -1873,16 +1910,31 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
         1) ลองซ่อม dropdown ที่ค่าหลุดจาก postback race อัตโนมัติก่อน (สูงสุด 2 รอบ)
         2) ถ้าซ่อมอัตโนมัติไม่ได้ (เช่น text field ว่างอย่าง 'สถานที่เกิดเหตุ')
            → หยุดรอให้คนกรอกช่องที่ฟ้องเองบนหน้า EMCS แล้วลองบันทึกใหม่
-      (มี cap กันลูปไม่รู้จบ — ถ้าไม่มีคนตอบ/แก้ไม่ได้จะ raise)"""
+      (มี cap กันลูปไม่รู้จบ — ถ้าไม่มีคนตอบ/แก้ไม่ได้จะ raise)
+    - **กดแล้วเงียบ ไม่มี alert เลย** ก็เกิดได้ (ดู _diagnose_save_click) — ต้องไม่ตีความ
+      ว่าสำเร็จ และต้องไม่ปล่อย TimeoutException ดิบ ๆ ออกไป"""
     auto_heal_left = 2   # จำนวนรอบที่ยอมให้ซ่อม dropdown อัตโนมัติ
     for attempt in range(1, 8):
         log(f"EMCS: กดบันทึกหน้าหลัก ({button_id}, รอบ {attempt})")
         wait_clickable(driver, By.ID, button_id).click()
-        alert_text = accept_alert(driver)
+        try:
+            alert_text, silent = accept_alert(driver), False
+        except TimeoutException:
+            # ปุ่มถูก validForm() ฝั่ง JS ปัดตกเงียบ ๆ → ไม่มี postback ไม่มี alert
+            # เดิมปล่อย TimeoutException ทะลุออกไป = โปรแกรมตาย ทั้งที่ทางที่ถูกคือ
+            # ตกลงมาที่ "หยุดรอคนกรอก" เหมือน validation ปกติ (verify เคลม 2026013059072)
+            alert_text, silent = "", True
+            log("   ⚠️ กดบันทึกแล้ว EMCS เงียบ ไม่มี alert ตอบกลับ — ปุ่มถูก validForm() "
+                "ฝั่ง JS ปัดตก (ไม่ยิง postback)")
+            _why = _diagnose_save_click(driver)
+            if _why:
+                log(f"   ↳ {_why}")
+                alert_text = _why
 
         if not is_new:
-            # โหมดแก้: สำเร็จเมื่อ alert ไม่ใช่ validation ('กรุณา...')
-            if "กรุณา" not in (alert_text or ""):
+            # โหมดแก้: สำเร็จเมื่อ "มี alert" และไม่ใช่ validation ('กรุณา...')
+            # (เงียบ = ไม่ได้บันทึก ห้ามนับว่าสำเร็จ)
+            if not silent and "กรุณา" not in (alert_text or ""):
                 log("EMCS: บันทึกแก้ไขหน้าหลักสำเร็จ ✓")
                 m = re.search(r"S\d{9,13}", alert_text or "")
                 return m.group(0) if m else ""

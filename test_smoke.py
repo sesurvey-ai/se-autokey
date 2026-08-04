@@ -957,6 +957,67 @@ check("save_exit: เจอ 'ส่งงาน' → ไม่กดกลับ
 _ids3 = _run_save_exit({})
 check("save_exit: ไม่มีปุ่มบันทึกราคาเลย → ไม่กดกลับ Inbox (กันข้อมูลหาย)", _ids3 == [])
 
+# ---- 22b-2. save_main_form: กดบันทึกแล้ว EMCS "เงียบ" (ไม่มี alert) ----
+# ของจริงเคลม 2026013059072: onclick ของ btnSave = `if (validForm()==false) return false;`
+# → validForm ปัดตกเงียบ = ไม่มีทั้ง alert และ postback. เดิม accept_alert โยน
+# TimeoutException ทะลุออกไป โปรแกรมตายคาที่ ทั้งที่ทางที่ถูกคือหยุดรอคนกรอก
+def _run_save_main(alerts, is_new, answered=False):
+    """alerts = ลิสต์ผลของ accept_alert แต่ละรอบ (ข้อความ หรือ TimeoutException)
+    คืน (ผลลัพธ์|Exception, จำนวนครั้งที่หยุดรอคน)"""
+    calls = {"manual": 0}
+    _orig = (emcs.wait_clickable, emcs.accept_alert, emcs.wait_for_manual_fill,
+             emcs._refill_missing_fields, emcs._diagnose_save_click,
+             emcs.WebDriverWait)
+    seq = list(alerts)
+
+    def _alert(d, timeout=30):
+        v = seq.pop(0) if seq else _sel_exc.TimeoutException()
+        if isinstance(v, Exception):
+            raise v
+        return v
+
+    def _manual(label, reason="", **kw):
+        calls["manual"] += 1
+        return answered
+
+    class _NeverReady:
+        def __init__(self, *a, **k): pass
+        def until(self, *a, **k):
+            raise _sel_exc.TimeoutException()
+
+    emcs.wait_clickable = lambda d, by, value, timeout=10: _FakeBtn()
+    emcs.accept_alert = _alert
+    emcs.wait_for_manual_fill = _manual
+    emcs._refill_missing_fields = lambda d, data, txt: False
+    emcs._diagnose_save_click = lambda d: "validForm() คืน false โดยไม่บอกเหตุผล"
+    emcs.WebDriverWait = _NeverReady
+    try:
+        out = emcs.save_main_form(_FakeDriver({}), claim_data.ClaimData(),
+                                  is_new=is_new)
+    except Exception as e:
+        out = e
+    finally:
+        (emcs.wait_clickable, emcs.accept_alert, emcs.wait_for_manual_fill,
+         emcs._refill_missing_fields, emcs._diagnose_save_click,
+         emcs.WebDriverWait) = _orig
+    return out, calls["manual"]
+
+import selenium.common.exceptions as _sel_exc  # noqa: E402
+
+_out, _n = _run_save_main([_sel_exc.TimeoutException()], is_new=True)
+check("save_main: กดแล้วเงียบ (โหมดสร้างใหม่) → ไม่โยน TimeoutException ดิบ",
+      not isinstance(_out, _sel_exc.TimeoutException), type(_out).__name__)
+check("save_main: กดแล้วเงียบ → หยุดรอคนกรอกก่อน (ไม่ตายเงียบ)", _n >= 1)
+check("save_main: ไม่มีคนตอบ → RuntimeError ที่อ่านรู้เรื่อง",
+      isinstance(_out, RuntimeError) and "validation" in str(_out))
+# โหมดแก้ (btnUpdate): 'เงียบ' ห้ามนับว่าสำเร็จ — เดิม `'กรุณา' not in ''` = True → คืนสำเร็จผิด
+_out2, _n2 = _run_save_main([_sel_exc.TimeoutException()], is_new=False)
+check("save_main: โหมดแก้ กดแล้วเงียบ → ห้ามตีความว่าบันทึกสำเร็จ",
+      isinstance(_out2, RuntimeError), repr(_out2)[:60])
+_out3, _ = _run_save_main(["บันทึกข้อมูลเรียบร้อย S68426099999"], is_new=False)
+check("save_main: โหมดแก้ มี alert ปกติ → สำเร็จ + ดึงเลข e-Survey",
+      _out3 == "S68426099999", repr(_out3))
+
 # ---- 22c. ยี่ห้อรถ ไทย→อังกฤษ + guard กันเลือก placeholder ('-- ระบุ --') ----
 # เคส #104 (จริง): ตัวเลือก ddlCMFG ของ EMCS เป็นอังกฤษล้วน แต่ se-survey ส่ง 'เอ็มจี'
 # → fuzzy 0 คะแนน แล้วโค้ดเดิมเลือก '-- ระบุ --' ให้ = ช่องบังคับว่างแบบเงียบ ๆ
