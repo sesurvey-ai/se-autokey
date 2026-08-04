@@ -21,7 +21,7 @@ from .browser import (
     wait_value_not_empty,
     wait_visible,
 )
-from .claim_data import ClaimData
+from .claim_data import ClaimData, split_thai_name
 from . import isurvey_emcs_map as emcs_map
 from .images import download_images
 
@@ -362,10 +362,13 @@ def read_tab3_insurance(driver, data: ClaimData, download_dir=None):
     data.car_brand = get_value(driver, "tab3_car_brand-inputEl")
     data.car_color = get_value(driver, "tab3_car_color-inputEl")
 
-    fullname = get_value(driver, "tab3_drv_name-inputEl")
-    parts = fullname.split()
-    data.driver_name = parts[0] if parts else ""
-    data.driver_surname = parts[1] if len(parts) > 1 else ""
+    # ชื่อผู้ขับขี่มาเป็นสตริงเดียว มักมีคำนำหน้าติดมาด้วย — แยกให้ตรงกับฝั่ง API
+    # (เดิม split()[0]/[1] ทำนามสกุลหายเมื่อชื่อมี 3 คำ เช่น 'คุณ พัลลภ ธาดากิจวณิช')
+    _dtitle, _dfirst, _dlast = split_thai_name(
+        get_value(driver, "tab3_drv_name-inputEl"))
+    data.driver_name = _dfirst
+    data.driver_surname = _dlast
+    data.driver_title = _dtitle
 
     data.driver_relation = get_value(driver, "tab3_relation-inputEl")
     data.driver_age = get_value(driver, "tab3_age-inputEl")

@@ -40,7 +40,19 @@ from .browser import (
     wait_visible,
 )
 from .car_brand import BRAND_MIN_SCORE, normalize_brand
-from .claim_data import ClaimData
+# ชื่อ/คำนำหน้า/เพศ อยู่ที่ claim_data (ฝั่งอ่าน ISURVEY ต้องใช้ด้วย) — re-export
+# ไว้ที่นี่เพื่อให้ผู้เรียกเดิม (main.py, webui.py, test_smoke.py) ไม่ต้องแก้
+from .claim_data import (  # noqa: F401
+    CHILD_TITLE_AGE,
+    THAI_TITLES,
+    TITLE_GENDER,
+    WEAK_TITLES,
+    ClaimData,
+    gender_from_title,
+    resolve_gender,
+    split_thai_name,
+    title_from_gender_age,
+)
 from .images import ZIP_CAT_TO_EMCS, list_images
 
 
@@ -104,66 +116,12 @@ PERSON_TYPE_LABEL = {
     "บุคคลภายนอกรถ": "05", "บุคคลภายนอก": "05",
 }
 
-# คำนำหน้าชื่อ (เรียงยาว→สั้น เพื่อให้ 'นางสาว' จับก่อน 'นาง')
-# เรียงยาว→สั้น (จับ 'นางสาว' ก่อน 'นาง'); รวมตัวย่อ น.ส./นส. ที่ ISURVEY มักติดมากับชื่อ
-# (เช่น driver_name='น.ส.ปฐมาวดี') — verify เคลม 2026013144715
-THAI_TITLES = ["เด็กหญิง", "เด็กชาย", "นางสาว", "น.ส.", "นส.",
-               "ด.ญ.", "ด.ช.", "นาง", "นาย"]
-
 # คำนำหน้าที่คนเขียนได้หลายแบบ → ป้ายจริงของ dropdown EMCS (ddl*_Title_ID มี 6 ตัว:
 # นาย/นาง/นางสาว/ด.ช./ด.ญ./คุณ) — เดิมโยนคำเต็มเข้า fuzzy แล้วได้ผิดแบบเงียบ:
 # 'เด็กชาย'→'นาย' (72), 'น.ส.'→'ด.ช.' (50) ทั้งคู่ผ่านเกณฑ์ 40 จึงไม่มีคำเตือน
 EMCS_TITLE = {"เด็กชาย": "ด.ช.", "เด็กหญิง": "ด.ญ.", "น.ส.": "นางสาว", "นส.": "นางสาว"}
 # ลิสต์ปิด 6 ตัว — ค่าที่ถูกต้องได้ 100 เสมอ จึงตัดที่ 90 (ไม่ตรง = หยุดรอคนเลือก)
 TITLE_MIN_SCORE = 90
-
-
-def split_thai_name(full: str):
-    """แยก 'นายกัมปนาท เปรมกิจ' → ('นาย', 'กัมปนาท', 'เปรมกิจ')
-    (รองรับกรณีคำนำหน้าติดกับชื่อโดยไม่เว้นวรรค)"""
-    full = (full or "").strip()
-    title = ""
-    for t in THAI_TITLES:
-        if full.startswith(t):
-            title, full = t, full[len(t):].strip()
-            break
-    parts = full.split()
-    first = parts[0] if parts else ""
-    last = " ".join(parts[1:]) if len(parts) > 1 else ""
-    return title, first, last
-
-
-# คำนำหน้า → เพศ (ทิศนี้ชัดเจน 100% ต่างจากเพศ→คำนำหน้าที่กำกวม): M=ชาย, W=หญิง
-TITLE_GENDER = {
-    "นาย": "M", "เด็กชาย": "M", "ด.ช.": "M",
-    "นาง": "W", "นางสาว": "W", "น.ส.": "W", "นส.": "W",
-    "เด็กหญิง": "W", "ด.ญ.": "W",
-}
-
-
-def gender_from_title(name: str) -> str:
-    """อนุมานเพศจากคำนำหน้าในชื่อ — fallback ตอน ISURVEY/XML ไม่มีเพศ
-    เช่น 'นางสาว วณิศราภรณ์' → 'W', 'นาย อัมพร' → 'M'
-    คืน 'M' (ชาย) / 'W' (หญิง) / '' (ไม่มีคำนำหน้า/แยกไม่ได้ → ให้คนเลือกเอง)"""
-    title, _, _ = split_thai_name(name)
-    return TITLE_GENDER.get(title, "")
-
-
-def resolve_gender(explicit: str, name: str = "") -> str:
-    """เพศจาก ISURVEY/XML ก่อน (normalize F→W, ค่าไทย ชาย/หญิง→M/W); ว่าง → อนุมานจากคำนำหน้าในชื่อ
-    คืน 'M' (ชาย) / 'W' (หญิง) / '' (ไม่รู้ — ให้คนเลือกเอง)
-    หมายเหตุ: คู่กรณี/ผู้บาดเจ็บจากแอปมือถือส่งเพศเป็นค่าไทย 'ชาย'/'หญิง' (ต่างจากรถประกันที่ส่ง M/F)
-    ทั้งทาง XML และ /cases/:id/report — normalize ที่นี่จุดเดียวครอบทุกเส้นทาง"""
-    g = (explicit or "").strip().upper()
-    if g in ("ชาย", "ชาย ", "MALE"):
-        return "M"
-    if g in ("หญิง", "หญิง ", "FEMALE"):
-        return "W"
-    if g == "F":
-        g = "W"
-    if g in ("M", "W"):
-        return g
-    return gender_from_title(name)
 
 
 def district_index(district_id: str, province_id: str):
@@ -1197,22 +1155,58 @@ def fill_severity(driver, severity: str):
 
 
 def _derive_insured_title(data: ClaimData) -> tuple:
-    """หาคำนำหน้าผู้ขับขี่รถประกัน (EMCS บังคับ แต่ ISURVEY ไม่มีให้ตรง)
-    - ถ้าชื่อผู้เอาประกันมีคำนำหน้า และชื่อตรงกับผู้ขับขี่ → ใช้เลย (แม่น)
-    - ไม่ตรง → '' : ไม่มีข้อมูลคำนำหน้าที่เชื่อถือได้ (เพศบอกได้แค่ ชาย/หญิง แต่
-      แยก นาย vs นาง/นางสาว ไม่ได้) → ให้ผู้ใช้เลือกเอง (fill_driver หยุดรอ)
+    """หาคำนำหน้าผู้ขับขี่รถประกัน (EMCS บังคับ แต่ ISURVEY ไม่มีช่องนี้ให้ตรง ๆ —
+    ช่อง drv_title มีในโครงสร้างแต่ว่างทุกเคส ส่วน drv_gender มีค่าจริงเสมอ)
+
+    ไล่จากแหล่งที่แม่นสุดลงมา:
+      1. se-survey กรอกคำนำหน้ามาตรง ๆ (มือถือ/สแกนบัตร)
+      2. คำนำหน้าติดมากับชื่อผู้ขับขี่เอง — ISURVEY เก็บรวมในช่องชื่อบ่อย
+         (เจอจริง: 'น.ส. อุมาพร' เคลม 058298, 'คุณ พัลลภ ธาดากิจวณิช' เคลม 158841)
+      3. ชื่อผู้เอาประกันมีคำนำหน้า และเป็นคนเดียวกับผู้ขับขี่
+      4. เพศ + อายุ — ชาย = 'นาย' แน่นอน, หญิงผู้ใหญ่ตกเป็น 'คุณ' (ดู title_from_gender_age)
+
+    คืน ('', '') เฉพาะตอนไม่รู้เพศด้วย → fill_driver หยุดรอคนเลือก
     คืน (title, แหล่งที่มา)"""
-    # se-survey มีคำนำหน้าผู้ขับขี่ตรง ๆ (มือถือกรอก/สแกนบัตร) → ใช้เลย ไม่ต้อง derive
-    if getattr(data, "driver_title", "").strip() and data.driver_title.strip() not in ("0", "-"):
-        return data.driver_title.strip(), "จาก se-survey"
-    # ตัดคำนำหน้าที่อาจติดมากับชื่อผู้ขับ (เช่น 'น.ส.ปฐมาวดี') ก่อนเทียบ
+    weak, weak_src = "", ""     # 'คุณ' ที่ต้นทางกรอกมา — เก็บไว้เป็นทางสำรองท้ายสุด
+
+    def _take(t, src):
+        """คืน (title, src) ถ้าเป็นคำนำหน้าจริง; ถ้าเป็นคำกลางเก็บไว้ก่อนแล้วไปหาต่อ"""
+        nonlocal weak, weak_src
+        if t in WEAK_TITLES:
+            if not weak:
+                weak, weak_src = t, src
+            return None
+        return (t, src)
+
+    # 1) มีคำนำหน้าจากต้นทางตรง ๆ (se-survey = ช่องบนมือถือ/สแกนบัตร;
+    #    ISURVEY = ที่แยกออกจากช่องชื่อตอนอ่าน)
+    t = getattr(data, "driver_title", "").strip()
+    if t and t not in ("0", "-"):
+        got = _take(t, "จากคำนำหน้าที่ต้นทางให้มา")
+        if got:
+            return got
+    # 2) คำนำหน้าติดมากับชื่อผู้ขับขี่ (เช่น 'น.ส.ปฐมาวดี') — ตัดออกก่อนเทียบชื่อ
     driver_full = f"{data.driver_name} {data.driver_surname}".strip()
-    _dt, d_first, d_last = split_thai_name(driver_full)
+    dt, d_first, d_last = split_thai_name(driver_full)
+    if dt:
+        got = _take(dt, "จากชื่อผู้ขับขี่")
+        if got:
+            return got
+    # 3) ผู้ขับขี่เป็นคนเดียวกับผู้เอาประกัน → ยกคำนำหน้าของผู้เอาประกันมา
     driver_clean = f"{d_first} {d_last}".strip()
     title, first, last = split_thai_name(data.insure_name)
     if title and f"{first} {last}".strip() == driver_clean:
-        return title, "จากชื่อผู้เอาประกัน"
-    return "", ""
+        got = _take(title, "จากชื่อผู้เอาประกัน")
+        if got:
+            return got
+    # 4) เพศ (+อายุ) — ชายได้ 'นาย' แน่นอน, หญิงผู้ใหญ่ตกเป็นค่ากลาง 'คุณ'
+    guess = title_from_gender_age(data.driver_gender, data.driver_age)
+    if guess and guess not in WEAK_TITLES:
+        g = resolve_gender(data.driver_gender)
+        return guess, "อนุมานจากเพศ" + ("ชาย" if g == "M" else "หญิง")
+    if guess:
+        return guess, "เพศหญิง แต่แยก นาง/นางสาว ไม่ได้ — ใช้ค่ากลาง"
+    return weak or "", weak_src
 
 
 def fill_insurer_and_refs(driver, data: ClaimData):
@@ -1447,17 +1441,15 @@ def fill_driver(driver, data: ClaimData):
     log("EMCS: กรอกข้อมูลผู้ขับขี่")
     wait_visible(driver, By.ID, "txtDri_Name01")
 
-    # คำนำหน้าผู้ขับขี่ (บังคับ) — หาแบบแม่น (ชื่อผู้เอาประกันตรงผู้ขับขี่)
+    # คำนำหน้าผู้ขับขี่ (บังคับ) — ไล่จากคำนำหน้าจริงลงมาถึงอนุมานจากเพศ+อายุ
     title, source = _derive_insured_title(data)
 
     # เพศผู้ขับขี่ (บังคับ) — rdoGender_0=ชาย(M), rdoGender_1=หญิง(F)
-    # ว่างจาก ISURVEY → อนุมานจากคำนำหน้าที่ match ได้ (title→เพศ ชัดเจน 100%;
-    # ปลอดภัยเพราะ title ตั้งค่าเฉพาะตอนชื่อผู้เอาประกันตรงผู้ขับขี่)
-    g = (data.driver_gender or "").strip().upper()
+    # ISURVEY มี drv_gender เสมอ (M/F); ว่างเมื่อไหร่ค่อยอนุมานจากคำนำหน้า
+    # (title→เพศ ชัดเจน 100% ยกเว้น 'คุณ' ที่เป็นคำกลาง — TITLE_GENDER จึงไม่มี 'คุณ')
+    g = resolve_gender(data.driver_gender)
     src = "จากข้อมูล ISURVEY"
-    if g == "F":
-        g = "W"
-    if g not in ("M", "W"):
+    if not g:
         g = TITLE_GENDER.get(title, "")
         src = f"อนุมานจากคำนำหน้า '{title}'"
     if g in ("M", "W"):
@@ -1469,16 +1461,19 @@ def fill_driver(driver, data: ClaimData):
         wait_for_manual_fill("เพศผู้ขับขี่ (ชาย/หญิง)",
                              "ISURVEY ไม่มีเพศ + แยกจากคำนำหน้าไม่ได้ — ต้องเลือกเอง")
 
-    # คำนำหน้าผู้ขับขี่ (บังคับ)
+    # คำนำหน้าผู้ขับขี่ (บังคับ) — 'คุณ' คือค่ากลางตอนรู้แค่ว่าเป็นผู้หญิง
+    # (แยก นาง/นางสาว ไม่ได้) ปล่อยผ่านเป็น draft ให้หัวหน้าแก้ตอนตรวจ
     if title:
         fuzzy_select(driver, "ddlDri_Title_ID", EMCS_TITLE.get(title, title),
                      min_score=TITLE_MIN_SCORE,
                      label=f"คำนำหน้าผู้ขับขี่ ({source})")
+        if title == "คุณ":
+            log("   ℹ️ ใช้ 'คุณ' เป็นค่ากลาง — ถ้ารู้ว่าเป็น นาง/นางสาว ให้แก้ตอนตรวจ")
     else:
-        log("   ⚠️ หาคำนำหน้าผู้ขับขี่ที่เชื่อถือได้ไม่ได้ (ชื่อไม่ตรงผู้เอาประกัน)")
+        log("   ⚠️ หาคำนำหน้าผู้ขับขี่ไม่ได้ (ไม่มีคำนำหน้าในชื่อ + ไม่รู้เพศ)")
         wait_for_manual_fill(
             "คำนำหน้าผู้ขับขี่",
-            "ISURVEY ไม่มีคำนำหน้า + แยก นาย/นาง/นางสาว จากเพศไม่ได้ — เลือกเอง")
+            "ต้นทางไม่มีคำนำหน้า และไม่มีเพศให้อนุมาน — เลือกเอง")
 
     # ตัดคำนำหน้าที่ติดมากับชื่อ (เช่น 'น.ส.ปฐมาวดี'→'ปฐมาวดี') — ไม่งั้นชื่อจะมีคำนำหน้าซ้ำ
     _t, dri_first, dri_last = split_thai_name(

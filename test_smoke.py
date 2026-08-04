@@ -366,7 +366,7 @@ check("_plate ลบช่องว่างทะเบียน",
       and emcs._plate(" กท 1234 ") == "กท1234"
       and emcs._plate("") == "" and emcs._plate(None) == "")
 
-# _derive_insured_title: ใช้คำนำหน้าจริงเมื่อชื่อตรง / ไม่ตรง = '' (ไม่เดาจากเพศ)
+# _derive_insured_title: ไล่จากคำนำหน้าจริง → ชื่อผู้เอาประกัน → เพศ+อายุ
 _t_match = claim_data.ClaimData(
     insure_name="นายสมชาย ใจดี", driver_name="สมชาย", driver_surname="ใจดี")
 check("คำนำหน้า: ชื่อตรงผู้เอาประกัน → ใช้คำนำหน้าจริง",
@@ -374,20 +374,51 @@ check("คำนำหน้า: ชื่อตรงผู้เอาปร�
 _t_f = claim_data.ClaimData(
     insure_name="บจก. อินฟินิตี้", driver_name="ธัญญา",
     driver_surname="ปัญกิม", driver_gender="F")
-check("คำนำหน้า: หญิง ชื่อไม่ตรง → '' (ไม่เดานางสาว) → หยุดรอคน",
-      emcs._derive_insured_title(_t_f)[0] == "")
+check("คำนำหน้า: หญิง ชื่อไม่ตรง → 'คุณ' (ค่ากลาง ไม่เดา นาง/นางสาว)",
+      emcs._derive_insured_title(_t_f)[0] == "คุณ")
 _t_m = claim_data.ClaimData(
     insure_name="บจก. เอ", driver_name="ก", driver_surname="ข", driver_gender="M")
-check("คำนำหน้า: ชาย ชื่อไม่ตรง → '' (ไม่เดานาย) → หยุดรอคน",
-      emcs._derive_insured_title(_t_m)[0] == "")
+check("คำนำหน้า: ชาย ชื่อไม่ตรง → 'นาย' (ผู้ชายไทยมีคำนำหน้าเดียว)",
+      emcs._derive_insured_title(_t_m)[0] == "นาย")
+_t_none = claim_data.ClaimData(
+    insure_name="บจก. เอ", driver_name="ก", driver_surname="ข")
+check("คำนำหน้า: ไม่มีคำนำหน้า + ไม่รู้เพศ → '' (หยุดรอคน)",
+      emcs._derive_insured_title(_t_none)[0] == "")
+# คำนำหน้าติดมากับชื่อผู้ขับขี่เอง — ISURVEY เก็บรวมในช่องชื่อบ่อย (เคลม 058298/158841)
+_t_own = claim_data.ClaimData(
+    insure_name="บริษัท พีทีเอ็มที จำกัด", driver_title="น.ส.",
+    driver_name="อุมาพร", driver_surname="รื่นภาคลาภ", driver_gender="F")
+check("คำนำหน้า: ต้นทางให้มาเอง (น.ส.) ชนะการอนุมานจากเพศ",
+      emcs._derive_insured_title(_t_own)[0] == "น.ส.")
+# เด็ก <15 → ด.ช./ด.ญ. (กรมการปกครองเปลี่ยนคำนำหน้าเมื่ออายุครบ 15)
+check("คำนำหน้าจากเพศ+อายุ: ชาย 38 → นาย, หญิง 40 → คุณ",
+      emcs.title_from_gender_age("M", "38") == "นาย"
+      and emcs.title_from_gender_age("F", "40") == "คุณ")
+check("คำนำหน้าจากเพศ+อายุ: เด็ก 12 → ด.ช./ด.ญ.",
+      emcs.title_from_gender_age("M", "12") == "ด.ช."
+      and emcs.title_from_gender_age("F", "12") == "ด.ญ.")
+check("คำนำหน้าจากเพศ+อายุ: อายุว่าง → ถือเป็นผู้ใหญ่ / ไม่รู้เพศ → ''",
+      emcs.title_from_gender_age("M", "") == "นาย"
+      and emcs.title_from_gender_age("", "38") == "")
+# 'คุณ' เป็นคำนำหน้าได้ แต่ต้องมีช่องว่างคั่น ไม่งั้นกินชื่อจริง (คุณากร/คุณัญญา)
+check("แยกชื่อ 'คุณ' (มีช่องว่าง) → ตัดเป็นคำนำหน้า",
+      emcs.split_thai_name("คุณ พัลลภ ธาดากิจวณิช")
+      == ("คุณ", "พัลลภ", "ธาดากิจวณิช"))
+check("แยกชื่อ 'คุณากร' (ติดกัน) → ไม่ตัด (เป็นชื่อจริง)",
+      emcs.split_thai_name("คุณากร ใจดี") == ("", "คุณากร", "ใจดี"))
+check("'คุณ' ไม่บอกเพศ → gender_from_title = ''",
+      emcs.gender_from_title("คุณ พัลลภ") == "")
 # บั๊ก น.ส. ติดชื่อ (เคลม 2026013144715): driver_name='น.ส.ปฐมาวดี' = ผู้เอาประกัน
 check("แยกชื่อ 'น.ส.' (ตัวย่อ) → ตัดคำนำหน้าออก",
       emcs.split_thai_name("น.ส.ปฐมาวดี") == ("น.ส.", "ปฐมาวดี", ""))
 _t_ns = claim_data.ClaimData(
     insure_name="นางสาว ปฐมาวดี ช้ายสนิททำ",
     driver_name="น.ส.ปฐมาวดี", driver_surname="ช้ายสนิททำ")
-check("คำนำหน้า: น.ส.ติดชื่อ + ผู้ขับ=ผู้เอาประกัน → derive 'นางสาว' ได้ (เดิม match ไม่ได้)",
-      emcs._derive_insured_title(_t_ns)[0] == "นางสาว")
+# เทียบค่าที่ส่งเข้า dropdown จริง (ผ่าน EMCS_TITLE) ไม่ใช่ค่าดิบ — คำนำหน้าติดชื่อ
+# ผู้ขับขี่ ('น.ส.') ถูกหยิบก่อนชื่อผู้เอาประกัน ('นางสาว') แต่ปลายทางเป็นตัวเดียวกัน
+_t_ns_raw = emcs._derive_insured_title(_t_ns)[0]
+check("คำนำหน้า: น.ส.ติดชื่อ + ผู้ขับ=ผู้เอาประกัน → เข้า dropdown เป็น 'นางสาว'",
+      emcs.EMCS_TITLE.get(_t_ns_raw, _t_ns_raw) == "นางสาว", _t_ns_raw)
 check("gender_from_title: น.ส. (ตัวย่อ) → W",
       emcs.gender_from_title("น.ส.ปฐมาวดี") == "W"
       and emcs.gender_from_title("นส.สมหญิง") == "W")

@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import requests
 
 from .browser import log
-from .claim_data import ClaimData
+from .claim_data import ClaimData, split_thai_name
 from . import isurvey_emcs_map as emcs_map
 
 
@@ -479,9 +479,13 @@ class ISurveyAPI:
         d.plate_province = self._prov(t3.get("plate_provinceID"))
         d.car_brand = t3.get("car_brand", "")
         d.car_color = t3.get("car_color", "")
-        parts_name = (drv.get("drv_name") or "").split()
-        d.driver_name = parts_name[0] if parts_name else ""
-        d.driver_surname = parts_name[1] if len(parts_name) > 1 else ""
+        # ISURVEY เก็บชื่อผู้ขับขี่รวมเป็นสตริงเดียว และมักมีคำนำหน้าติดมาด้วย
+        # เดิมตัดด้วย split()[0]/[1] → 'คุณ พัลลภ ธาดากิจวณิช' กลายเป็น
+        # ชื่อ='คุณ' นามสกุล='พัลลภ' นามสกุลจริงหายทั้งคำ (เจอจริง เคลม 2026013158841)
+        _dtitle, _dfirst, _dlast = split_thai_name(drv.get("drv_name") or "")
+        d.driver_name = _dfirst
+        d.driver_surname = _dlast
+        d.driver_title = _dtitle            # ว่างได้ — _derive_insured_title จะไล่หาต่อ
         d.driver_gender = drv.get("drv_gender", "")
         d.driver_relation = drv.get("relation", "")
         d.driver_age = str(drv.get("age", "") or "")
