@@ -785,6 +785,13 @@ check("manual_pick: กรอง placeholder ออกก่อนส่งใ�
       "_is_placeholder_option" in _mp)
 check("manual_pick: เลือกค่าที่ผู้ใช้ระบุลงช่องให้เอง",
       "select_by_visible_text" in _mp)
+# ประเภทรถคู่กรณี: ISURVEY ไม่มี vehTID บ่อย — ต้อง "ถามพร้อมตัวเลือก" ไม่ใช่ข้ามเงียบ ๆ
+# แล้วไปโดน validation ตอนกดบันทึก (ตอนนั้นบอทไม่รู้ว่าเป็น dropdown ตัวไหน)
+_ftp = _insp_pick.getsource(emcs.fill_third_parties)
+check("คู่กรณี: ประเภทรถเป็น required=True (ถามพร้อม dropdown ตั้งแต่ตอนกรอก)",
+      'label=f"ประเภทรถคู่กรณี {n + 1}", required=True' in _ftp)
+check("คู่กรณี: ไม่มีเส้นทาง 'ข้ามเงียบ ๆ' ของประเภทรถแล้ว",
+      "ไม่มีประเภทรถคู่กรณี" not in _ftp)
 
 # ---- 17.5 wait_for_injury_inputs: marker + parse ค่าจาก webui ----
 import io as _io

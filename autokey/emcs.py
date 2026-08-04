@@ -272,12 +272,12 @@ def fill_third_parties(driver, data: ClaimData):
         set_text(driver, p + "txtCar_RegNo", _plate(tp.get("plate_no", "")))
         # ประเภทรถคู่กรณี (* บังคับ) — จาก Tab 4 (veh_type อ่านได้ เช่น 'เก๋งเอเซีย')
         # ต้องเลือกก่อน "ยี่ห้อ" (ddlCmfg) ถึงจะมีตัวเลือก (dropdown ผูกกัน)
-        if tp.get("veh_type", "").strip():
-            fuzzy_select(driver, p + "ddlCType", tp["veh_type"], presleep=0.5,
-                         label=f"ประเภทรถคู่กรณี {n + 1}")
-            time.sleep(2)   # รอ postback โหลดตัวเลือกยี่ห้อ + ให้ค่าประเภทรถนิ่ง
-        else:
-            log(f"   - ไม่มีประเภทรถคู่กรณี {n + 1} จาก ISURVEY — เลือกเองตอนตรวจ")
+        # ว่างก็ต้องถาม ไม่ใช่ข้าม — เดิมข้ามเงียบ ๆ แล้วไปโดน validation ตอนกดบันทึก
+        # ซึ่งตอนนั้นบอทไม่รู้ว่าเป็น dropdown ตัวไหน เลยเสนอตัวเลือกให้เลือกบนหน้าเว็บไม่ได้
+        # ต้องไปเลือกเองใน Chrome (เจอจริง เคลม 2026013059072 — ISURVEY ไม่มี vehTID)
+        fuzzy_select(driver, p + "ddlCType", tp.get("veh_type", ""), presleep=0.5,
+                     label=f"ประเภทรถคู่กรณี {n + 1}", required=True)
+        time.sleep(2)   # รอ postback โหลดตัวเลือกยี่ห้อ + ให้ค่าประเภทรถนิ่ง
         # ยี่ห้อ — มีตัวเลือกหลังเลือกประเภทรถ; ถ้ายังว่าง (ไม่มี veh_type) ข้าม
         if _select_has_options(driver, p + "ddlCmfg"):
             # ไทย→อังกฤษ: ตัวเลือกยี่ห้อของ EMCS เป็นอังกฤษล้วน แต่ se-survey ส่งไทยมา
