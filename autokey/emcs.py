@@ -1862,6 +1862,47 @@ def verify_car_saved(driver, data: ClaimData, save_fn=None) -> bool:
     return False
 
 
+def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
+    """กดปุ่มบันทึก แล้ว **ยืนยันว่าคลิกติดจริง** — คืน True เมื่อติด
+
+    onclick ของ EMCS ตั้ง `this.value='Please wait...'; this.disabled=true;` ก่อนยิง
+    postback → ใช้เป็นสัญญาณว่าคลิกเข้าถึง handler แล้ว
+
+    ทำไมต้องมี: ดรอปดาวน์ก่อนหน้า (เช่น ddlLoss_ID) มี postback ถ้ากดบันทึกตอน
+    postback ยังไม่จบ คลิกจะหลุดเงียบ ๆ — ปุ่มยังเป็น 'บันทึก' เหมือนเดิม ไม่มีทั้ง
+    alert และ postback แล้วบอทไปรอ alert เก้อ 30 วิ
+    ⚠️ verify ของจริง เคลม 2026013059072: บอทกดแล้วเงียบ แต่คนกดเองบนหน้าเดียวกัน
+    ด้วยข้อมูลชุดเดิมผ่านทันที (ได้ S68426080794) — ไม่ใช่ปัญหาข้อมูล แต่เป็นจังหวะกด
+    """
+    for i in range(1, tries + 1):
+        # รอหน้าให้นิ่งก่อน: โหลดจบ + ไม่มี postback ของ ASP.NET ค้างอยู่
+        try:
+            WebDriverWait(driver, 20).until(lambda d: d.execute_script(
+                "return document.readyState === 'complete'"
+                " && !(window.Sys && Sys.WebForms"
+                "      && Sys.WebForms.PageRequestManager.getInstance()"
+                "         .get_isInAsyncPostBack());"))
+        except Exception:
+            pass
+        btn = wait_clickable(driver, By.ID, button_id)
+        btn.click()
+        try:    # onclick ทำงาน → ปุ่มถูกปิด/เปลี่ยนข้อความทันที
+            WebDriverWait(driver, 5).until(
+                lambda d: (lambda e: (not e.is_enabled())
+                           or "wait" in (e.get_attribute("value") or "").lower())(
+                    d.find_element(By.ID, button_id)))
+            return True
+        except UnexpectedAlertPresentException:
+            return True          # เด้ง alert = คลิกติดแน่นอน (ผู้เรียกอ่านต่อเอง)
+        except Exception:
+            pass
+        if i < tries:
+            log(f"   ↻ คลิก {button_id} ไม่ติด (หน้าน่าจะยัง postback ค้าง) — ลองใหม่ {i}/{tries}")
+            time.sleep(2)
+    log(f"   ⚠️ กด {button_id} ครบ {tries} ครั้งแล้วปุ่มยังไม่ตอบสนอง")
+    return False
+
+
 def _diagnose_save_click(driver) -> str:
     """หาเหตุผลที่กดปุ่มบันทึกแล้ว EMCS เงียบสนิท (ไม่มีทั้ง alert และ postback)
 
@@ -1913,23 +1954,33 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
       (มี cap กันลูปไม่รู้จบ — ถ้าไม่มีคนตอบ/แก้ไม่ได้จะ raise)
     - **กดแล้วเงียบ ไม่มี alert เลย** ก็เกิดได้ (ดู _diagnose_save_click) — ต้องไม่ตีความ
       ว่าสำเร็จ และต้องไม่ปล่อย TimeoutException ดิบ ๆ ออกไป"""
-    auto_heal_left = 2   # จำนวนรอบที่ยอมให้ซ่อม dropdown อัตโนมัติ
+    auto_heal_left = 2    # จำนวนรอบที่ยอมให้ซ่อม dropdown อัตโนมัติ
+    click_fail_left = 2   # จำนวนรอบที่ยอมลองกดใหม่เมื่อคลิกไม่ติด
     for attempt in range(1, 8):
         log(f"EMCS: กดบันทึกหน้าหลัก ({button_id}, รอบ {attempt})")
-        wait_clickable(driver, By.ID, button_id).click()
+        clicked = _click_save_button(driver, button_id)
         try:
             alert_text, silent = accept_alert(driver), False
         except TimeoutException:
-            # ปุ่มถูก validForm() ฝั่ง JS ปัดตกเงียบ ๆ → ไม่มี postback ไม่มี alert
-            # เดิมปล่อย TimeoutException ทะลุออกไป = โปรแกรมตาย ทั้งที่ทางที่ถูกคือ
-            # ตกลงมาที่ "หยุดรอคนกรอก" เหมือน validation ปกติ (verify เคลม 2026013059072)
             alert_text, silent = "", True
-            log("   ⚠️ กดบันทึกแล้ว EMCS เงียบ ไม่มี alert ตอบกลับ — ปุ่มถูก validForm() "
-                "ฝั่ง JS ปัดตก (ไม่ยิง postback)")
-            _why = _diagnose_save_click(driver)
-            if _why:
-                log(f"   ↳ {_why}")
-                alert_text = _why
+            if not clicked:
+                # คลิกไม่ถึง handler เลย — คนละเรื่องกับ "ข้อมูลไม่ครบ" ต้องบอกให้ตรง
+                log("   ⚠️ ปุ่มบันทึกไม่ตอบสนอง (คลิกไม่ถึง handler ของ EMCS)")
+                if click_fail_left > 0:
+                    click_fail_left -= 1
+                    continue
+                alert_text = ("กดปุ่มบันทึกไม่ติด — หน้าอาจค้าง postback หรือปุ่มถูกปิดอยู่ "
+                              "ลองกดบันทึกเองบนหน้าจอ")
+            else:
+                # คลิกติดแล้วแต่ EMCS เงียบ → validForm() ปัดตกฝั่ง JS
+                # เดิมปล่อย TimeoutException ทะลุออกไป = โปรแกรมตาย ทั้งที่ทางที่ถูกคือ
+                # ตกลงมาที่ "หยุดรอคนกรอก" เหมือน validation ปกติ (เคลม 2026013059072)
+                log("   ⚠️ กดบันทึกแล้ว EMCS เงียบ ไม่มี alert ตอบกลับ — ปุ่มถูก "
+                    "validForm() ฝั่ง JS ปัดตก (ไม่ยิง postback)")
+                _why = _diagnose_save_click(driver)
+                if _why:
+                    log(f"   ↳ {_why}")
+                    alert_text = _why
 
         if not is_new:
             # โหมดแก้: สำเร็จเมื่อ "มี alert" และไม่ใช่ validation ('กรุณา...')
