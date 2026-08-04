@@ -1570,7 +1570,29 @@ def main():
 
     # โฟลเดอร์ดาวน์โหลด default แยกต่อ process — กันไฟล์ export ปนกันเมื่อรันหลายงานพร้อมกัน
     per_run_dl = cfg.download_dir / "_dl" / str(os.getpid())
-    driver = make_driver(detach=True, download_dir=per_run_dl)
+
+    # เปิด Chrome "ตอนจะใช้จริง" เท่านั้น — เส้นทางปกติอ่าน ISURVEY ผ่าน HTTP API
+    # ไม่ต้องมีเบราว์เซอร์เลย เดิมเปิดตั้งแต่ต้นแล้วปล่อยว่างตลอดช่วงอ่าน (~40 วิ)
+    # และถ้าอ่าน ISURVEY ล้มเหลวก็เหลือหน้าต่างเปล่าค้างไว้ (detach=True ไม่ปิดเอง)
+    _browser = {"d": None}
+
+    def browser():
+        """Chrome ของงานนี้ — สร้างครั้งแรกที่ถูกเรียก"""
+        if _browser["d"] is None:
+            _browser["d"] = make_driver(detach=True, download_dir=per_run_dl)
+        return _browser["d"]
+
+    def close_browser():
+        """ปิด Chrome ถ้าเคยเปิด (ไม่เคยเปิด = ไม่ต้องทำอะไร)"""
+        d = _browser["d"]
+        if d is None:
+            return
+        _browser["d"] = None
+        try:
+            d.quit()
+        except Exception:
+            pass
+
     data = None
 
     # ---------------- ส่วนที่ 1: อ่านข้อมูลจาก ISURVEY ----------------
@@ -1598,13 +1620,14 @@ def main():
 
         results = []  # (claim, icon, รายละเอียด)
         last_data = None
-        isurvey_handle = driver.current_window_handle
+        # tab ISURVEY มีเฉพาะโหมด --scrape (เส้น API ไม่เปิดเบราว์เซอร์ตอนอ่าน)
+        isurvey_handle = browser().current_window_handle if args.scrape else None
         emcs_handle = None
         emcs_mainpage = ""
 
         def _dismiss_alert():
             try:
-                driver.switch_to.alert.accept()
+                browser().switch_to.alert.accept()
             except Exception:
                 pass
 
@@ -1612,7 +1635,9 @@ def main():
             """อ่านเคลม (retry 1 รอบเมื่อ session โดนเตะ) → (data | None, err)"""
             for attempt in (1, 2):
                 try:
-                    return read_one_claim(driver, cfg, claim, invoice, args), ""
+                    # โหมด API ไม่ใช้ driver เลย — อย่าเรียก browser() ให้เปิดฟรี
+                    _d = browser() if args.scrape else None
+                    return read_one_claim(_d, cfg, claim, invoice, args), ""
                 except UnexpectedAlertPresentException:
                     _dismiss_alert()
                     log(f"   ⚠️ session หลุด (มี login ซ้อนจากที่อื่น) — "
@@ -1621,14 +1646,16 @@ def main():
                         return None, "session หลุดซ้ำ — มีคนใช้บัญชีเดียวกันอยู่?"
                 except Exception as e:
                     log(f"❌ อ่านเคลม {claim} ล้มเหลว: {type(e).__name__}: {e}")
-                    save_debug_snapshot(driver, cfg.runs_dir / "logs",
-                                        tag=f"error_{claim}")
+                    if _browser["d"] is not None:
+                        save_debug_snapshot(_browser["d"], cfg.runs_dir / "logs",
+                                            tag=f"error_{claim}")
                     return None, f"{type(e).__name__}: {e}"
             return None, "ไม่ทราบสาเหตุ"
 
         for i, (claim, invoice) in enumerate(targets, 1):
             banner(f"[{i}/{len(targets)}] เคลม {claim}")
-            driver.switch_to.window(isurvey_handle)
+            if isurvey_handle is not None:
+                browser().switch_to.window(isurvey_handle)
 
             d, err = _read_with_retry(claim, invoice)
             if d is None:
@@ -1654,6 +1681,8 @@ def main():
                 log(f"⏭️ ข้าม — {dup}")
                 results.append((claim, "⏭️", f"ข้าม: {dup}"))
                 continue
+            # สร้าง/หยิบ Chrome ก่อนเข้า try — ให้ except ข้างล่างมี driver ใช้เก็บ snapshot แน่นอน
+            driver = browser()
             try:
                 if emcs_handle is not None:
                     try:
@@ -1661,7 +1690,10 @@ def main():
                     except Exception:
                         emcs_handle = None
                 if emcs_handle is None:
-                    driver.switch_to.new_window("tab")
+                    # เปิด tab ใหม่เฉพาะตอนมี tab ISURVEY ให้คงไว้เทียบ (--scrape)
+                    # เส้น API ใช้ tab แรกได้เลย ไม่งั้นเหลือ tab เปล่าค้างทุกงาน
+                    if isurvey_handle is not None:
+                        driver.switch_to.new_window("tab")
                     emcs_handle = driver.current_window_handle
 
                 emcs_mainpage = emcs.goto_mainpage(driver, cfg, emcs_mainpage)
@@ -1710,18 +1742,18 @@ def main():
                 log_plain(f"\n  อ่านสำเร็จ {ok}/{len(results)} เคลม")
                 log_plain("  กรอก EMCS ต่อ: python main.py --data-json "
                           "runs/<เลขเคลม>.json")
-                driver.quit()  # โหมดอ่านไม่เปิด browser ค้าง (กัน session ชน)
+                close_browser()  # โหมดอ่านไม่เปิด browser ค้าง (กัน session ชน)
             return
 
         # ---------- เคลมเดียว: ไปต่อทางเดิม ----------
         if last_data is None:
-            driver.quit()
+            close_browser()
             raise SystemExit(1)
         data = last_data
 
     if args.read_only:
         banner("จบโหมดอ่านอย่างเดียว (--read-only)")
-        driver.quit()
+        close_browser()
         return
 
     # คำนำหน้าผู้ขับขี่จาก CLI (หน้าเว็บส่งมาเมื่อผู้ใช้เลือกเอง) — ทับค่าที่อนุมานไม่ได้
@@ -1744,7 +1776,7 @@ def main():
         banner("หยุด: เลขเซอร์เวย์นี้ทำไปแล้ว — ไม่กรอก EMCS")
         log_plain(f"  {dup}\n"
                   "  (กันทำซ้ำ — ถ้าต้องการทำซ้ำจริง ลบ/แก้สถานะใน se-key admin ก่อน)")
-        driver.quit()
+        close_browser()
         return
 
     if not args.yes:
@@ -1752,8 +1784,11 @@ def main():
               "(Ctrl+C เพื่อยกเลิก) << ")
 
     banner("ส่วนที่ 2: กรอกข้อมูลลง EMCS")
-    if not args.data_json:
-        driver.switch_to.new_window("tab")  # เปิด tab ใหม่ คง ISURVEY ไว้ดูเทียบได้
+    driver = browser()          # ถึงตรงนี้ค่อยต้องใช้เบราว์เซอร์จริง
+    # เปิด tab ใหม่เฉพาะตอนอ่านแบบ --scrape (มี tab ISURVEY ให้คงไว้ดูเทียบ)
+    # เส้น API ไม่ได้เปิดอะไรใน tab แรก — เปิด tab ที่สองจะเหลือหน้าว่างค้างเปล่า ๆ
+    if args.scrape and not args.data_json:
+        driver.switch_to.new_window("tab")
 
     images_folder = None
     if not args.skip_images:
