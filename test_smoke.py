@@ -2342,6 +2342,15 @@ check("รายการงาน: ทะเบียน/พนักงาน/
 # JS ของหน้าเว็บต้อง parse ได้ — เคยพังจากการต่อสตริงข้ามบรรทัดผิด (+ .filter)
 check("หน้าเว็บ: ไม่มี '+ .' ที่ทำให้ JS พัง",
       not __import__("re").search(r"\n\s*\+\s*\.", _page))
+# ปุ่มนำเข้าเหลือตัวเดียว (ที่แถว) — เดิมมีในแผงตรวจอีกตัวที่ทำงานเหมือนกัน
+check("ปุ่มนำเข้า: เหลือปุ่มเดียว ไม่มีปุ่มซ้ำในแผงตรวจ", "isvgo" not in _page)
+check("ปุ่มนำเข้า: ปุ่มที่แถวหยิบค่าที่เลือกในแผงไปด้วย",
+      "runIsvFromRow" in _page and 'panel.querySelectorAll(".isvpick")' in _page)
+check("ปุ่มนำเข้า: เลือกไม่ครบ → เตือน ไม่รัน",
+      "if (missing){" in _page and "ยังเลือกไม่ครบ" in _page)
+# JS string ต้องไม่มีขึ้นบรรทัดกลางคำพูด (เคยพังจาก \\n ใน heredoc กลายเป็นบรรทัดจริง)
+check("หน้าเว็บ: ไม่มี string ที่ขาดปลายกลางบรรทัด",
+      not __import__("re").search(r'alert\("[^"\n]*\n', _page))
 # คำอธิบายต้องกระชับ — ก้อนยาว ๆ ไม่มีใครอ่าน
 for _m in __import__("re").finditer(r'<div class="note"[^>]*>(.*?)</div>', _page, __import__("re").S):
     _txt = " ".join(__import__("re").sub(r"<[^>]+>", "", _m.group(1)).split())

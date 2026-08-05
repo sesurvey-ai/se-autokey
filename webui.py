@@ -2144,7 +2144,7 @@ function renderIsvCases(){
     b.addEventListener("click", () => checkIsvCase(b));
   });
   isvBox.querySelectorAll(".isvact").forEach(b => {
-    b.addEventListener("click", () => runIsvCase(b.dataset.claim, b.dataset.inv));
+    b.addEventListener("click", () => runIsvFromRow(b));
   });
   isvBox.querySelectorAll(".isvsel").forEach(c => c.addEventListener("change", updateIsvCount));
   $("#isvtoolbar").hidden = !rows.length;
@@ -2245,6 +2245,27 @@ $("#isvrunall").addEventListener("click", async () => {
 
 // รันเรื่องหนึ่ง — เติมลงฟอร์มด้านล่างแล้วกดรัน (ตัวเลือกที่ตั้งไว้ยังมีผล)
 // pick = ค่าที่ผู้ใช้เลือกจากแผงตรวจ (ลักษณะความเสียหาย / คำนำหน้า) ส่งต่อเป็น flag
+// ปุ่ม ⚡ นำเข้า ที่แถว = ทางเดียวที่ใช้สั่งรัน — ถ้าแผงตรวจเปิดอยู่และมีช่องให้เลือก
+// ก็หยิบค่าที่เลือกไปด้วย (เดิมมีปุ่มซ้ำในแผงเพื่อการนี้ ทำให้มี 2 ปุ่มทำงานเหมือนกัน)
+function runIsvFromRow(btn){
+  const panel = isvBox.querySelector('.isvpanel[data-for="' + btn.dataset.claim + '"]');
+  const pick = {};
+  if (panel && !panel.hidden){
+    let missing = false;
+    panel.querySelectorAll(".isvpick").forEach(s => {
+      if (!s.value){ missing = true; s.style.borderColor = "var(--err)"; }
+      else pick[s.dataset.field] = s.value;
+    });
+    if (missing){
+      panel.scrollIntoView({behavior: "smooth", block: "nearest"});
+      alert("ยังเลือกไม่ครบ — ช่องที่ขอบแดงต้องเลือกก่อน "
+            + "(ไม่เลือก บอทจะไปหยุดรอกลางทางบนหน้า EMCS)");
+      return;
+    }
+  }
+  runIsvCase(btn.dataset.claim, btn.dataset.inv, Object.keys(pick).length ? pick : null);
+}
+
 function runIsvCase(claim, inv, pick){
   $("#claims").value = claim;
   $("#invoice").value = inv || "";
@@ -2286,18 +2307,13 @@ async function checkIsvCase(btn){
     if ((d.warnings || []).length){
       h += '<div style="color:#d97706;margin-top:8px">⚠️ ตรวจด้วย: ' + escHtml(d.warnings.join(" · ")) + '</div>';
     }
-    h += '<div style="margin-top:10px"><button class="run isvgo" style="padding:7px 14px;font-size:13px">⚡ นำเข้า EMCS</button></div>';
+    // ไม่มีปุ่มนำเข้าในแผงแล้ว — ใช้ปุ่ม ⚡ นำเข้า ที่แถวปุ่มเดียว (runIsvFromRow
+    // หยิบค่าที่เลือกในแผงไปให้เอง) เดิมมี 2 ปุ่มทำงานเหมือนกันจนสับสน
+    if ((d.blockers || []).length){
+      h += '<div style="color:var(--muted);margin-top:10px;font-size:12.5px">'
+        + 'เลือกให้ครบ แล้วกด <b>⚡ นำเข้า</b> ที่แถวด้านบน</div>';
+    }
     panel.innerHTML = h;
-    panel.querySelector(".isvgo").addEventListener("click", () => {
-      const pick = {};
-      let missing = false;
-      panel.querySelectorAll(".isvpick").forEach(s => {
-        if (!s.value){ missing = true; s.style.borderColor = "var(--err)"; }
-        else pick[s.dataset.field] = s.value;
-      });
-      if (missing){ alert("ยังเลือกไม่ครบ — ช่องที่ขอบแดงต้องเลือกก่อน\\n\\n(ไม่เลือก บอทจะไปหยุดรอกลางทางบนหน้า EMCS)"); return; }
-      runIsvCase(btn.dataset.claim, btn.dataset.inv, pick);
-    });
   }catch(e){ panel.innerHTML = '<span style="color:var(--err)">ติดต่อเซิร์ฟเวอร์ไม่ได้</span>'; }
   finally{ btn.disabled = false; }
 }
