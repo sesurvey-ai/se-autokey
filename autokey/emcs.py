@@ -465,7 +465,8 @@ def _save_section(driver, button_id: str, name: str, max_rounds: int = 5) -> boo
         missing = ", ".join(fields)
         label = f"ข้อมูล{name}ที่ยังขาด" + (f": {missing}" if missing else "")
         if wait_for_manual_fill(label, reason=(alert_text or "").strip(),
-                                focus_labels=fields, driver=driver):
+                                focus_labels=fields + _quoted_field_names(alert_text),
+                                driver=driver):
             log(f"   ↻ ลองบันทึก{name}ใหม่หลังผู้ใช้กรอกข้อมูล")
             continue
         log(f"   ⚠️ {name}ยังไม่ถูกบันทึก (ช่องบังคับขาด — ISURVEY ไม่มีข้อมูล) → "
@@ -1840,6 +1841,23 @@ def _missing_field_list(alert_text: str) -> list:
     return [s.strip() for s in re.findall(r"\d+\.\s*(.+)", alert_text) if s.strip()]
 
 
+# ชื่อช่องในเครื่องหมายคำพูด: EMCS ฝั่ง "ตรวจรูปแบบ" (AlertSummary 'F2') ไม่ได้ฟ้อง
+# เป็นรายการชื่อช่องล้วน แต่เป็นประโยคที่ **อ้างชื่อช่องไว้ในเครื่องหมายคำพูด** เช่น
+#   "1. กรณี [เคลมสด] ต้องระบุ 'วันที่เกิดเหตุและเวลา' 'วันที่ลูกค้าแจ้งบ.ประกัน' …"
+# ทั้งประโยคเอาไปหาช่องบนฟอร์มไม่เจอ แต่ชื่อในคำพูดเจอ → ดึงออกมาตีกรอบแดงได้
+_QUOTED = re.compile(r"['‘’\"“”]([^'‘’\"“”]{3,40})['‘’\"“”]")
+
+
+def _quoted_field_names(alert_text: str) -> list:
+    """ชื่อช่องที่ EMCS อ้างในเครื่องหมายคำพูด — คืนตามลำดับ ไม่ซ้ำ"""
+    out = []
+    for s in _QUOTED.findall(alert_text or ""):
+        s = " ".join(s.split())
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
 def _parse_missing_fields(alert_text: str) -> str:
     """ดึงรายชื่อช่องที่ระบบฟ้องจากข้อความ validation (บรรทัดแบบ '1. สถานที่เกิดเหตุ')"""
     return ", ".join(_missing_field_list(alert_text))
@@ -2272,9 +2290,12 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
         fields = _missing_field_list(alert_text)
         missing = ", ".join(fields)
         label = "ข้อมูลหน้าหลักที่ยังขาด" + (f": {missing}" if missing else "")
+        # ชี้ช่องได้ 2 ทาง: ชื่อช่องที่ฟ้องเป็นรายการ + ชื่อที่อ้างในเครื่องหมายคำพูด
+        # (ข้อความตรวจรูปแบบเป็นประโยค เอาไปหาช่องตรง ๆ ไม่เจอ แต่ชื่อในคำพูดเจอ)
         if wait_for_manual_fill(label, reason=(alert_text or "").strip(),
                                 focus_ids=[bad_id] if bad_id else None,
-                                focus_labels=fields, driver=driver):
+                                focus_labels=fields + _quoted_field_names(alert_text),
+                                driver=driver):
             log("   ↻ ลองบันทึกหน้าหลักใหม่หลังผู้ใช้กรอกข้อมูล")
             continue
 
