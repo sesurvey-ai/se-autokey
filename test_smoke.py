@@ -2347,6 +2347,24 @@ check("report-isurvey: ตรวจซ้ำก่อนเขียน se-key (
       "check_survey" in _rsrc and 'dup.get("exists")' in _rsrc)
 check("report-isurvey: dry-run ต้องไม่เขียนอะไรจริง",
       "if args.dry_run:" in _rsrc and "continue" in _rsrc)
+# มี row แต่ยัง sent=0 ต้องเรียกซ้ำให้ PATCH (เกิดจริงตอน ISURVEY timeout รอบแรก
+# แล้ว retry ข้ามเพราะเจอ row เดิม → EMCS/ISURVEY ส่งแล้ว แต่ se-key ขึ้นยังไม่ส่ง)
+check("report-isurvey: มี row แต่ยังไม่ mark ส่งแล้ว → ต้องอัปเดต ไม่ข้าม",
+      'dup.get("exists") and dup.get("sent")' in _rsrc)
+
+# ประกาศผลให้หน้าเว็บต้องรอครบทุกระบบ — เดิมประกาศทันทีที่ EMCS ผ่าน ทำให้การ์ด
+# ปิดตัวเองทั้งที่แจ้ง ISURVEY ล้ม (เจอจริง 2026013063304 ReadTimeout)
+_osrc = _insp.getsource(__import__("main")._offer_submit)
+check("offer_submit: ISURVEY/se-key ล้ม → ไม่ประกาศสำเร็จ (การ์ดไม่ปิดเอง)",
+      'if res["ok"] and sekey_ok:' in _osrc
+      and _osrc.index("announce_sent") > _osrc.index("report_sent"))
+check("offer_submit: ล้มแล้วบอกวิธีสั่งซ้ำ",
+      "--report-isurvey" in _osrc and "announce_send_failed" in _osrc)
+
+# แกลเลอรีต้องบอกจำนวนรูปบุคคลที่สามที่อัปอัตโนมัติด้วย (user ทัก: มี 33 จอบอก 26)
+check("gallery: บอกจำนวนรูปคู่กรณี/ผู้บาดเจ็บที่อัปให้อัตโนมัติ",
+      "extra" in _insp.getsource(_br.wait_for_image_select)
+      and "extra=extra" in _insp.getsource(emcs.upload_images))
 
 # ---- 23. webui._build_cmd: โหมดเคลม (dry = เคลมแห้ง / fresh = เคลมสด) ----
 import webui as _webui  # noqa: E402

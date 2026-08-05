@@ -1470,10 +1470,17 @@ def run_report_isurvey(cfg, args):
                           note=f"--report-isurvey (สถานะ {st})")
             if not sekey_client.enabled(cfg):
                 continue
+            # มี row แล้ว **และ mark ส่งแล้วด้วย** = ไม่ต้องทำอะไร
+            # แต่ถ้ามี row ที่ยัง sent=0 ต้องเรียกซ้ำเพื่อ PATCH ให้ (save_record เป็น
+            # upsert + mark ให้อยู่แล้ว ไม่เกิด row ซ้ำ) — เคสนี้เกิดจริงเมื่อรอบแรก
+            # ISURVEY timeout: row ถูกเขียนด้วย mark_sent=False แล้วรอบ retry ข้ามไป
+            # ทำให้ EMCS/ISURVEY ส่งแล้ว แต่ se-key ยังขึ้นว่ายังไม่ส่ง (2026013063304)
             dup = sekey_client.check_survey(cfg, survey_no)
-            if dup.get("exists"):
-                log(f"   ↷ se-key มี {survey_no} อยู่แล้ว ({dup.get('count')} row) — ไม่บันทึกซ้ำ")
+            if dup.get("exists") and dup.get("sent"):
+                log(f"   ↷ se-key มี {survey_no} และ mark ส่งแล้ว — ไม่ต้องทำซ้ำ")
                 continue
+            if dup.get("exists"):
+                log(f"   ↻ se-key มี {survey_no} แต่ยังไม่ mark 'ส่งแล้ว' — อัปเดตให้")
             _r = sekey_client.save_many(
                 cfg, sekey_client.build_payloads(
                     claim, survey_no, keyer=keyer,
@@ -1538,7 +1545,6 @@ def _offer_submit(driver, cfg, data, esurvey: str = ""):
                   esurvey=esurvey, keyer=keyer,
                   work_type=sel["base_type"] + (" +งานรวม" if sel["batch"] else ""),
                   note=msg)
-    announce_sent(data.claim_value, esurvey, keyer)   # ให้การ์ดบนหน้าเว็บปิดตัวเอง
     # SESV เคลมเงินบน iSurvey ด้วยเลข SESV ไม่ได้ → แจ้งด้วย SEABI invoice ตัวแรก (mix[0])
     report_invoice = (sel["mix"][0] if (sel["base_type"] == "SESV" and sel["mix"])
                       else data.invoice_value)
@@ -1549,6 +1555,7 @@ def _offer_submit(driver, cfg, data, esurvey: str = ""):
 
     # บันทึกงานที่เสร็จลงฐานข้อมูลกลาง se-key — ตามประเภทงานที่ผู้ใช้เลือก
     # (งานรวม/SESV = หลาย row); mark "ส่งแล้ว" ถ้าแจ้ง ISURVEY สำเร็จ
+    sekey_ok = True
     if sekey_client.enabled(cfg):
         payloads = sekey_client.build_payloads(
             data.claim_value, data.invoice_value, keyer=keyer,
@@ -1556,11 +1563,27 @@ def _offer_submit(driver, cfg, data, esurvey: str = ""):
         results = sekey_client.save_many(cfg, payloads, mark_sent=res["ok"])
         ok_n = sum(1 for r in results if r["ok"])
         wt = sel["base_type"] + (" +งานรวม" if sel["batch"] else "")
-        if ok_n == len(results):
+        sekey_ok = (ok_n == len(results))
+        if sekey_ok:
             log(f"✅ บันทึกลง se-key DB {ok_n} row (work_type: {wt})")
         else:
             bad = next((r["text"] for r in results if not r["ok"]), "")
             log(f"⚠️ บันทึก se-key DB {ok_n}/{len(results)} row (work_type: {wt}) — {bad[:120]}")
+
+    # ประกาศผลให้หน้าเว็บ **หลังครบทุกระบบ** — เดิมประกาศทันทีที่ EMCS ผ่าน ทำให้
+    # การ์ดปิดตัวเองเหมือนทุกอย่างเรียบร้อย ทั้งที่แจ้ง ISURVEY ล้ม (เจอจริง
+    # 2026013063304: ISURVEY ReadTimeout 30 วิ แต่การ์ดหายไปแล้ว คนไม่รู้เลย)
+    if res["ok"] and sekey_ok:
+        announce_sent(data.claim_value, esurvey, keyer)   # ครบ → การ์ดปิดตัวเองได้
+        return
+    _bad = []
+    if not res["ok"]:
+        _bad.append(f"แจ้ง ISURVEY ไม่สำเร็จ ({res['text'][:80]})")
+    if not sekey_ok:
+        _bad.append("บันทึก se-key ไม่ครบ")
+    log("⚠️ EMCS ส่งงานแล้ว แต่ " + " และ ".join(_bad)
+        + f" — สั่งซ้ำได้ด้วย: main.py --claim {data.claim_value} --report-isurvey")
+    announce_send_failed(data.claim_value, "EMCS ส่งแล้ว แต่ " + " และ ".join(_bad))
 
 
 def main():

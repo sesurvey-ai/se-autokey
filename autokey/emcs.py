@@ -2967,8 +2967,12 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
     batches = []   # [(ประเภทรูป, [Path,...]), ...]
     if files:
         # ให้ผู้ใช้เลือกรูปที่จะอัปโหลด (หน้าเว็บ); console/ไม่ตอบ = ทุกรูปตามเดิม
+        # บอกจำนวนชุด "บุคคลที่สาม" ที่จะอัปตามไปด้วย — ชุดพวกนี้ไม่ได้อยู่ในแกลเลอรี
+        # (อัปอัตโนมัติตามโฟลเดอร์ tp_veh/tp_person/tp_prop) ถ้าไม่บอก ตัวเลขบนจอ
+        # จะไม่ตรงกับที่ขึ้น EMCS จริง — user ทักเอง: มี 33 ใบ แต่จอบอก 26 (2026013063304)
         if only is None:
-            only = wait_for_image_select(folder, files)
+            extra = sum(len(b[1]) for b in (opp_batches + inj_batches + asset_batches))
+            only = wait_for_image_select(folder, files, extra=extra)
         if only is not None:
             chosen = set(only)
             files = [f for f in files if f in chosen]

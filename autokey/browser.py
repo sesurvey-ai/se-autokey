@@ -790,7 +790,7 @@ def _image_categories(folder, files):
     return out
 
 
-def wait_for_image_select(folder, files):
+def wait_for_image_select(folder, files, extra: int = 0):
     """ให้ผู้ใช้เลือกรูปที่จะอัปโหลดเข้า EMCS — เฉพาะโหมดหน้าเว็บ (SE_WEBUI=1)
 
     - หน้าเว็บ: ส่ง marker {folder, images:[...]} → เว็บโชว์แกลเลอรีให้ติ๊กเลือก
@@ -802,13 +802,16 @@ def wait_for_image_select(folder, files):
     if not _WEBUI:
         return None
     log_plain("")
-    log(f"⏸️  เลือกรูปที่จะอัปโหลดเข้า EMCS ({len(files)} รูป) — "
+    # extra = รูปบุคคลที่สาม (tp_veh/tp_person/tp_prop) ที่อัปอัตโนมัติ ไม่อยู่ในแกลเลอรี
+    # ต้องบอกไปด้วย ไม่งั้นตัวเลขบนจอไม่ตรงกับที่ขึ้น EMCS จริง
+    _more = f" + รูปคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินอีก {extra} รูป (อัปให้อัตโนมัติ)" if extra else ""
+    log(f"⏸️  เลือกรูปที่จะอัปโหลดเข้า EMCS ({len(files)} รูป{_more}) — "
         "ติ๊กเลือกบนหน้าเว็บแล้วกดปุ่มอัปโหลด")
     cat_of = _image_categories(folder, files)
     images = [{"name": f, "cat": cat_of.get(f, "OTHERS")} for f in files]
     print(SELECT_IMAGES_MARKER + json.dumps(
-        {"folder": str(folder), "images": images}, ensure_ascii=False),
-        flush=True)
+        {"folder": str(folder), "images": images, "extra": int(extra or 0)},
+        ensure_ascii=False), flush=True)
     try:
         line = sys.stdin.readline()
     except Exception:
