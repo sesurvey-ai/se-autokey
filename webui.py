@@ -1157,6 +1157,20 @@ PAGE = r"""<!doctype html>
   .ev-sent{background:#dcfce7;color:#166534}
   .ev-draft{background:#fef3c7;color:#92400e}
   .ev-fail{background:#fee2e2;color:#991b1b}
+  /* กล่องตัวเลือกขั้นสูง — พับไว้ เปิดเมื่อต้องซ่อม/ทดสอบ */
+  .adv{margin-top:14px;border:1px solid var(--line);border-radius:10px;background:#fbfcfe}
+  .adv > summary{cursor:pointer;padding:9px 12px;font-size:13px;font-weight:600;
+    color:var(--muted);list-style:none;user-select:none}
+  .adv > summary::-webkit-details-marker{display:none}
+  .adv > summary::before{content:"▸ ";font-size:11px}
+  .adv[open] > summary::before{content:"▾ "}
+  .adv > summary:hover{color:var(--ink)}
+  .adv[open] > summary{border-bottom:1px solid var(--line);color:var(--ink)}
+  .adv > :not(summary){margin-left:12px;margin-right:12px}
+  .adv > :last-child{margin-bottom:12px}
+  .advhead{margin-top:12px;font-size:12px;font-weight:700;color:#94a3b8;
+    text-transform:none;letter-spacing:.2px}
+  .advcount{color:var(--brand);font-weight:700}
   .keyrow{display:flex;align-items:center;gap:10px;margin-bottom:7px}
   .keyrow .dg{width:34px;height:34px;flex:none;border-radius:9px;background:#eef2ff;
     color:#3730a3;font-weight:800;display:flex;align-items:center;justify-content:center}
@@ -1250,56 +1264,45 @@ PAGE = r"""<!doctype html>
       <label class="fld" for="claims">เลขเคลม <span style="color:var(--muted);font-weight:400">(หลายเคลมได้ — บรรทัดละเลข)</span></label>
       <textarea id="claims"></textarea>
 
-      <div class="grid">
-        <div>
-          <label class="fld" for="invoice">เลขเซอร์เวย์ <span style="color:var(--muted);font-weight:400">(ใส่เมื่อค้นเจอหลายแถว — เฉพาะกรณีเคลมเดียว)</span></label>
-          <input type="text" id="invoice">
-        </div>
-        <div>
-          <label class="fld" for="severity">ความเสียหาย</label>
-          <select id="severity">
-            <option value="เบา">เบา</option>
-            <option value="หนัก">หนัก</option>
-          </select>
-        </div>
-      </div>
+      <label class="fld" for="invoice">เลขเซอร์เวย์ <span style="color:var(--muted);font-weight:400">(ใส่เมื่อค้นเจอหลายแถว — เฉพาะกรณีเคลมเดียว)</span></label>
+      <input type="text" id="invoice">
 
-      <div style="margin-top:12px">
-        <label class="fld" for="claimmode">ประเภทเคลมที่จะกรอก</label>
-        <select id="claimmode">
-          <option value="dry">เคลมแห้งเท่านั้น (ปลอดภัย — ค่าเริ่มต้น)</option>
-          <option value="fresh">รวมเคลมสด / นัดหมาย / ติดตาม</option>
-        </select>
-        <div id="cmnote" hidden style="margin-top:8px;padding:8px 10px;background:#fff7ed;
-             border:1px solid #fdba74;border-radius:8px;font-size:12.5px;color:#9a3412;line-height:1.55">
-          ⚠️ <b>โหมดเคลมสด</b>: อ่านด้วย scrape (ช้ากว่า API) เพื่อดึงคู่กรณีจาก XML — ระบบกรอก
-          <b>หน้าหลัก + คู่กรณี + ราคา</b> ให้ แต่ <b>ผู้บาดเจ็บ และ ทรัพย์สิน ต้องกรอกเอง</b>
-          บน EMCS ก่อนส่ง (ตรวจให้ครบ)
-        </div>
-      </div>
-
-      <div class="checks">
-        <label><input type="checkbox" id="readonly"> อ่านอย่างเดียว (ไม่กรอก EMCS)</label>
-        <label><input type="checkbox" id="skipimages"> ไม่ยุ่งกับรูปภาพ</label>
-        <label><input type="checkbox" id="nosaveprice"> ไม่บันทึกราคา (ทดสอบ — กรอกถึงหน้าค่าใช้จ่ายแต่ไม่กดเซฟราคา)</label>
-        <label class="warn"><input type="checkbox" id="forcenew"> ⚠️ สร้างเรื่องใหม่แม้มีเรื่องเดิม (--force-new) — draft ลบไม่ได้ ยกเลิกได้อย่างเดียว</label>
-        <label><input type="checkbox" id="importxml"> นำเข้าด้วย XML (import) — ให้ EMCS เติมฟอร์มหลักจากไฟล์ แล้วบอทอุดช่องว่าง (ความเสียหายลงได้ 20 ช่อง เหมาะกับ >8 ชิ้น) · ทำทีละเคลม</label>
-        <label><input type="checkbox" id="checklicense"> ตรวจใบขับขี่ผู้เอาประกัน — OCR หา+อ่านรูปใบขับขี่ในชุดรูป (เลขที่/เลขบัตร/ชื่อ) แล้วเทียบกับข้อมูลเคลม · ช้าลงเล็กน้อย</label>
-      </div>
-
-      <div class="checks" style="margin-top:2px">
-        <label><input type="checkbox" id="fillexisting"> กรอกต่อบน "เรื่องเดิม" — เปิด draft ที่มีอยู่แล้ว กด "แก้ไข" แล้วกรอกส่วนที่ยังว่าง (ไม่สร้างเรื่องใหม่)</label>
-        <label><input type="checkbox" id="imagesonly"> อัปเฉพาะ "รูป" เข้าเรื่องเดิม — ไม่แตะข้อมูลหน้าอื่น (ใช้ตอนกรอกครบแล้วแต่รูปยังไม่ขึ้น) · มีหน้าให้ติ๊กเลือกรูปก่อนอัป</label>
-        <label><input type="checkbox" id="includemain"> ↳ รวมรูปรถประกันด้วย (ไม่ติ๊ก = อัปเฉพาะรูปรถคู่กรณี กันอัปซ้ำที่อัปไปแล้ว)</label>
-        <div style="margin-top:6px">
-          <label class="fld" for="esurvey">เลข e-Survey ของเรื่องเดิม (เว้นว่าง = เลือก draft ให้อัตโนมัติ)</label>
-          <input id="esurvey" placeholder="S68426080794" style="max-width:260px">
-        </div>
-      </div>
-
-      <div class="actions">
+      <div class="actions" style="margin-top:14px">
         <button class="run" id="runbtn">▶ รันโปรแกรม</button>
       </div>
+
+      <!-- ตัวเลือกที่ใช้นาน ๆ ที (โหมดทดสอบ/โหมดกู้) — พับไว้ ไม่ให้รกหน้าหลัก
+           งานปกติใช้แค่ เลขเคลม + ปุ่มรัน; เปิดกล่องนี้เมื่อต้องซ่อม/ทดสอบเท่านั้น -->
+      <details class="adv">
+        <summary>⚙ ตัวเลือกขั้นสูง <span class="advcount" id="advcount"></span></summary>
+
+        <label class="fld" for="severity" style="margin-top:10px">รถเสียหาย (ช่องบังคับของ EMCS)</label>
+        <select id="severity" style="max-width:200px">
+          <option value="เบา">เบา</option>
+          <option value="หนัก">หนัก</option>
+        </select>
+
+        <div class="advhead">โหมดกู้ / ซ่อมเรื่องเดิม</div>
+        <div class="checks">
+          <label><input type="checkbox" id="fillexisting"> กรอกต่อบน "เรื่องเดิม" — เปิด draft ที่มีอยู่แล้ว กด "แก้ไข" แล้วกรอกส่วนที่ยังว่าง (ไม่สร้างเรื่องใหม่)</label>
+          <label><input type="checkbox" id="imagesonly"> อัปเฉพาะ "รูป" เข้าเรื่องเดิม — ไม่แตะข้อมูลหน้าอื่น (ใช้ตอนกรอกครบแล้วแต่รูปยังไม่ขึ้น)</label>
+          <label><input type="checkbox" id="includemain"> ↳ รวมรูปรถประกันด้วย (ไม่ติ๊ก = อัปเฉพาะรูปรถคู่กรณี กันอัปซ้ำ)</label>
+          <div style="margin-top:6px">
+            <label class="fld" for="esurvey">เลข e-Survey ของเรื่องเดิม (เว้นว่าง = เลือก draft ให้อัตโนมัติ)</label>
+            <input id="esurvey" placeholder="S68426080794" style="max-width:260px">
+          </div>
+        </div>
+
+        <div class="advhead">โหมดทดสอบ</div>
+        <div class="checks">
+          <label><input type="checkbox" id="readonly"> อ่านอย่างเดียว (ไม่กรอก EMCS)</label>
+          <label><input type="checkbox" id="skipimages"> ไม่ยุ่งกับรูปภาพ</label>
+          <label><input type="checkbox" id="nosaveprice"> ไม่บันทึกราคา (กรอกถึงหน้าค่าใช้จ่ายแต่ไม่กดเซฟราคา)</label>
+          <label><input type="checkbox" id="importxml"> นำเข้าด้วย XML — ให้ EMCS เติมฟอร์มหลักจากไฟล์ (ความเสียหายลงได้ 20 ช่อง เหมาะกับ >8 ชิ้น) · ทำทีละเคลม</label>
+          <label><input type="checkbox" id="checklicense"> ตรวจใบขับขี่ผู้เอาประกัน (OCR ในเครื่อง) · ช้าลงเล็กน้อย</label>
+          <label class="warn"><input type="checkbox" id="forcenew"> ⚠️ สร้างเรื่องใหม่แม้มีเรื่องเดิม — draft ลบไม่ได้ ยกเลิกได้อย่างเดียว</label>
+        </div>
+      </details>
 
       <div class="note">
         • รันพร้อมกันได้ — แต่ละงานเปิดหน้าต่าง Chrome แยกกัน (ปรับเพดานด้วย SE_MAX_CONCURRENT)<br>
@@ -1772,7 +1775,6 @@ runBtn.addEventListener("click", async () => {
     claims,
     invoice: $("#invoice").value.trim(),
     severity: $("#severity").value,
-    claimmode: $("#claimmode").value,
     readonly: $("#readonly").checked,
     skipimages: $("#skipimages").checked,
     nosaveprice: $("#nosaveprice").checked,
@@ -1792,9 +1794,6 @@ runBtn.addEventListener("click", async () => {
     if (!ok){ alert(data.error || "เริ่มงานไม่สำเร็จ"); runBtn.disabled=false; return; }
     poll();   // ดึงงานใหม่มาแสดงทันที
   }catch(e){ alert("ติดต่อเซิร์ฟเวอร์ไม่ได้: " + e); runBtn.disabled=false; }
-});
-$("#claimmode").addEventListener("change", e => {
-  $("#cmnote").hidden = (e.target.value !== "fresh");
 });
 
 // ── นำเข้าจาก SE Survey (ดึง XML+รูป → EMCS) ──
@@ -2120,7 +2119,7 @@ $("#isvrunall").addEventListener("click", async () => {
     qBox.innerHTML = 'กำลังนำเข้า ' + escHtml(j.claim) + ' (' + (done + 1) + '/' + jobs.length + ')…'
       + '<div style="color:var(--muted);margin-top:4px">รันทีละเรื่อง — EMCS ล็อกเรื่องรายตัว</div>';
     const body = {claims: j.claim, invoice: j.inv, severity: $("#severity").value,
-                  claimmode: $("#claimmode").value, readonly: $("#readonly").checked,
+                  readonly: $("#readonly").checked,
                   skipimages: $("#skipimages").checked, nosaveprice: $("#nosaveprice").checked,
                   forcenew: $("#forcenew").checked, importxml: $("#importxml").checked,
                   checklicense: $("#checklicense").checked, ...j.pick};
@@ -2293,6 +2292,21 @@ $("#savekeyers").addEventListener("click", async () => {
     keyersMsg.textContent = "✅ บันทึกแล้ว — มีผลกับงานถัดไปทันที"; keyersMsg.style.color = "var(--ok)";
   }catch(e){ keyersMsg.textContent = "❌ ติดต่อเซิร์ฟเวอร์ไม่ได้: " + e; keyersMsg.style.color = "var(--err)"; }
 });
+
+// ป้ายบนหัวกล่อง "ตัวเลือกขั้นสูง" — กล่องพับอยู่แล้วมองไม่เห็นว่าติ๊กอะไรค้างไว้
+// (เช่นลืม 'ไม่ยุ่งกับรูปภาพ' ไว้จากงานก่อน แล้วงานถัดไปรูปไม่ขึ้น หาสาเหตุไม่เจอ)
+const ADV_BOXES = ["fillexisting", "imagesonly", "includemain", "readonly", "skipimages",
+                   "nosaveprice", "importxml", "checklicense", "forcenew"];
+function updateAdvCount(){
+  const n = ADV_BOXES.filter(id => $("#" + id).checked).length
+          + ($("#esurvey").value.trim() ? 1 : 0);
+  const el = $("#advcount");
+  el.textContent = n ? ("— เปิดอยู่ " + n + " ข้อ") : "";
+  el.style.color = n ? "var(--warn)" : "";
+}
+ADV_BOXES.forEach(id => $("#" + id).addEventListener("change", updateAdvCount));
+$("#esurvey").addEventListener("input", updateAdvCount);
+updateAdvCount();
 
 // แท็บสลับ (client-side toggle หน้าเดียว)
 const PANES = ["isurvey", "sesurvey", "jobs", "settings"];

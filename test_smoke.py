@@ -2293,6 +2293,17 @@ check("แท็บ: ISURVEY เป็นแท็บหลัก เปิด�
       and '<div class="tabpane" id="pane-sesurvey" hidden>' in _page)
 check("แท็บ: รายการ SE Survey โหลดตอนเปิดแท็บ ไม่ใช่ทุกครั้งที่เปิดหน้า",
       "__seLoaded" in _page and "loadCasesBtn.click();   // auto-load" not in _page)
+# ตัวเลือกที่ใช้นาน ๆ ที ต้องพับไว้ ไม่ให้รกหน้าหลัก (หน้าหลักเหลือ เลขเคลม + ปุ่มรัน)
+_adv = _page[_page.index('<details class="adv">'):_page.index("</details>")]
+for _id in ("readonly", "skipimages", "nosaveprice", "forcenew", "importxml",
+            "checklicense", "fillexisting", "imagesonly", "includemain",
+            "esurvey", "severity"):
+    check(f"ขั้นสูง: {_id} อยู่ในกล่องที่พับไว้",
+          f'id="{_id}"' in _adv)
+check("ขั้นสูง: ถอด claimmode ทิ้ง (เป็น no-op ตั้งแต่ถอดด่านเคลมแห้ง)",
+      'id="claimmode"' not in _page and 'id="cmnote"' not in _page)
+check("ขั้นสูง: มีป้ายบอกจำนวนที่ติ๊กค้างไว้ (กล่องพับแล้วมองไม่เห็น)",
+      "updateAdvCount" in _page and 'id="advcount"' in _page)
 check("joblog: มี event send_failed ให้บันทึกด้วย",
       "send_failed" in _jl.EVENTS)
 
