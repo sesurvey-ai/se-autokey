@@ -2338,6 +2338,16 @@ check("submit: เปิดเรื่องกลับไม่ได้ → 
 _ok, _msg, _n = _run_submit([False], esurvey="")
 check("submit: ไม่รู้เลข e-Survey → ไม่เดา ไม่เปิดมั่ว", _ok is False and _n == 0)
 
+# --report-isurvey (ใช้ตอนคนกดส่งเองบน EMCS) เคยทำแค่แจ้ง ISURVEY → งานไม่มี row
+# ใน se-key และไม่โผล่ในสมุดงาน (เจอจริง 2026013058422) — ต้องครบ 3 อย่างเหมือนปุ่มบนเว็บ
+_rsrc = _insp.getsource(__import__("main").run_report_isurvey)
+check("report-isurvey: ลงสมุดงานด้วย", "joblog.record" in _rsrc)
+check("report-isurvey: บันทึก se-key ด้วย", "sekey_client.save_many" in _rsrc)
+check("report-isurvey: ตรวจซ้ำก่อนเขียน se-key (รันซ้ำไม่ได้ row ซ้ำ)",
+      "check_survey" in _rsrc and 'dup.get("exists")' in _rsrc)
+check("report-isurvey: dry-run ต้องไม่เขียนอะไรจริง",
+      "if args.dry_run:" in _rsrc and "continue" in _rsrc)
+
 # ---- 23. webui._build_cmd: โหมดเคลม (dry = เคลมแห้ง / fresh = เคลมสด) ----
 import webui as _webui  # noqa: E402
 _cmd, _e = _webui._build_cmd({"claims": "2026013041465", "claimmode": "dry"})

@@ -1459,6 +1459,29 @@ def run_report_isurvey(cfg, args):
             icon = ("🧪" if args.dry_run else "✅") if res["ok"] else "❌"
             log(f"{icon} แจ้ง ISURVEY (คนคีย์ {keyer or '?'}) — {res['text'][:140]}")
             results.append((claim, icon, f"{keyer} | {res['text'][:70]}"))
+            if args.dry_run:
+                continue
+            # เส้นนี้เคยทำแค่ "แจ้ง ISURVEY" ทำให้งานที่คนกดส่งเองบน EMCS ไม่มี row
+            # ใน se-key และไม่โผล่ในสมุดงาน (เจอจริง 2026013058422) — เติมให้ครบ
+            # แบบเดียวกับปุ่มบนหน้าเว็บ; ตรวจซ้ำก่อนเขียนกัน row ซ้ำเมื่อรันคำสั่งซ้ำ
+            joblog.record("sent", claim, survey_no,
+                          esurvey=(info or {}).get("esurvey", ""), keyer=keyer,
+                          work_type=sekey_client.derive_base_type(survey_no),
+                          note=f"--report-isurvey (สถานะ {st})")
+            if not sekey_client.enabled(cfg):
+                continue
+            dup = sekey_client.check_survey(cfg, survey_no)
+            if dup.get("exists"):
+                log(f"   ↷ se-key มี {survey_no} อยู่แล้ว ({dup.get('count')} row) — ไม่บันทึกซ้ำ")
+                continue
+            _r = sekey_client.save_many(
+                cfg, sekey_client.build_payloads(
+                    claim, survey_no, keyer=keyer,
+                    base_type=sekey_client.derive_base_type(survey_no)),
+                mark_sent=res["ok"])
+            _n = sum(1 for x in _r if x["ok"])
+            log((f"✅ บันทึกลง se-key DB {_n} row" if _n == len(_r)
+                 else f"⚠️ บันทึก se-key DB {_n}/{len(_r)} row"))
     finally:
         driver.quit()
     banner("สรุปการแจ้ง ISURVEY" + (" (dry-run ไม่ยิงจริง)" if args.dry_run else ""))
