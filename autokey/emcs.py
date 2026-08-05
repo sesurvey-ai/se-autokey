@@ -1910,20 +1910,39 @@ return out;
 def _read_validform(driver) -> dict:
     """เรียก validForm() แล้วอ่าน global ที่ EMCS ใช้เก็บ "ช่องที่ขาด" ออกมาด้วย
 
-    คืน {ok, err, missing[list], control} — ok=None คือเรียกไม่ได้/พังกลางทาง
-    (ถ้า validForm เด้ง alert ระหว่างเรียก execute_script จะไม่คืนค่า → ok=None
-    แต่ global ยังอยู่ ผู้เรียกกด alert ทิ้งแล้วเรียกซ้ำได้)"""
+    คืน {ok, err, missing[list], control, alert}
+      ok=None = เรียกไม่ได้/พังกลางทาง · alert = ข้อความที่ validForm เด้งออกมา
+
+    ⚠️ **validForm() ไม่ใช่ฟังก์ชันอ่านอย่างเดียว** — ถ้า format ไม่ผ่านมันเรียก
+    `AlertSummary()` ซึ่งเป็น `alert()` ของจริง (เจอสด เคลม 2026013058422: เตือน
+    'กรณี [เคลมสด] ต้องระบุ 5 วันที่ ให้อยู่ภายใน 24 ชั่วโมง') alert ที่ค้างอยู่จะ
+    ทำให้ **คำสั่ง Selenium ถัดไปทุกคำสั่งโยน UnexpectedAlertPresentException**
+    แล้วโปรแกรมตายทั้งที่ควรแค่ "หยุดรอคนแก้" → ที่นี่จึงเก็บ alert ทิ้งให้เสมอ
+    และส่งข้อความกลับไปให้ผู้เรียกใช้ต่อ (มันคือ validation message ที่อยากได้อยู่แล้ว)
+    """
+    out = {"ok": None, "err": "", "missing": [], "control": "", "alert": ""}
+    res = None
     try:
         res = driver.execute_script(_JS_VALIDFORM)
+    except UnexpectedAlertPresentException:
+        pass                       # validForm เด้ง alert ระหว่างรัน — เก็บข้างล่าง
     except Exception as e:
-        return {"ok": None, "err": type(e).__name__, "missing": [], "control": ""}
+        out["err"] = type(e).__name__
+        return out
+    finally:
+        try:                       # กวาด alert ที่ validForm อาจเพิ่งเด้งทิ้งเสมอ
+            out["alert"] = (accept_alert(driver, timeout=2) or "").strip()
+        except Exception:
+            pass
     if not isinstance(res, dict):
-        return {"ok": None, "err": "", "missing": [], "control": ""}
+        return out
+    out["ok"] = res.get("ok")
+    out["err"] = str(res.get("err") or "")
     # strJoinText = "ชื่อช่อง1,ชื่อช่อง2," (ต่อท้ายด้วย , ทุกตัว)
-    res["missing"] = [s.strip() for s in str(res.get("missing") or "").split(",")
+    out["missing"] = [s.strip() for s in str(res.get("missing") or "").split(",")
                       if s.strip()]
-    res["control"] = str(res.get("control") or "").strip()
-    return res
+    out["control"] = str(res.get("control") or "").strip()
+    return out
 
 
 # ---- ตัวดักคลิก: ครั้งหน้าที่ "กดแล้วเงียบ" ต้องบอกได้ว่าเงียบตรงไหน ----
@@ -2038,7 +2057,13 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
         _probe = _read_click_probe(driver)
         if _probe:
             log(f"   🔎 {button_id} รอบ {i}: {_probe}")
-        if _read_validform(driver).get("ok") is False:
+        _vf = _read_validform(driver)
+        if _vf.get("alert"):
+            # EMCS เตือนรูปแบบข้อมูล (AlertSummary) — เป็นเรื่องข้อมูล ไม่ใช่จังหวะกด
+            # กดซ้ำก็เจอ alert เดิม → ออกไปให้ผู้เรียกไปหยุดรอคนแก้
+            log(f"   ⚠️ {button_id} ไม่ผ่านด่านข้อมูลของ EMCS: {_vf['alert'][:200]}")
+            return False
+        if _vf.get("ok") is False:
             log(f"   ⚠️ {button_id} ไม่ตอบสนองเพราะ validForm() ปัดตก (ช่องบังคับขาด) "
                 "— ไม่กดซ้ำ")
             return False
@@ -2129,13 +2154,9 @@ def _diagnose_save_click(driver, button_id: str = "") -> str:
         return wrong
 
     # 2) validForm() ว่ายังไง (+ ขุด global ที่มันเก็บชื่อช่องที่ขาดไว้แต่ไม่ยอมโชว์)
-    res, err = _read_validform(driver), ""
-    try:                           # เก็บ alert ที่ validForm อาจเพิ่งเด้ง
-        err = (accept_alert(driver, timeout=3) or "").strip()
-    except Exception:
-        pass
-    if err:
-        return f"EMCS แจ้ง: {err[:300]}"
+    res = _read_validform(driver)   # เก็บ alert ที่ validForm เด้งให้แล้วในตัว
+    if res.get("alert"):
+        return f"EMCS แจ้ง: {res['alert'][:300]}"
     if res.get("err"):
         return (f"validForm() ของ EMCS พังกลางทาง ({res['err'][:160]}) — "
                 "ฟอร์มนี้ไม่มีช่องที่สคริปต์ EMCS อ้างถึง กรอก/บันทึกเองบนหน้าจอ")
@@ -2228,6 +2249,17 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
                 return m.group(0) if m else ""
             except TimeoutException:
                 pass
+            except UnexpectedAlertPresentException:
+                # มี alert ค้างอยู่ (EMCS เพิ่งเตือน validation ช้ากว่ารอบแรก /
+                # validForm เด้งตอนวินิจฉัย) — เก็บข้อความไปใช้เป็นเหตุผลหยุดรอคน
+                # ⛔ ห้ามปล่อยหลุด: เดิมเป็น error จบโปรแกรมทั้งที่ควรแค่หยุดรอคนแก้
+                # (เจอสด เคลม 2026013058422 — 5 วันที่ของเคลมสดต้องอยู่ใน 24 ชม.)
+                try:
+                    alert_text = (accept_alert(driver, timeout=5) or "").strip() or alert_text
+                except Exception:
+                    pass
+                silent = False
+                log(f"   ⚠️ EMCS เตือนหลังกดบันทึก: {(alert_text or '')[:200]}")
 
         # validation ไม่ผ่าน — ลองซ่อม dropdown ที่หลุดจาก postback ก่อน (อัตโนมัติ)
         if auto_heal_left > 0 and "กรุณา" in (alert_text or "") \

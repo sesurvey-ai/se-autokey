@@ -1012,7 +1012,21 @@ check("save_exit: ไม่มีปุ่มบันทึกราคาเ�
 # ของจริงเคลม 2026013059072: onclick ของ btnSave = `if (validForm()==false) return false;`
 # → validForm ปัดตกเงียบ = ไม่มีทั้ง alert และ postback. เดิม accept_alert โยน
 # TimeoutException ทะลุออกไป โปรแกรมตายคาที่ ทั้งที่ทางที่ถูกคือหยุดรอคนกรอก
-def _run_save_main(alerts, is_new, answered=False, click_ok=True, validform=None):
+class _RaiseWait:
+    """WebDriverWait ปลอมที่โยน exception ที่กำหนด (จำลอง alert ค้างตอนรอปุ่ม)"""
+
+    def __init__(self, exc):
+        self.exc = exc
+
+    def __call__(self, *a, **k):
+        return self
+
+    def until(self, *a, **k):
+        raise self.exc
+
+
+def _run_save_main(alerts, is_new, answered=False, click_ok=True, validform=None,
+                   wait_exc=None):
     """alerts = ลิสต์ผลของ accept_alert แต่ละรอบ (ข้อความ หรือ TimeoutException)
     click_ok = คลิกปุ่มบันทึกติดไหม
     validform = ผลของ _read_validform (None = อ่านไม่ได้ ok=None เหมือนของจริงบน driver ปลอม)
@@ -1049,10 +1063,10 @@ def _run_save_main(alerts, is_new, answered=False, click_ok=True, validform=None
     emcs._refill_missing_fields = lambda d, data, txt: False
     emcs._diagnose_save_click = (
         lambda d, bid="": "validForm() คืน false โดยไม่บอกเหตุผล")
-    emcs.WebDriverWait = _NeverReady
+    emcs.WebDriverWait = _NeverReady if wait_exc is None else _RaiseWait(wait_exc)
     emcs._click_save_button = _click
     emcs._read_validform = lambda d: (
-        validform or {"ok": None, "err": "", "missing": [], "control": ""})
+        validform or {"ok": None, "err": "", "missing": [], "control": "", "alert": ""})
     try:
         out = emcs.save_main_form(_FakeDriver({}), claim_data.ClaimData(),
                                   is_new=is_new)
@@ -1087,6 +1101,16 @@ check("save_main: คลิกไม่ติด → ลองกดใหม่
       _c4 >= 3, f"กด {_c4} ครั้ง")
 # แต่ถ้าอ่านออกมาแล้วว่า "ช่องบังคับขาด" (EMCS ปัดปุ่มตกเงียบ ๆ) กดซ้ำก็ผลเดิม
 # → ห้ามวนกดเปล่า ๆ ต้องหยุดถามทันที พร้อมชี้ช่องที่ผิดให้ตีกรอบแดง
+# alert ค้างตอนรอปุ่ม "ข้อมูลความเสียหาย" (EMCS เตือน validation ช้ากว่ารอบแรก)
+# เดิมดักแค่ TimeoutException → UnexpectedAlertPresentException หลุดออกไปฆ่าโปรแกรม
+# ทั้งที่ควรแค่หยุดรอคนแก้ (เจอสด เคลม 2026013058422: 5 วันที่ของเคลมสด ต้องอยู่ใน 24 ชม.)
+_out6, _n6, _c6, _k6 = _run_save_main(
+    [_sel_exc.TimeoutException()] * 6, is_new=True, answered=False,
+    wait_exc=_sel_exc.UnexpectedAlertPresentException("alert"))
+check("save_main: alert ค้างตอนรอปุ่มความเสียหาย → ไม่โยนออกไปเป็น error",
+      not isinstance(_out6, _sel_exc.UnexpectedAlertPresentException), type(_out6).__name__)
+check("save_main: alert ค้าง → หยุดรอคนแก้ ไม่ตายเงียบ", _n6 >= 1)
+
 _out5, _n5, _c5, _k5 = _run_save_main(
     [_sel_exc.TimeoutException()] * 6, is_new=True, click_ok=False,
     validform={"ok": False, "err": "", "missing": ["ประเภทรถ"], "control": "ddlCType"})
@@ -2000,17 +2024,45 @@ def _fake_validform(ret):
     return _types.SimpleNamespace(execute_script=lambda *a, **k: ret)
 
 
+
+def _no_alert(*a, **k):
+    raise _sel_exc.TimeoutException()
+
+
+_o = emcs.accept_alert
+emcs.accept_alert = _no_alert       # default: ไม่มี alert ค้าง
 _r = emcs._read_validform(_fake_validform(
     {"ok": False, "err": "", "missing": "ประเภทรถ,จังหวัด,หมายเลขทะเบียน,", "control": "ddlCType"}))
+emcs.accept_alert = _o
 check("validform: แยกชื่อช่องจาก strJoinText (ตัด , ท้ายทิ้ง)",
       _r["ok"] is False and _r["missing"] == ["ประเภทรถ", "จังหวัด", "หมายเลขทะเบียน"]
       and _r["control"] == "ddlCType")
+_o = emcs.accept_alert
+emcs.accept_alert = _no_alert
 _r = emcs._read_validform(_fake_validform({"ok": True, "err": "", "missing": "", "control": ""}))
 check("validform: ผ่าน → ไม่มีช่องขาด", _r["ok"] is True and _r["missing"] == [])
 _r = emcs._read_validform(_types.SimpleNamespace(
     execute_script=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no session"))))
 check("validform: เรียกไม่ได้ (browser ตาย) → ok=None ไม่โยน error",
       _r["ok"] is None and _r["missing"] == [])
+emcs.accept_alert = _o
+
+# ⚠️ validForm() ไม่ใช่ฟังก์ชันอ่านอย่างเดียว — format ไม่ผ่านมันเด้ง alert เอง
+# alert ที่ค้างทำให้คำสั่ง Selenium ถัดไปตายหมด (เจอสด เคลม 2026013058422)
+_ALERT_24H = ("กรุณาใส่ข้อมูลให้ถูกตามนี้ คือ :\n\n1. กรณี [เคลมสด] ต้องระบุ "
+              "'วันที่เกิดเหตุและเวลา' ... ให้อยู่ภายใน 24 ชั่วโมง.")
+_o = emcs.accept_alert
+emcs.accept_alert = lambda d, timeout=30: _ALERT_24H
+_r = emcs._read_validform(_types.SimpleNamespace(
+    execute_script=lambda *a, **k: (_ for _ in ()).throw(
+        _sel_exc.UnexpectedAlertPresentException("alert"))))
+check("validform: validForm เด้ง alert → เก็บ alert ทิ้ง + ส่งข้อความกลับ ไม่ค้าง",
+      "24 ชั่วโมง" in _r["alert"] and _r["ok"] is None)
+# ต้องกวาด alert แม้ execute_script สำเร็จ (alert อาจโผล่หลังสคริปต์คืนค่า)
+_r = emcs._read_validform(_fake_validform({"ok": True, "err": "", "missing": "", "control": ""}))
+check("validform: execute_script ผ่านแต่มี alert ค้าง → ก็เก็บทิ้งให้",
+      _r["alert"] == _ALERT_24H)
+emcs.accept_alert = _o
 # ข้อความวินิจฉัยต้องอยู่ในรูปแบบเดียวกับ alert จริง เพื่อให้ _missing_field_list แยกต่อได้
 _o = (emcs._report_visible_buttons, emcs._read_validform, emcs.accept_alert, emcs.log)
 emcs._report_visible_buttons = lambda *a, **k: ""
