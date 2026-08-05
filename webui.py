@@ -973,8 +973,8 @@ PAGE = r"""<!doctype html>
 <style>
   :root{
     --bg:#0f172a; --card:#ffffff; --ink:#0f172a; --muted:#64748b;
-    --line:#e2e8f0; --brand:#4f46e5; --brand2:#6366f1;
-    --ok:#16a34a; --warn:#d97706; --err:#dc2626; --skip:#0891b2;
+    --line:#e2e8f0; --brand:#2f6bd8; --brand2:#4a83e8;
+    --ok:#1f9d6b; --warn:#d97706; --err:#dc2626; --skip:#0891b2;
   }
   *{box-sizing:border-box}
   body{
@@ -988,7 +988,7 @@ PAGE = r"""<!doctype html>
   .logo{width:42px;height:42px;border-radius:12px;flex:none;
     background:linear-gradient(135deg,var(--brand),var(--brand2));
     display:grid;place-items:center;color:#fff;font-weight:700;font-size:20px;
-    box-shadow:0 6px 16px rgba(79,70,229,.35)}
+    box-shadow:0 6px 16px rgba(47,107,216,.35)}
   h1{font-size:20px;margin:0;line-height:1.2}
   .sub{color:var(--muted);font-size:13px;margin-top:2px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:16px;
@@ -1011,7 +1011,7 @@ PAGE = r"""<!doctype html>
   .actions{display:flex;align-items:center;gap:12px;margin-top:18px;flex-wrap:wrap}
   button{font-family:inherit;font-size:15px;font-weight:600;border:0;
     border-radius:10px;padding:11px 20px;cursor:pointer;transition:.15s}
-  .run{background:var(--brand);color:#fff;box-shadow:0 6px 16px rgba(79,70,229,.3)}
+  .run{background:var(--brand);color:#fff;box-shadow:0 6px 16px rgba(47,107,216,.3)}
   .run:hover{background:#4338ca}
   .run:disabled{background:#c7d2fe;box-shadow:none;cursor:not-allowed}
   .ghost{background:transparent;color:var(--muted);padding:8px 12px;font-size:13px}
@@ -1047,7 +1047,7 @@ PAGE = r"""<!doctype html>
   .closeone{color:#94a3b8}
   .closeone:hover{color:#fff}
   .continue.submitbtn{background:var(--ok)}
-  .continue.submitbtn:hover{background:#15803d}
+  .continue.submitbtn:hover{background:#178056}
   .pausebox{display:flex;gap:14px;align-items:flex-start;background:#fffbeb;
     border:2px solid var(--warn);margin:12px 14px;border-radius:14px;padding:14px 16px;
     box-shadow:0 8px 24px rgba(217,119,6,.18);animation:popin .25s ease}
@@ -1130,7 +1130,7 @@ PAGE = r"""<!doctype html>
   .tab{background:#fff;border:1px solid var(--line);color:var(--muted);
     padding:10px 18px;border-radius:12px;font-size:14px;font-weight:600}
   .tab.active{background:var(--brand);color:#fff;border-color:var(--brand);
-    box-shadow:0 6px 16px rgba(79,70,229,.25)}
+    box-shadow:0 6px 16px rgba(47,107,216,.25)}
   .tab:hover:not(.active){color:var(--ink);border-color:var(--brand2)}
   /* ซ้าย = รายการงาน (กว้างพอให้เลขเซอร์เวย์+ทะเบียนไม่โดนตัด) / ขวา = log ที่เหลือทั้งหมด */
   .dash{display:grid;grid-template-columns:minmax(420px,26%) minmax(0,1fr);
@@ -1931,7 +1931,7 @@ async function checkSeCase(caseId){
           + ' · ทรัพย์สิน ' + c.assets + ' · ความเสียหาย ' + c.damage + ' รายการ</div>'
           + '<div style="color:var(--muted);margin-top:2px">' + escHtml(i.car_type||"-") + ' · '
           + escHtml(i.acc_province||"-") + ' · ' + escHtml(i.loss_type||"-") + '</div>';
-    h += d.ready ? '<div style="color:#16a34a;font-weight:600;margin-top:6px">✅ พร้อมนำเข้า</div>'
+    h += d.ready ? '<div style="color:var(--ok);font-weight:600;margin-top:6px">✅ พร้อมนำเข้า</div>'
                  : d.blockers.map(b => '<div style="color:var(--err);margin-top:6px">⛔ ' + escHtml(b) + '</div>').join("");
     if ((d.warnings||[]).length)
       h += '<div style="color:#d97706;margin-top:6px">⚠️ ' + escHtml(d.warnings.join(" · ")) + '</div>';
@@ -2179,7 +2179,7 @@ async function checkIsvCase(btn){
           + ' · ผู้บาดเจ็บ ' + c.injuries + ' · ทรัพย์สิน ' + c.assets
           + ' · ความเสียหาย ' + c.damage + ' รายการ · ' + netTxt + '</div>';
     if (d.ready){
-      h += '<div style="color:#16a34a;font-weight:600">✅ ข้อมูลครบ นำเข้าได้เลย</div>';
+      h += '<div style="color:var(--ok);font-weight:600">✅ ข้อมูลครบ นำเข้าได้เลย</div>';
     } else {
       h += d.blockers.map(b =>
         '<div style="margin:8px 0">'
