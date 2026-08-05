@@ -2325,6 +2325,19 @@ check("waitbar: เขียน title แท็บด้วย (แจ้งเ�
       "document.title = waiting.length" in _page and "BASE_TITLE" in _page)
 check("waitbar: กด 'ไปที่งาน' → เลื่อนไปการ์ด + กะพริบ",
       "scrollIntoView" in _page and 'classList.add("flash")' in _page)
+
+# ---- เลข e-Survey บนหัวการ์ด (คว้าจาก log ไม่ต้องเพิ่ม marker) ----
+check("การ์ด: มีป้ายเลข e-Survey", 'class="es" hidden' in _page and ".es{" in _page)
+check("การ์ด: regex จับเลข e-Survey ใช้ได้จริง (ห้ามมี \\\\d ที่ escape ผิด)",
+      "ln.match(/S[0-9]{9,13}/)" in _page)
+check("การ์ด: regex แยก timestamp ยังทำงาน (เคยโดนสคริปต์แก้ทับ)",
+      "ln.match(/^(\\[[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\\] )" in _page)
+check("หน้าเว็บ: ไม่มีอักขระควบคุมหลุดเข้าไฟล์ (heredoc กิน escape)",
+      not any(ch in _page for ch in ("\x07", "\x08", "\x0b", "\x0c")))
+# คำอธิบายต้องกระชับ — ก้อนยาว ๆ ไม่มีใครอ่าน
+for _m in __import__("re").finditer(r'<div class="note"[^>]*>(.*?)</div>', _page, __import__("re").S):
+    _txt = " ".join(__import__("re").sub(r"<[^>]+>", "", _m.group(1)).split())
+    check(f"คำอธิบายสั้นพอ ({len(_txt)} ตัวอักษร): {_txt[:34]}…", len(_txt) <= 260, _txt[:60])
 check("joblog: มี event send_failed ให้บันทึกด้วย",
       "send_failed" in _jl.EVENTS)
 

@@ -1039,6 +1039,10 @@ PAGE = r"""<!doctype html>
     border-bottom:1px solid #1e293b}
   .run-title{display:flex;align-items:baseline;gap:8px;min-width:0}
   .run-title b{color:#e2e8f0;font-size:14px}
+  /* เลข e-Survey บนหัวการ์ด — เลขนี้คือกุญแจไปเปิดเรื่องบน EMCS ต้องหาง่าย */
+  .es{display:inline-block;padding:1px 9px;border-radius:999px;background:#1e293b;
+    color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:.4px;
+    font-variant-numeric:tabular-nums}
   .run-cmd{color:#64748b;font-size:11px;white-space:nowrap;overflow:hidden;
     text-overflow:ellipsis;max-width:min(46vw,720px)}
   .loghead .right{display:flex;align-items:center;gap:8px;flex:none}
@@ -1240,9 +1244,8 @@ PAGE = r"""<!doctype html>
       <div id="sequeue" hidden style="margin:8px 0;padding:8px 10px;border-radius:8px;background:#0f172a11;font-size:13px"></div>
       <div id="secasesbox" class="caselist" style="margin-top:12px"></div>
       <div class="note" style="margin-top:12px">
-        • ต้องตั้ง <b>SESURVEY_API_TOKEN</b> ใน .env ให้ตรงกับ INTEGRATION_TOKEN ของ server<br>
-        • <b>⚡ นำเข้า</b> = กรอกฟอร์ม + อัปรูป + บันทึก draft (บอท<b>ไม่กดส่งงาน</b>)<br>
-        • <b>🧪 ทดสอบ</b> = dry-run: ดึง XML + โหลดรูป แล้วหยุด — ไม่แตะ EMCS
+        <b>⚡ นำเข้า</b> = กรอก + อัปรูป + บันทึก draft (ไม่กดส่งงาน) ·
+        <b>🧪 ทดสอบ</b> = dry-run ไม่แตะ EMCS
       </div>
      </div>
     </div>
@@ -1272,9 +1275,7 @@ PAGE = r"""<!doctype html>
       <div id="isvqueue" hidden style="margin:8px 0;padding:8px 10px;border-radius:8px;background:#0f172a11;font-size:13px"></div>
       <div id="isvcasesbox" class="caselist"></div>
       <div class="note" style="margin:10px 0 18px">
-        • แสดงเฉพาะสถานะ <b>“จบงาน”</b> — เรียงงานที่เสร็จล่าสุดขึ้นก่อน<br>
-        • <b>“✓ นำเข้าแล้ว”</b> อ่านจาก <code>EMCSstatus</code> ของ ISURVEY เอง (ใครนำเข้า/เมื่อไหร่) — บอทไม่ได้เขียนค่านี้<br>
-        • กด <b>⚡ นำเข้า</b> = เติมเลขเคลม+เลขเซอร์เวย์ลงฟอร์มด้านล่างแล้วรันด้วยตัวเลือกที่ตั้งไว้
+        เฉพาะงาน <b>“จบงาน”</b> ใหม่สุดขึ้นก่อน · <b>“✓ นำเข้าแล้ว”</b> อ่านจาก ISURVEY เอง
       </div>
 
       <h2 style="font-size:16px;margin:0 0 12px">🖊 กรอกเคลมอัตโนมัติ (ISURVEY)</h2>
@@ -1322,12 +1323,8 @@ PAGE = r"""<!doctype html>
       </details>
 
       <div class="note">
-        • รันพร้อมกันได้ — แต่ละงานเปิดหน้าต่าง Chrome แยกกัน (ปรับเพดานด้วย SE_MAX_CONCURRENT)<br>
-        • หน้าต่าง Chrome จะเปิดขึ้นเองให้เห็นการทำงาน — กรอกเสร็จระบบ <b>บันทึกเป็น draft</b> แล้ว <b>หยุดรอให้ตรวจ</b><br>
-        • ก่อนอัปโหลดรูป ระบบจะโชว์รูปให้ <b>เลือกเฉพาะรูปที่จะนำเข้า EMCS</b> (ติ๊กเฉพาะที่ต้องการ)<br>
-        • ตรวจ draft บน Chrome แล้วกดปุ่ม <b>"✅ ส่งงาน + แจ้ง ISURVEY"</b> — ระบบจะกด "ส่งงานใหม่" ให้ + แจ้งกลับ ISURVEY<br>
-        • ระบบ <b>ไม่กดส่งงานเอง</b> จนกว่าคุณจะสั่งผ่านปุ่ม (ถ้าไม่กด = เก็บเป็น draft)<br>
-        • เคลมที่ไม่ใช่เคลมแห้ง หรือมีเรื่องใน EMCS อยู่แล้ว จะถูกข้ามพร้อมบอกเหตุผล
+        บอทกรอกจนครบแล้ว<b>หยุดเป็น draft</b> — <b>ไม่กดส่งงานเอง</b> จนกว่าคุณจะกดปุ่มบนการ์ด<br>
+        ระหว่างทางจะหยุดถาม (เลือกรูป / ข้อมูลที่ขาด) · เรื่องที่มีใน EMCS แล้วจะข้ามพร้อมบอกเหตุผล
       </div>
      </div>
     </div>
@@ -1344,8 +1341,8 @@ PAGE = r"""<!doctype html>
         <div style="color:var(--muted);font-size:13px;padding:8px 0">กำลังโหลด…</div>
       </div>
       <div class="note" style="margin-top:10px">
-       • บันทึกอัตโนมัติ 2 จังหวะ: <b>draft</b> = กรอกครบแล้ว · <b>ส่งแล้ว</b> = กด "ส่งงานใหม่" + ตรวจสถานะบน EMCS ผ่าน<br>
-       • เก็บถาวรที่ <code>runs/jobs.jsonl</code> — ไม่หายตอนปิดการ์ด/รีสตาร์ตโปรแกรม
+       <b>draft</b> = กรอกครบ · <b>ส่งแล้ว</b> = ตรวจสถานะบน EMCS ผ่านแล้ว ·
+       เก็บถาวรที่ <code>runs/jobs.jsonl</code>
       </div>
      </div>
     </div>
@@ -1408,13 +1405,21 @@ function classify(line){
 }
 function appendLines(c, lines){
   if (!lines || !lines.length) return;
+  // เลข e-Survey โผล่ใน log อยู่แล้ว (alert ตอนบันทึก / banner ตอนจบ) — คว้ามาโชว์
+  // บนหัวการ์ด จะได้ไม่ต้องเลื่อนหา log ตอนอยากเปิดเรื่องบน EMCS
+  if (!c.esEl.textContent){
+    for (const ln of lines){
+      const m = ln.match(/S[0-9]{9,13}/);
+      if (m){ c.esEl.textContent = m[0]; c.esEl.hidden = false; break; }
+    }
+  }
   const nearBottom = c.logEl.scrollHeight - c.logEl.scrollTop - c.logEl.clientHeight < 60;
   const frag = document.createDocumentFragment();
   for (const ln of lines){
     const div = document.createElement("div");
     const cls = classify(ln);
     if (cls) div.className = cls;
-    const m = ln.match(/^(\[\d\d:\d\d:\d\d\]\s)([\s\S]*)$/);
+    const m = ln.match(/^(\[[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\] )([\s\S]*)$/);
     if (m && !cls){
       const t = document.createElement("span"); t.className="l-time"; t.textContent=m[1];
       div.appendChild(t); div.appendChild(document.createTextNode(m[2]));
@@ -1531,7 +1536,8 @@ function makeCard(r){
   root.className = "run-card"; root.dataset.id = r.id;
   root.innerHTML =
     '<div class="loghead">'
-    + '<span class="run-title">📋 <b></b> <span class="run-cmd"></span></span>'
+    + '<span class="run-title">📋 <b></b> <span class="es" hidden></span>'
+    +   ' <span class="run-cmd"></span></span>'
     + '<span class="right">'
     +   '<span class="badge running"><span class="dot"></span><span class="st"></span></span>'
     +   '<button class="ghost stopone">■ หยุด</button>'
@@ -1583,6 +1589,7 @@ function makeCard(r){
     galAll: root.querySelector(".gal-all"), galNone: root.querySelector(".gal-none"),
     galSig: null,
     wtWrap: root.querySelector(".pause-worktype"),
+    esEl: root.querySelector(".es"),
     wtRadios: root.querySelectorAll(".wt-base"), wtBatch: root.querySelector(".wt-batch"),
     wtMix: root.querySelector(".wt-mix"), wtMixList: root.querySelector(".wt-mix-list"),
     wtMixAdd: root.querySelector(".wt-mix-add"), wtSig: null,
