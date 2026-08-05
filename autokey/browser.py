@@ -736,10 +736,18 @@ def _parse_selected(line, files):
 
 
 def _image_categories(folder, files):
-    """คืน {ชื่อไฟล์: หมวด} ของรูปแต่ละไฟล์ — อ่านจาก manifest ที่เขียนไว้ตอนโหลด
-    (`_categories.json` = ชื่อเดิม→หมวด) + ตอนเปลี่ยนชื่อ (`_rename_map.json` =
-    ชื่อใหม่→ชื่อเดิม). ไม่มี manifest / ไม่เจอ = หมวด 'OTHERS'
-    หมวด: INS=รูปรถประกัน, REPORTS=เอกสาร/ใบรับงาน, OTHERS=อื่นๆ"""
+    """คืน {ชื่อไฟล์: หมวด} ของรูปแต่ละไฟล์ — อ่านจาก `_categories.json`
+    ไม่มี manifest / ไม่เจอ = หมวด 'OTHERS'
+    หมวด: INS=รูปรถประกัน, REPORTS=เอกสาร/ใบรับงาน, OTHERS=อื่นๆ
+
+    **ลองชื่อไฟล์ปัจจุบันก่อนเสมอ** แล้วค่อยถอยไปหาผ่าน `_rename_map.json`
+    (ชื่อใหม่→ชื่อเดิม): ตั้งแต่ `images.prepare_images` เขียน manifest กลับด้วย
+    sha1 หลัง rename (ดู images.py:_rewrite_manifest) คีย์ใน `_categories.json`
+    ก็เป็น "ชื่อปัจจุบัน" อยู่แล้ว การแปลงผ่าน rename map จึงกลายเป็นการแปลง
+    ทิ้ง — ชี้ไปที่ชื่อต้นทางฝั่งเซิร์ฟเวอร์ ('DOC_Claimform.jpg') ซึ่งไม่มีใน
+    manifest → ตกเป็น OTHERS ทั้งกอง (เจอจริง เคลม 2026013059072 2026-08-05:
+    22/22 รูปขึ้น OTHERS ทั้งที่ manifest ถูกต้อง ปุ่ม 'เลือกทั้งหมวด' เลยใช้ไม่ได้)
+    เก็บเส้น rename map ไว้เป็น fallback สำหรับโฟลเดอร์เก่าที่ยังไม่ได้ rewrite"""
     folder = Path(folder)
     cats, rmap = {}, {}
     try:
@@ -752,8 +760,7 @@ def _image_categories(folder, files):
         rmap = {}
     out = {}
     for f in files:
-        orig = rmap.get(f, f)          # ชื่อใหม่ → ชื่อเดิม (ถ้าเคยเปลี่ยนชื่อ)
-        out[f] = cats.get(orig, "OTHERS")
+        out[f] = cats.get(f) or cats.get(rmap.get(f, f)) or "OTHERS"
     return out
 
 

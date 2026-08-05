@@ -851,6 +851,20 @@ with tempfile.TemporaryDirectory() as _d:
 with tempfile.TemporaryDirectory() as _d2:
     check("image_categories: ไม่มี manifest → OTHERS ทั้งหมด",
           browser._image_categories(pathlib.Path(_d2), ["1.jpg"])["1.jpg"] == "OTHERS")
+# ของจริงหลัง prepare_images: images._rewrite_manifest เขียน manifest กลับด้วย sha1
+# แล้ว = คีย์เป็น "ชื่อปัจจุบัน" ส่วน rename_map ยังชี้ไปชื่อต้นทางฝั่งเซิร์ฟเวอร์
+# ถ้าดันแปลงผ่าน rename_map ก่อนจะหาไม่เจอสักรูป → OTHERS ทั้งกอง (บั๊ก 2026-08-05)
+with tempfile.TemporaryDirectory() as _d3:
+    _d3 = pathlib.Path(_d3)
+    (_d3 / "_categories.json").write_text(_json.dumps({
+        "1.jpg": "REPORTS", "รูปรถประกัน2.jpg": "INS",
+    }), encoding="utf-8")
+    (_d3 / "_rename_map.json").write_text(_json.dumps({
+        "1.jpg": "DOC_supv_comment-2.jpg", "รูปรถประกัน2.jpg": "DOC_Claimform.jpg",
+    }), encoding="utf-8")
+    _c3 = browser._image_categories(_d3, ["1.jpg", "รูปรถประกัน2.jpg"])
+    check("image_categories: manifest คีย์ชื่อใหม่แล้ว → ต้องไม่ถูก rename_map ทับ",
+          _c3 == {"1.jpg": "REPORTS", "รูปรถประกัน2.jpg": "INS"})
 
 # ---- 19. sekey_client: derive_base_type + build_payloads (ลอกจาก extension) ----
 check("derive_base_type: SEABI → งานต้น", _sk.derive_base_type("SEABI-1") == "งานต้น")
@@ -998,14 +1012,15 @@ check("save_exit: ไม่มีปุ่มบันทึกราคาเ�
 # ของจริงเคลม 2026013059072: onclick ของ btnSave = `if (validForm()==false) return false;`
 # → validForm ปัดตกเงียบ = ไม่มีทั้ง alert และ postback. เดิม accept_alert โยน
 # TimeoutException ทะลุออกไป โปรแกรมตายคาที่ ทั้งที่ทางที่ถูกคือหยุดรอคนกรอก
-def _run_save_main(alerts, is_new, answered=False, click_ok=True):
+def _run_save_main(alerts, is_new, answered=False, click_ok=True, validform=None):
     """alerts = ลิสต์ผลของ accept_alert แต่ละรอบ (ข้อความ หรือ TimeoutException)
     click_ok = คลิกปุ่มบันทึกติดไหม
-    คืน (ผลลัพธ์|Exception, ครั้งที่หยุดรอคน, ครั้งที่กดปุ่ม)"""
-    calls = {"manual": 0, "clicks": 0}
+    validform = ผลของ _read_validform (None = อ่านไม่ได้ ok=None เหมือนของจริงบน driver ปลอม)
+    คืน (ผลลัพธ์|Exception, ครั้งที่หยุดรอคน, ครั้งที่กดปุ่ม, ค่าที่ส่งเข้า wait_for_manual_fill)"""
+    calls = {"manual": 0, "clicks": 0, "kw": {}, "label": ""}
     _orig = (emcs.wait_clickable, emcs.accept_alert, emcs.wait_for_manual_fill,
              emcs._refill_missing_fields, emcs._diagnose_save_click,
-             emcs.WebDriverWait, emcs._click_save_button)
+             emcs.WebDriverWait, emcs._click_save_button, emcs._read_validform)
     seq = list(alerts)
 
     def _alert(d, timeout=30):
@@ -1016,6 +1031,7 @@ def _run_save_main(alerts, is_new, answered=False, click_ok=True):
 
     def _manual(label, reason="", **kw):
         calls["manual"] += 1
+        calls["label"], calls["kw"] = label, kw
         return answered
 
     class _NeverReady:
@@ -1035,6 +1051,8 @@ def _run_save_main(alerts, is_new, answered=False, click_ok=True):
         lambda d, bid="": "validForm() คืน false โดยไม่บอกเหตุผล")
     emcs.WebDriverWait = _NeverReady
     emcs._click_save_button = _click
+    emcs._read_validform = lambda d: (
+        validform or {"ok": None, "err": "", "missing": [], "control": ""})
     try:
         out = emcs.save_main_form(_FakeDriver({}), claim_data.ClaimData(),
                                   is_new=is_new)
@@ -1043,30 +1061,39 @@ def _run_save_main(alerts, is_new, answered=False, click_ok=True):
     finally:
         (emcs.wait_clickable, emcs.accept_alert, emcs.wait_for_manual_fill,
          emcs._refill_missing_fields, emcs._diagnose_save_click,
-         emcs.WebDriverWait, emcs._click_save_button) = _orig
-    return out, calls["manual"], calls["clicks"]
+         emcs.WebDriverWait, emcs._click_save_button, emcs._read_validform) = _orig
+    return out, calls["manual"], calls["clicks"], calls
 
 import selenium.common.exceptions as _sel_exc  # noqa: E402
 
-_out, _n, _c = _run_save_main([_sel_exc.TimeoutException()], is_new=True)
+_out, _n, _c, _ = _run_save_main([_sel_exc.TimeoutException()], is_new=True)
 check("save_main: กดแล้วเงียบ (โหมดสร้างใหม่) → ไม่โยน TimeoutException ดิบ",
       not isinstance(_out, _sel_exc.TimeoutException), type(_out).__name__)
 check("save_main: กดแล้วเงียบ → หยุดรอคนกรอกก่อน (ไม่ตายเงียบ)", _n >= 1)
 check("save_main: ไม่มีคนตอบ → RuntimeError ที่อ่านรู้เรื่อง",
       isinstance(_out, RuntimeError) and "validation" in str(_out))
 # โหมดแก้ (btnUpdate): 'เงียบ' ห้ามนับว่าสำเร็จ — เดิม `'กรุณา' not in ''` = True → คืนสำเร็จผิด
-_out2, _n2, _ = _run_save_main([_sel_exc.TimeoutException()], is_new=False)
+_out2, _n2, _, _ = _run_save_main([_sel_exc.TimeoutException()], is_new=False)
 check("save_main: โหมดแก้ กดแล้วเงียบ → ห้ามตีความว่าบันทึกสำเร็จ",
       isinstance(_out2, RuntimeError), repr(_out2)[:60])
-_out3, _, _ = _run_save_main(["บันทึกข้อมูลเรียบร้อย S68426099999"], is_new=False)
+_out3, _, _, _ = _run_save_main(["บันทึกข้อมูลเรียบร้อย S68426099999"], is_new=False)
 check("save_main: โหมดแก้ มี alert ปกติ → สำเร็จ + ดึงเลข e-Survey",
       _out3 == "S68426099999", repr(_out3))
 # คลิกไม่ติด (เจอจริง 2026013059072: กดตอน postback ของ dropdown ยังไม่จบ)
 # — ต้องลองกดใหม่ก่อน แล้วค่อยหยุดถาม และเหตุผลต้องบอกว่า "กดไม่ติด" ไม่ใช่ "ข้อมูลไม่ครบ"
-_out4, _n4, _c4 = _run_save_main([_sel_exc.TimeoutException()] * 6, is_new=True,
+_out4, _n4, _c4, _ = _run_save_main([_sel_exc.TimeoutException()] * 6, is_new=True,
                                  click_ok=False)
 check("save_main: คลิกไม่ติด → ลองกดใหม่ก่อนถามคน (ไม่ยอมแพ้ตั้งแต่ครั้งแรก)",
       _c4 >= 3, f"กด {_c4} ครั้ง")
+# แต่ถ้าอ่านออกมาแล้วว่า "ช่องบังคับขาด" (EMCS ปัดปุ่มตกเงียบ ๆ) กดซ้ำก็ผลเดิม
+# → ห้ามวนกดเปล่า ๆ ต้องหยุดถามทันที พร้อมชี้ช่องที่ผิดให้ตีกรอบแดง
+_out5, _n5, _c5, _k5 = _run_save_main(
+    [_sel_exc.TimeoutException()] * 6, is_new=True, click_ok=False,
+    validform={"ok": False, "err": "", "missing": ["ประเภทรถ"], "control": "ddlCType"})
+check("save_main: ช่องบังคับขาด → ไม่วนกดซ้ำ หยุดถามเลย",
+      _c5 == 1 and _n5 >= 1, f"กด {_c5} ครั้ง / ถาม {_n5} ครั้ง")
+check("save_main: ช่องบังคับขาด → ส่ง id ช่องที่ EMCS ตีตกไปตีกรอบแดง",
+      _k5["kw"].get("focus_ids") == ["ddlCType"], repr(_k5["kw"].get("focus_ids")))
 check("save_main: คลิกไม่ติด → เหตุผลบอกว่า 'กดปุ่มบันทึกไม่ติด' ไม่ใช่ validation เปล่า",
       isinstance(_out4, RuntimeError) and "กดปุ่มบันทึกไม่ติด" in str(_out4),
       str(_out4)[:80])
@@ -1879,6 +1906,40 @@ check("missing: แยกชื่อช่องจาก validation ของ 
       == ["สถานที่เกิดเหตุ", "ประเภทรถ"])
 check("missing: ไม่มีข้อความ → ลิสต์ว่าง (ไม่พังตอน alert หาย)",
       emcs._missing_field_list("") == [] and emcs._parse_missing_fields("") == "")
+
+# ---- 22e-2. ขุดชื่อช่องที่ EMCS ไม่ยอมบอก (vlidSurvey คอมเมนต์ AlertSummary ทิ้ง) ----
+
+
+def _fake_validform(ret):
+    """driver ปลอมที่ execute_script คืนผลของ _JS_VALIDFORM ตามที่กำหนด"""
+    return _types.SimpleNamespace(execute_script=lambda *a, **k: ret)
+
+
+_r = emcs._read_validform(_fake_validform(
+    {"ok": False, "err": "", "missing": "ประเภทรถ,จังหวัด,หมายเลขทะเบียน,", "control": "ddlCType"}))
+check("validform: แยกชื่อช่องจาก strJoinText (ตัด , ท้ายทิ้ง)",
+      _r["ok"] is False and _r["missing"] == ["ประเภทรถ", "จังหวัด", "หมายเลขทะเบียน"]
+      and _r["control"] == "ddlCType")
+_r = emcs._read_validform(_fake_validform({"ok": True, "err": "", "missing": "", "control": ""}))
+check("validform: ผ่าน → ไม่มีช่องขาด", _r["ok"] is True and _r["missing"] == [])
+_r = emcs._read_validform(_types.SimpleNamespace(
+    execute_script=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no session"))))
+check("validform: เรียกไม่ได้ (browser ตาย) → ok=None ไม่โยน error",
+      _r["ok"] is None and _r["missing"] == [])
+# ข้อความวินิจฉัยต้องอยู่ในรูปแบบเดียวกับ alert จริง เพื่อให้ _missing_field_list แยกต่อได้
+_o = (emcs._report_visible_buttons, emcs._read_validform, emcs.accept_alert, emcs.log)
+emcs._report_visible_buttons = lambda *a, **k: ""
+emcs._read_validform = lambda d: {"ok": False, "err": "",
+                                  "missing": ["ประเภทรถ", "จังหวัด"], "control": "ddlCType"}
+emcs.accept_alert = lambda *a, **k: ""
+emcs.log = lambda *a, **k: None
+try:
+    _msg = emcs._diagnose_save_click(object(), "btnUpdate")
+finally:
+    (emcs._report_visible_buttons, emcs._read_validform, emcs.accept_alert, emcs.log) = _o
+check("diagnose: กดแล้วเงียบ → บอกชื่อช่องที่ขาด ไม่ใช่ 'ไม่บอกเหตุผล'",
+      "ช่องบังคับยังขาด" in _msg
+      and emcs._missing_field_list(_msg) == ["ประเภทรถ", "จังหวัด"])
 
 
 def _run_pause(**kw):

@@ -1884,6 +1884,48 @@ def verify_car_saved(driver, data: ClaimData, save_fn=None) -> bool:
     return False
 
 
+# อ่านผล validForm() **พร้อมของที่มันไม่ยอมบอก**
+#
+# วงจรจริงในหน้า EMCS (ดัมป์จาก error_emcs_2026013059072_20260804_225233.html):
+#   validForm()  = if (vlidSurvey() == true) { เช็ค format → AlertSummary ถ้าพัง }
+#                  else { return false }        ← ทางนี้ **เงียบสนิท**
+#   vlidSurvey() = ไล่เช็คช่องบังคับ เก็บชื่อช่องที่ขาดต่อกันใน global `strJoinText`
+#                  และ id ช่องแรกที่ผิดใน `objControlName` แล้วบรรทัดสุดท้าย…
+#       //AlertSummary(strJoinText, objControlName, 'R');   ← **ถูกคอมเมนต์ทิ้ง**
+#
+# = ช่องบังคับขาดเมื่อไหร่ EMCS ปัดปุ่มตกโดยไม่บอกอะไรเลยสักตัวอักษร แต่ข้อมูลยังค้าง
+# อยู่ในตัวแปร global → อ่านออกมาเองได้ ทั้งรายชื่อช่องและ id ช่องที่จะตีกรอบแดง
+_JS_VALIDFORM = """
+var out = {ok: null, err: '', missing: '', control: ''};
+try { out.ok = (validForm() !== false); }
+catch (e) { out.err = String((e && e.message) || e); }
+try { if (typeof strJoinText !== 'undefined') out.missing = String(strJoinText || ''); }
+catch (e) {}
+try { if (typeof objControlName !== 'undefined') out.control = String(objControlName || ''); }
+catch (e) {}
+return out;
+"""
+
+
+def _read_validform(driver) -> dict:
+    """เรียก validForm() แล้วอ่าน global ที่ EMCS ใช้เก็บ "ช่องที่ขาด" ออกมาด้วย
+
+    คืน {ok, err, missing[list], control} — ok=None คือเรียกไม่ได้/พังกลางทาง
+    (ถ้า validForm เด้ง alert ระหว่างเรียก execute_script จะไม่คืนค่า → ok=None
+    แต่ global ยังอยู่ ผู้เรียกกด alert ทิ้งแล้วเรียกซ้ำได้)"""
+    try:
+        res = driver.execute_script(_JS_VALIDFORM)
+    except Exception as e:
+        return {"ok": None, "err": type(e).__name__, "missing": [], "control": ""}
+    if not isinstance(res, dict):
+        return {"ok": None, "err": "", "missing": [], "control": ""}
+    # strJoinText = "ชื่อช่อง1,ชื่อช่อง2," (ต่อท้ายด้วย , ทุกตัว)
+    res["missing"] = [s.strip() for s in str(res.get("missing") or "").split(",")
+                      if s.strip()]
+    res["control"] = str(res.get("control") or "").strip()
+    return res
+
+
 def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
     """กดปุ่มบันทึก แล้ว **ยืนยันว่าคลิกติดจริง** — คืน True เมื่อติด
 
@@ -1918,9 +1960,38 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
             return True          # เด้ง alert = คลิกติดแน่นอน (ผู้เรียกอ่านต่อเอง)
         except Exception:
             pass
+        # คลิกไม่ติด = ได้ 2 อย่าง แยกให้ออกก่อนจะกดซ้ำ:
+        #  ก) validForm() ปัดตก (ช่องบังคับขาด) → onclick return false ก่อนถึง disable
+        #     กดซ้ำอีกกี่ครั้งก็ผลเดิม — ออกไปให้ผู้เรียกอ่านรายชื่อช่องที่ขาดเลย
+        #  ข) คลิกไม่ถึง handler จริง ๆ (หน้า postback ค้าง) → ค่อยกดซ้ำ
+        if _read_validform(driver).get("ok") is False:
+            log(f"   ⚠️ {button_id} ไม่ตอบสนองเพราะ validForm() ปัดตก (ช่องบังคับขาด) "
+                "— ไม่กดซ้ำ")
+            return False
         if i < tries:
             log(f"   ↻ คลิก {button_id} ไม่ติด (หน้าน่าจะยัง postback ค้าง) — ลองใหม่ {i}/{tries}")
             time.sleep(2)
+
+    # ทางสุดท้าย: ยิง postback เองแบบเดียวกับที่ onclick ของ EMCS ทำทุกบรรทัด
+    # (validForm ผ่านแล้ว = ข้อมูลครบ เหลือแค่คลิกส่งไม่ถึง handler) — เส้นนี้ตัดปัญหา
+    # "คลิกหลุด" ทิ้งทั้งกอง โดยไม่ข้ามด่านตรวจของ EMCS สักด่าน
+    log(f"   ↳ กด {button_id} ไม่ติดครบ {tries} ครั้ง แต่ข้อมูลผ่าน validForm() — "
+        "ยิง postback ตรงแบบเดียวกับที่ปุ่มทำ")
+    try:
+        ok = driver.execute_script(
+            "var b = document.getElementById(arguments[0]);"
+            "if (!b) return false;"
+            "if (typeof validForm === 'function' && validForm() === false) return false;"
+            "b.value = 'Please wait...'; b.disabled = true;"
+            "__doPostBack(arguments[0], '');"
+            "return true;", button_id)
+        if ok:
+            return True
+        log("   ⚠️ ยิง postback ตรงไม่สำเร็จ (ไม่พบปุ่ม/validForm ปัดตก)")
+    except UnexpectedAlertPresentException:
+        return True          # เด้ง alert = ถึง handler แล้ว ผู้เรียกอ่านต่อเอง
+    except Exception as e:
+        log(f"   ⚠️ ยิง postback ตรงไม่ได้ ({type(e).__name__})")
     log(f"   ⚠️ กด {button_id} ครบ {tries} ครั้งแล้วปุ่มยังไม่ตอบสนอง")
     return False
 
@@ -1983,28 +2054,28 @@ def _diagnose_save_click(driver, button_id: str = "") -> str:
     if wrong:
         return wrong
 
-    # 2) validForm() ว่ายังไง
-    res, err = None, ""
-    try:
-        res = driver.execute_script(
-            "try { return {ok: validForm() === true, err: '' }; }"
-            " catch (e) { return {ok: false, err: String((e && e.message) || e)}; }")
-    except UnexpectedAlertPresentException:
-        pass                       # validForm เด้ง alert ระหว่างเรียก — เก็บข้างล่าง
-    except Exception as e:
-        return f"เรียก validForm() ไม่ได้ ({type(e).__name__})"
+    # 2) validForm() ว่ายังไง (+ ขุด global ที่มันเก็บชื่อช่องที่ขาดไว้แต่ไม่ยอมโชว์)
+    res, err = _read_validform(driver), ""
     try:                           # เก็บ alert ที่ validForm อาจเพิ่งเด้ง
         err = (accept_alert(driver, timeout=3) or "").strip()
     except Exception:
         pass
     if err:
         return f"EMCS แจ้ง: {err[:300]}"
-    if isinstance(res, dict) and res.get("err"):
+    if res.get("err"):
         return (f"validForm() ของ EMCS พังกลางทาง ({res['err'][:160]}) — "
                 "ฟอร์มนี้ไม่มีช่องที่สคริปต์ EMCS อ้างถึง กรอก/บันทึกเองบนหน้าจอ")
-    if isinstance(res, dict) and res.get("ok") is False:
+    if res.get("ok") is False:
+        # EMCS คอมเมนต์ AlertSummary ของ vlidSurvey ทิ้ง → หน้าจอเงียบ แต่รายชื่อช่อง
+        # ยังอยู่ใน strJoinText — เอามาบอกให้ตรงว่าขาดอะไร แทนคำว่า "ไม่บอกเหตุผล"
+        miss = res.get("missing") or []
+        if miss:
+            # ขึ้นบรรทัดต่อข้อ = รูปแบบเดียวกับ alert จริงของ EMCS → _missing_field_list
+            # (ตัวเดียวกับที่ใช้กับ alert ปกติ) แยกชื่อช่องไปตีกรอบแดงได้เลย
+            return ("EMCS ไม่ยอมบันทึกเพราะช่องบังคับยังขาด (มันไม่ขึ้นข้อความให้เอง)\n"
+                    + "\n".join(f"{i + 1}. {m}" for i, m in enumerate(miss)))
         return "validForm() คืน false โดยไม่บอกเหตุผล — ตรวจช่องดอกจันแดงบนหน้าจอ"
-    if isinstance(res, dict) and res.get("ok") is True:
+    if res.get("ok") is True:
         # validForm ผ่านตอนเราเรียกเอง แต่กดปุ่มแล้วไม่เกิดอะไร = ปัญหาอยู่ที่การกด
         # ไม่ใช่ข้อมูล (verify: คนกดปุ่มเดียวกันบนหน้าเดียวกันแล้วผ่าน — 2026013059072)
         return ("validForm() ผ่านตอนเรียกเอง แต่กดปุ่มแล้วไม่มีอะไรเกิดขึ้น — "
@@ -2028,8 +2099,10 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
       ว่าสำเร็จ และต้องไม่ปล่อย TimeoutException ดิบ ๆ ออกไป"""
     auto_heal_left = 2    # จำนวนรอบที่ยอมให้ซ่อม dropdown อัตโนมัติ
     click_fail_left = 2   # จำนวนรอบที่ยอมลองกดใหม่เมื่อคลิกไม่ติด
+    bad_id = ""           # id ช่องแรกที่ EMCS ตีตก (objControlName) — ไว้ตีกรอบแดง
     for attempt in range(1, 8):
         log(f"EMCS: กดบันทึกหน้าหลัก ({button_id}, รอบ {attempt})")
+        bad_id = ""
         clicked = _click_save_button(driver, button_id)
         try:
             alert_text, silent = accept_alert(driver), False
@@ -2038,11 +2111,19 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
             if not clicked:
                 # คลิกไม่ถึง handler เลย — คนละเรื่องกับ "ข้อมูลไม่ครบ" ต้องบอกให้ตรง
                 log("   ⚠️ ปุ่มบันทึกไม่ตอบสนอง (คลิกไม่ถึง handler ของ EMCS)")
-                if click_fail_left > 0:
+                _vf = _read_validform(driver)
+                bad_id = _vf.get("control") or ""
+                if _vf.get("ok") is False:
+                    # ช่องบังคับขาดจริง (EMCS ปัดปุ่มตกเงียบ ๆ) — กดซ้ำอีกกี่ครั้งก็ผลเดิม
+                    # ไปหยุดรอคนเลย พร้อมบอกว่าขาดช่องไหนบ้าง
+                    alert_text = _diagnose_save_click(driver, button_id) or alert_text
+                    log(f"   ↳ {alert_text}")
+                elif click_fail_left > 0:
                     click_fail_left -= 1
                     continue
-                alert_text = ("กดปุ่มบันทึกไม่ติด — หน้าอาจค้าง postback หรือปุ่มถูกปิดอยู่ "
-                              "ลองกดบันทึกเองบนหน้าจอ")
+                else:
+                    alert_text = ("กดปุ่มบันทึกไม่ติด — หน้าอาจค้าง postback หรือปุ่มถูกปิดอยู่ "
+                                  "ลองกดบันทึกเองบนหน้าจอ")
             else:
                 # คลิกติดแล้วแต่ EMCS เงียบ → validForm() ปัดตกฝั่ง JS
                 # เดิมปล่อย TimeoutException ทะลุออกไป = โปรแกรมตาย ทั้งที่ทางที่ถูกคือ
@@ -2050,6 +2131,7 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
                 log("   ⚠️ กดบันทึกแล้ว EMCS เงียบ ไม่มี alert ตอบกลับ — ปุ่มถูก "
                     "validForm() ฝั่ง JS ปัดตก (ไม่ยิง postback)")
                 _why = _diagnose_save_click(driver, button_id)
+                bad_id = _read_validform(driver).get("control") or ""
                 if _why:
                     log(f"   ↳ {_why}")
                     alert_text = _why
@@ -2085,6 +2167,7 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
         missing = ", ".join(fields)
         label = "ข้อมูลหน้าหลักที่ยังขาด" + (f": {missing}" if missing else "")
         if wait_for_manual_fill(label, reason=(alert_text or "").strip(),
+                                focus_ids=[bad_id] if bad_id else None,
                                 focus_labels=fields, driver=driver):
             log("   ↻ ลองบันทึกหน้าหลักใหม่หลังผู้ใช้กรอกข้อมูล")
             continue
