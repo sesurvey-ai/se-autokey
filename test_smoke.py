@@ -2162,6 +2162,41 @@ _p, _m = _run_fuzzy_marks(_DISTRICTS, "วัฒนา", 60)
 check("mark: คะแนนสูง (มั่นใจ) → ไม่ย้อม ไม่งั้นทั้งหน้าเหลืองหมดจนไม่มีความหมาย",
       _p == "เขตวัฒนา" and _m == [])
 
+# ---- 22e-4. ประเภทเคลม: ISURVEY กับ EMCS ไม่ตรงกัน + เตือนงานนัดหมาย ----
+# ดัมป์ master จริง 2026-08-05:
+#   ISURVEY: 01 เคลมสด · 02 เคลมแห้ง · 03 ติดตาม · 04 เจรจาสินไหม
+#   EMCS   : [0] เคลมสด · [1] เคลมแห้ง · [2] งานนัดหมาย · [3] งานติดตาม
+check("claimtype: 03 ติดตาม → EMCS [3] งานติดตาม (ไม่ใช่ [2] งานนัดหมาย)",
+      emcs.CLAIM_TYPE_TO_EMCS["3"] == 3
+      and emcs.EMCS_CLAIM_TYPE_LABEL[3] == "งานติดตาม")
+check("claimtype: 01/02 ยังตรงเหมือนเดิม",
+      emcs.CLAIM_TYPE_TO_EMCS["1"] == 0 and emcs.CLAIM_TYPE_TO_EMCS["2"] == 1)
+check("claimtype: 04 เจรจาสินไหม → EMCS ไม่มีคู่ ต้องให้คนเลือก (None)",
+      emcs.CLAIM_TYPE_TO_EMCS["4"] is None)
+check("claimtype: 'งานนัดหมาย' ของ EMCS ไม่มีต้นทางใน ISURVEY",
+      2 not in emcs.CLAIM_TYPE_TO_EMCS.values())
+
+
+def _hint(**kw):
+    base = dict(claim_type="1", acc_date="", arrive_date="", finish_date="")
+    base.update(kw)
+    return emcs.appointment_hint(_types.SimpleNamespace(**base))
+
+
+check("นัดหมาย: เกิดเหตุห่างวันสำรวจมาก + ตั้งเป็นเคลมสด → เตือน",
+      "56 วัน" in _hint(acc_date="25/05/2569", arrive_date="20/07/2569"))
+check("นัดหมาย: เคลมสดปกติ (วันเดียวกัน) → ไม่เตือน",
+      _hint(acc_date="05/08/2569", arrive_date="05/08/2569") == "")
+check("นัดหมาย: ห่าง 1 วัน (ยังอยู่ในกรอบ) → ไม่เตือน",
+      _hint(acc_date="04/08/2569", arrive_date="05/08/2569") == "")
+check("นัดหมาย: ไม่ใช่เคลมสด → ไม่เกี่ยว ไม่เตือน",
+      _hint(claim_type="2", acc_date="25/05/2569", arrive_date="20/07/2569") == "")
+check("นัดหมาย: วันที่อ่านไม่ได้ → ไม่เดา ไม่เตือน",
+      _hint(acc_date="", arrive_date="20/07/2569") == ""
+      and _hint(acc_date="ไม่ใช่วันที่", arrive_date="20/07/2569") == "")
+check("นัดหมาย: ปี ค.ศ. ก็คิดได้ (ต้นทางปนกันทั้ง พ.ศ./ค.ศ.)",
+      "56 วัน" in _hint(acc_date="25/05/2026", arrive_date="20/07/2026"))
+
 # ---- 22e-3. สถานที่เกิดเหตุ: อ่าน tab2 ก่อน tab8 ----
 # tab8 (Notify = บันทึกตอนรับแจ้ง) บางเคลมว่างทั้งที่พนักงานกรอกไว้ใน tab2 แล้ว
 # เจอจริง 2026013058422: tab2='เมือง' / tab8=None → บอทใส่ '-' ลง EMCS

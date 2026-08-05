@@ -6,6 +6,7 @@
 import hashlib
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 
 from rapidfuzz import fuzz, process
@@ -27,6 +28,7 @@ from .browser import (
     fuzzy_select,
     iso_to_thai_date,
     log,
+    mark_check,
     set_text,
     set_textarea,
     split_hhmm,
@@ -44,6 +46,7 @@ from .car_brand import BRAND_MIN_SCORE, normalize_brand
 # ไว้ที่นี่เพื่อให้ผู้เรียกเดิม (main.py, webui.py, test_smoke.py) ไม่ต้องแก้
 from .claim_data import (  # noqa: F401
     CHILD_TITLE_AGE,
+    CLAIM_TYPE_NAMES,
     DRY_CLAIM_TYPE,
     THAI_TITLES,
     TITLE_GENDER,
@@ -1142,16 +1145,44 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
 
 # ------------------------------------------------------------------ ส่วนกรอก
 
-def fill_claim_type(driver, claim_type: str):
-    """เลือกประเภทเคลม (1-4) — หา radio จาก container id ก่อน
-    ถ้าไม่ได้ค่อย fallback ไป absolute XPath เดิมที่พิสูจน์แล้วว่าใช้ได้"""
-    log(f"EMCS: เลือกประเภทเคลม = {claim_type}")
+# ประเภทเคลม: **สองระบบไม่ตรงกัน** (ดัมป์ master จริง 2026-08-05)
+#   ISURVEY masterClaimMType : 01 เคลมสด · 02 เคลมแห้ง · 03 ติดตาม · 04 เจรจาสินไหม
+#   EMCS rdoSurv_Claim_Type  : [0] เคลมสด · [1] เคลมแห้ง · [2] งานนัดหมาย · [3] งานติดตาม
+# เดิมแปลงด้วย index ตรง ๆ (idx = ประเภท-1) ซึ่งถูกเฉพาะ 01/02 — ถ้าเจอ 03 จะไปติ๊ก
+# "งานนัดหมาย" และ 04 จะเป็น "งานติดตาม" ผิดทั้งคู่แบบเงียบ ๆ (ยังไม่เคยเจอเพราะ
+# งานที่ทำมาเป็น 01/02 หมด) → แปลงตามความหมาย ไม่ใช่ตามลำดับ
+# ⚠️ "งานนัดหมาย" ของ EMCS **ไม่มีคู่ใน ISURVEY** — เลือกได้เฉพาะคนบนหน้าจอ
+CLAIM_TYPE_TO_EMCS = {
+    "1": 0,       # เคลมสด      → เคลมสด
+    "2": 1,       # เคลมแห้ง    → เคลมแห้ง
+    "3": 3,       # ติดตาม      → งานติดตาม (ไม่ใช่ [2] งานนัดหมาย)
+    "4": None,    # เจรจาสินไหม → EMCS ไม่มีตัวเลือกนี้ ต้องให้คนเลือกเอง
+}
+EMCS_CLAIM_TYPE_LABEL = ["เคลมสด", "เคลมแห้ง", "งานนัดหมาย", "งานติดตาม"]
+
+
+def fill_claim_type(driver, claim_type: str, warn: str = ""):
+    """เลือกประเภทเคลมบน EMCS ตามค่าที่ ISURVEY ให้มา (แปลงตามความหมาย ดู
+    CLAIM_TYPE_TO_EMCS) — หา radio จาก container id ก่อน ถ้าไม่ได้ค่อย fallback
+    ไป absolute XPath เดิมที่พิสูจน์แล้วว่าใช้ได้
+
+    warn: ข้อความเตือนให้คนตรวจประเภทเคลมเองบนหน้าจอ (เช่น น่าจะเป็นงานนัดหมาย)
+      — บอท **ไม่เปลี่ยนให้เอง** แค่ติ๊กตามต้นทางแล้วย้อมเหลืองไว้ให้เห็น
+    """
+    code = str(claim_type or "").strip().lstrip("0") or ""
+    idx = CLAIM_TYPE_TO_EMCS.get(code, "?")
     container = wait_visible(driver, By.ID, "rdoSurv_Claim_Type")
 
-    idx = int(claim_type) - 1
-    if not 0 <= idx <= 3:
+    if idx == "?":
         raise ValueError(f"ประเภทเคลมไม่ถูกต้อง: {claim_type!r} (ต้องเป็น 1-4)")
+    if idx is None:
+        log(f"   ⚠️ ประเภทเคลม '{CLAIM_TYPE_NAMES.get(code, code)}' ของ ISURVEY "
+            "ไม่มีตัวเลือกตรงกันใน EMCS — เลือกเองบนหน้าจอ")
+        _warn_claim_type(driver, f"ISURVEY = '{CLAIM_TYPE_NAMES.get(code, code)}' "
+                                 "ซึ่ง EMCS ไม่มีตัวเลือกนี้ — เลือกให้ตรงงานเอง")
+        return
 
+    log(f"EMCS: เลือกประเภทเคลม = {claim_type} ({EMCS_CLAIM_TYPE_LABEL[idx]})")
     try:
         radios = container.find_elements(By.TAG_NAME, "input")
         radios[idx].click()
@@ -1161,6 +1192,59 @@ def fill_claim_type(driver, claim_type: str):
             "/html/body/form/table[3]/tbody/tr[1]/td[3]/table/tbody/tr/td[2]"
             f"/table/tbody/tr/td[{idx + 1}]/input",
         ).click()
+    if warn:
+        log(f"   ⚠️ {warn}")
+        _warn_claim_type(driver, warn)
+
+
+def _days_apart(d1: str, d2: str):
+    """ห่างกันกี่วัน ระหว่างวันที่รูปแบบ dd/mm/yyyy (พ.ศ. หรือ ค.ศ. ก็ได้)
+    คืน None ถ้าอ่านไม่ได้ — ไม่เดา"""
+    def _parse(s):
+        parts = str(s or "").strip().split("|")[0].strip().split("/")
+        if len(parts) != 3:
+            return None
+        try:
+            d, m, y = (int(x) for x in parts)
+        except ValueError:
+            return None
+        y = y - 543 if y > 2400 else y
+        try:
+            return datetime(y, m, d)
+        except ValueError:
+            return None
+    a, b = _parse(d1), _parse(d2)
+    return None if (a is None or b is None) else abs((b - a).days)
+
+
+# EMCS บังคับว่า "เคลมสด" ต้องมี 5 วันที่อยู่ในกรอบ 24 ชม. (validForm → AlertSummary)
+# งานที่เกิดเหตุไปนานแล้วแต่เพิ่งออกตรวจตามนัด = **งานนัดหมาย** ซึ่ง ISURVEY
+# ไม่มีตัวเลือกให้เลือก (master มีแค่ เคลมสด/เคลมแห้ง/ติดตาม/เจรจาสินไหม)
+# → ต้นทางจึงติดเป็น 'เคลมสด' มาเรื่อย ๆ แล้วไปเด้งตอนกดบันทึก
+APPOINTMENT_GAP_DAYS = 1
+
+
+def appointment_hint(data) -> str:
+    """คืนข้อความเตือนถ้าเคลมนี้ "น่าจะเป็นงานนัดหมาย" แต่ต้นทางตั้งเป็นเคลมสด
+    ('' = ไม่เข้าข่าย) — แจ้งเตือนอย่างเดียว ไม่เปลี่ยนค่าให้"""
+    if str(getattr(data, "claim_type", "") or "").strip().lstrip("0") != "1":
+        return ""
+    acc = getattr(data, "acc_date", "")
+    for field, label in (("arrive_date", "วันที่สำรวจภัย"),
+                         ("finish_date", "วันที่สำรวจภัยเสร็จ")):
+        gap = _days_apart(acc, getattr(data, field, ""))
+        if gap is not None and gap > APPOINTMENT_GAP_DAYS:
+            return (f"เกิดเหตุ {acc} แต่{label} {getattr(data, field)} — ห่างกัน {gap} วัน "
+                    "เกินกรอบ 24 ชม. ของ 'เคลมสด' ที่ EMCS บังคับ "
+                    "(น่าจะเป็น 'งานนัดหมาย' ซึ่ง ISURVEY ไม่มีให้เลือก) — เลือกเองบนหน้าจอ")
+    return ""
+
+
+def _warn_claim_type(driver, note: str):
+    """ย้อมเหลือง radio ประเภทเคลมทั้งชุด + ใส่ tooltip — ให้คนเห็นว่าต้องตรวจช่องนี้
+    (บอทไม่เดาแทน เพราะ ISURVEY แสดงเจตนา 'นัดหมาย' ไม่ได้เลย ต้องคนตัดสิน)"""
+    for i in range(4):
+        mark_check(driver, f"rdoSurv_Claim_Type_{i}", f"ตรวจประเภทเคลม: {note}")
 
 
 def fill_severity(driver, severity: str):
@@ -3673,7 +3757,7 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
     main_window = driver.current_window_handle
     resolved_loss = resolve_loss_type(data, loss_type)
 
-    fill_claim_type(driver, data.claim_type)
+    fill_claim_type(driver, data.claim_type, warn=appointment_hint(data))
     fill_severity(driver, severity)
     fill_insurer_and_refs(driver, data)
     fill_policy(driver, data)
