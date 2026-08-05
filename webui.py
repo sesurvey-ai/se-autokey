@@ -960,7 +960,9 @@ PAGE = r"""<!doctype html>
     margin:0; font-family:Tahoma,"Segoe UI",sans-serif; color:var(--ink);
     background:linear-gradient(160deg,#eef2ff,#f8fafc 40%); min-height:100vh;
   }
-  .wrap{max-width:1240px; margin:0 auto; padding:24px 18px 48px}
+  /* เต็มความกว้างจอ — จอกว้าง ๆ ที่พนักงานใช้ ไม่ควรเหลือขอบว่างข้างละคืบ
+     (คุมด้วย max-width 2200px กันตัวหนังสือลากยาวเกินอ่านสบายบนจอ ultrawide) */
+  .wrap{max-width:2200px; margin:0 auto; padding:20px 24px 48px}
   header{display:flex; align-items:center; gap:12px; margin-bottom:18px}
   .logo{width:42px;height:42px;border-radius:12px;flex:none;
     background:linear-gradient(135deg,var(--brand),var(--brand2));
@@ -1017,7 +1019,7 @@ PAGE = r"""<!doctype html>
   .run-title{display:flex;align-items:baseline;gap:8px;min-width:0}
   .run-title b{color:#e2e8f0;font-size:14px}
   .run-cmd{color:#64748b;font-size:11px;white-space:nowrap;overflow:hidden;
-    text-overflow:ellipsis;max-width:280px}
+    text-overflow:ellipsis;max-width:min(46vw,720px)}
   .loghead .right{display:flex;align-items:center;gap:8px;flex:none}
   .stopone{color:#fca5a5}
   .stopone:hover{color:#fee2e2}
@@ -1109,7 +1111,9 @@ PAGE = r"""<!doctype html>
   .tab.active{background:var(--brand);color:#fff;border-color:var(--brand);
     box-shadow:0 6px 16px rgba(79,70,229,.25)}
   .tab:hover:not(.active){color:var(--ink);border-color:var(--brand2)}
-  .dash{display:grid;grid-template-columns:minmax(360px,440px) 1fr;gap:16px;align-items:start}
+  /* ซ้าย = รายการงาน (กว้างพอให้เลขเซอร์เวย์+ทะเบียนไม่โดนตัด) / ขวา = log ที่เหลือทั้งหมด */
+  .dash{display:grid;grid-template-columns:minmax(420px,26%) minmax(0,1fr);
+    gap:18px;align-items:start}
   /* การ์ดเคสในรายการซ้าย */
   .case-item{border:1px solid var(--line);border-radius:12px;padding:11px 13px;
     margin-bottom:10px;background:#fff;transition:.15s}
