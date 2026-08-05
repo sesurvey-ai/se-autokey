@@ -2304,6 +2304,11 @@ check("ขั้นสูง: ถอด claimmode ทิ้ง (เป็น no-
       'id="claimmode"' not in _page and 'id="cmnote"' not in _page)
 check("ขั้นสูง: มีป้ายบอกจำนวนที่ติ๊กค้างไว้ (กล่องพับแล้วมองไม่เห็น)",
       "updateAdvCount" in _page and 'id="advcount"' in _page)
+# ช่องวันที่: ทั้งสองช่อง = วันนี้ และห้ามใช้ toISOString (UTC → ตอนเช้าได้วันเมื่อวาน)
+check("วันที่: ค่าเริ่มต้นเป็นวันนี้ทั้งสองช่อง",
+      '$("#isvfrom").value = $("#isvto").value = todayStr();' in _page)
+check("วันที่: ใช้เวลาเครื่อง ไม่ใช่ UTC (ไทย UTC+7 ตอนเช้าจะเพี้ยนเป็นเมื่อวาน)",
+      "toISOString().slice" not in _page and "getFullYear()" in _page)
 check("joblog: มี event send_failed ให้บันทึกด้วย",
       "send_failed" in _jl.EVENTS)
 

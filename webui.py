@@ -2010,8 +2010,16 @@ loadCasesBtn.addEventListener("click", async () => {
 // ---- รายการงานจบแล้วฝั่ง ISURVEY ----
 const isvBox = $("#isvcasesbox"), loadIsvBtn = $("#loadisvbtn");
 let isvCache = [];
-$("#isvto").value = new Date().toISOString().slice(0,10);
-$("#isvfrom").value = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
+// ค่าเริ่มต้น = "วันนี้" ทั้งสองช่อง (งานประจำวันดูของวันนี้เป็นหลัก
+// อยากดูย้อนหลังค่อยเลื่อนช่องซ้ายเอง)
+// ⚠️ ห้ามใช้ toISOString() — มันคืนเวลา UTC ไทยเป็น UTC+7 ตอนเช้าก่อน 07:00
+// จะได้วันของ "เมื่อวาน" แล้วรายการงานวันนี้หายไปเฉย ๆ
+function todayStr(){
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0")
+         + "-" + String(d.getDate()).padStart(2, "0");
+}
+$("#isvfrom").value = $("#isvto").value = todayStr();
 
 function renderIsvCases(){
   const hideSent = $("#isvhidesent").checked;
