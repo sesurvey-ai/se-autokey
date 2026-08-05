@@ -1499,7 +1499,7 @@ def _offer_submit(driver, cfg, data, esurvey: str = ""):
     if not sel:
         log("เก็บเป็น draft — ยังไม่ส่งงาน (browser เปิดค้าง ตรวจ/กดส่งเองได้)")
         return
-    ok, msg = emcs.submit_report(driver, cfg, data.claim_value)
+    ok, msg = emcs.submit_report(driver, cfg, data.claim_value, esurvey=esurvey)
     if not ok:
         log(f"❌ ส่งงานไม่สำเร็จ: {msg} — ตรวจบน EMCS เอง (ยังไม่แจ้ง ISURVEY)")
         announce_send_failed(data.claim_value, msg)   # การ์ดต้องไม่ขึ้น 'เสร็จแล้ว ✅'

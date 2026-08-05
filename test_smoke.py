@@ -2288,6 +2288,56 @@ check("badge: ส่งไม่ผ่าน → การ์ดไม่ปิ�
 check("joblog: มี event send_failed ให้บันทึกด้วย",
       "send_failed" in _jl.EVENTS)
 
+
+# ---- 22h. สั่งส่งงาน: ห้ามสมมติว่ายังอยู่หน้าค่าใช้จ่าย ----
+# หลังบันทึกราคา บอทกลับหน้า Inbox เพื่อปลดล็อกเรื่อง → พอคนสั่งส่งทีหลัง ปุ่มไม่อยู่
+# บนหน้า (เจอจริง S68426080893) → ต้องเปิดเรื่องกลับเข้าหน้าค่าใช้จ่ายเองก่อน
+def _run_submit(found_first, esurvey="S684", reopen_ok=True):
+    """คืน (ok, msg, เปิดเรื่องกลับกี่ครั้ง)"""
+    state = {"reopen": 0, "found": list(found_first)}
+
+    def _find(d):
+        v = state["found"].pop(0) if state["found"] else None
+        return (_types.SimpleNamespace(is_enabled=lambda: True,
+                                       click=lambda: None), "ส่งงานใหม่") if v else (None, "")
+
+    def _open(d, claim, es):
+        state["reopen"] += 1
+        if not reopen_ok:
+            raise RuntimeError("เปิดไม่ได้")
+
+    _o = (emcs._find_submit_button, emcs._open_report_billing, emcs.log,
+          emcs.accept_alert, emcs.goto_mainpage, emcs.report_status, emcs.time)
+    emcs._find_submit_button = _find
+    emcs._open_report_billing = _open
+    emcs.log = lambda *a, **k: None
+    emcs.accept_alert = lambda *a, **k: ""
+    emcs.goto_mainpage = lambda *a, **k: ""
+    emcs.report_status = lambda d, c: {"status": "ประกันตรวจสอบรายงาน"}
+    emcs.time = _types.SimpleNamespace(sleep=lambda s: None)
+    try:
+        drv = _types.SimpleNamespace(find_elements=lambda *a, **k: [])
+        ok, msg = emcs.submit_report(drv, object(), "2026013058422", esurvey=esurvey)
+    finally:
+        (emcs._find_submit_button, emcs._open_report_billing, emcs.log,
+         emcs.accept_alert, emcs.goto_mainpage, emcs.report_status, emcs.time) = _o
+    return ok, msg, state["reopen"]
+
+
+_ok, _msg, _n = _run_submit([True])
+check("submit: ปุ่มอยู่บนหน้าอยู่แล้ว → ไม่ต้องเปิดเรื่องซ้ำ", _ok is True and _n == 0)
+_ok, _msg, _n = _run_submit([False, True])
+check("submit: ไม่เจอปุ่ม → เปิดเรื่องกลับเข้าหน้าค่าใช้จ่ายแล้วหาใหม่ จนส่งได้",
+      _ok is True and _n == 1, f"reopen {_n} ครั้ง / {_msg[:40]}")
+_ok, _msg, _n = _run_submit([False, False])
+check("submit: เปิดกลับแล้วยังไม่เจอปุ่ม → คืน False ไม่แจ้งสำเร็จลวง",
+      _ok is False and "ไม่เจอปุ่มส่งงาน" in _msg)
+_ok, _msg, _n = _run_submit([False], reopen_ok=False)
+check("submit: เปิดเรื่องกลับไม่ได้ → บอกให้เปิดเองบนหน้าจอ",
+      _ok is False and "เปิดเองบนหน้าจอ" in _msg)
+_ok, _msg, _n = _run_submit([False], esurvey="")
+check("submit: ไม่รู้เลข e-Survey → ไม่เดา ไม่เปิดมั่ว", _ok is False and _n == 0)
+
 # ---- 23. webui._build_cmd: โหมดเคลม (dry = เคลมแห้ง / fresh = เคลมสด) ----
 import webui as _webui  # noqa: E402
 _cmd, _e = _webui._build_cmd({"claims": "2026013041465", "claimmode": "dry"})
