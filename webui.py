@@ -1275,7 +1275,8 @@ PAGE = r"""<!doctype html>
       <div id="isvqueue" hidden style="margin:8px 0;padding:8px 10px;border-radius:8px;background:#0f172a11;font-size:13px"></div>
       <div id="isvcasesbox" class="caselist"></div>
       <div class="note" style="margin:10px 0 18px">
-        เฉพาะงาน <b>“จบงาน”</b> ใหม่สุดขึ้นก่อน · <b>“✓ นำเข้าแล้ว”</b> อ่านจาก ISURVEY เอง
+        เฉพาะงาน <b>“จบงาน”</b> ใหม่สุดขึ้นก่อน<br>
+        <b>“✓ นำเข้าแล้ว”</b> อ่านจาก ISURVEY เอง
       </div>
 
       <h2 style="font-size:16px;margin:0 0 12px">🖊 กรอกเคลมอัตโนมัติ (ISURVEY)</h2>
