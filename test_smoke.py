@@ -2162,6 +2162,14 @@ _p, _m = _run_fuzzy_marks(_DISTRICTS, "วัฒนา", 60)
 check("mark: คะแนนสูง (มั่นใจ) → ไม่ย้อม ไม่งั้นทั้งหน้าเหลืองหมดจนไม่มีความหมาย",
       _p == "เขตวัฒนา" and _m == [])
 
+# ---- 22e-3. สถานที่เกิดเหตุ: อ่าน tab2 ก่อน tab8 ----
+# tab8 (Notify = บันทึกตอนรับแจ้ง) บางเคลมว่างทั้งที่พนักงานกรอกไว้ใน tab2 แล้ว
+# เจอจริง 2026013058422: tab2='เมือง' / tab8=None → บอทใส่ '-' ลง EMCS
+import autokey.isurvey_api as _isv_api  # noqa: E402
+_src = _insp.getsource(_isv_api.ISurveyAPI.read_claim)
+check("acc_place: เอา tab2 (acc2) ก่อน แล้วค่อยถอยไป Notify",
+      'd.acc_place = (acc2.get("acc_place") or notify.get("acc_place")' in _src)
+
 # ---- 22f. ตารางคนคีย์: ย้ายไปไฟล์ตั้งค่า แก้ได้โดยไม่แตะโค้ด ----
 import autokey.isurvey_report as _ir  # noqa: E402
 

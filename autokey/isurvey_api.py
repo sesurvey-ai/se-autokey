@@ -463,7 +463,11 @@ class ISurveyAPI:
         # ---- Tab 2/8: Accident (ใช้ Notify — จังหวัด/อำเภอเป็นชื่อแล้ว) ----
         d.acc_date = _ddmmyyyy(notify.get("acc_date"))
         d.acc_time = notify.get("acc_time", "")
-        d.acc_place = notify.get("acc_place", "")
+        # สถานที่เกิดเหตุ: **เอา tab2 ก่อน** — บล็อก Notify (tab8) เป็นบันทึกตอนรับแจ้ง
+        # บางเคลมว่างเป็น None ทั้งที่พนักงานสำรวจกรอกไว้แล้วใน tab2 (เจอ 2026013058422:
+        # tab2='เมือง' แต่ tab8=None → บอทเห็นเป็น "ไม่มีข้อมูล" แล้วใส่ '-' ลง EMCS)
+        # ฝั่ง scrape อ่าน tab2_acc_place อยู่แล้ว — เส้น API เส้นเดียวที่หลุด
+        d.acc_place = (acc2.get("acc_place") or notify.get("acc_place") or "").strip()
         d.acc_province = notify.get("acc_provinceID", "")
         d.acc_amphur = notify.get("acc_amphurID", "")
         d.acc_type_desc = notify.get("acc_type_desc", "")
