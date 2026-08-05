@@ -1976,6 +1976,24 @@ check("build_cmd ไม่ระบุโหมด: = เคลมแห้ง (
 _cmd, _e = _webui._build_cmd({"claims": "2026013041465", "nosaveprice": True})
 check("build_cmd nosaveprice: มี --no-save-price",
       _e is None and "--no-save-price" in _cmd)
+# อัปเฉพาะรูปเข้าเรื่องเดิม (ตอนกรอกครบแล้วแต่รูปยังไม่ขึ้น) — เลข e-Survey ใช้ร่วมกับ fill-existing
+_cmd, _e = _webui._build_cmd({"claims": "2026013059072", "imagesonly": True,
+                              "includemain": True, "esurvey": "S68426080794"})
+check("build_cmd imagesonly: --images-only + รูปหลัก + เจาะจงเรื่อง",
+      _e is None and "--images-only" in _cmd and "--include-main-images" in _cmd
+      and _cmd[_cmd.index("--esurvey") + 1] == "S68426080794")
+_cmd, _e = _webui._build_cmd({"claims": "2026013059072", "imagesonly": True})
+check("build_cmd imagesonly: ไม่ติ๊กรูปหลัก = เฉพาะรูปคู่กรณี ไม่ระบุเรื่อง",
+      _e is None and "--include-main-images" not in _cmd and "--esurvey" not in _cmd)
+# ติ๊กสองอันที่ขัดกันเอง = ฟ้องตั้งแต่ต้น ดีกว่าปล่อยไปรันแล้วไม่มีรูปให้อัป
+_cmd, _e = _webui._build_cmd({"claims": "2026013059072", "imagesonly": True,
+                              "skipimages": True})
+check("build_cmd: 'อัปรูปอย่างเดียว' + 'ไม่ยุ่งกับรูป' → error ไม่ปล่อยผ่าน",
+      _cmd is None and _e and "ไม่ได้" in _e)
+# เลข e-Survey ที่ไม่ได้ติ๊กโหมดไหนเลย = ไม่ส่งต่อ (main.py ใช้ได้เฉพาะ 2 โหมดนี้)
+_cmd, _e = _webui._build_cmd({"claims": "2026013059072", "esurvey": "S684"})
+check("build_cmd: ใส่เลข e-Survey เฉย ๆ ไม่ติ๊กโหมด → ไม่ส่ง --esurvey",
+      _e is None and "--esurvey" not in _cmd)
 _cmd, _e = _webui._build_cmd({"claims": "2026013041465"})
 check("build_cmd default: ไม่มี --no-save-price (บันทึกราคาตามปกติ)",
       _e is None and "--no-save-price" not in _cmd)

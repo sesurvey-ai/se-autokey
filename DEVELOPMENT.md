@@ -22,6 +22,7 @@
 | แกลเลอรีจัดกลุ่มตามหมวด (INS/REPORTS/OTHERS) | ✅ เก็บหมวดผ่าน manifest: `download_images`→`_categories.json`(ชื่อ→หมวด), `process_images_pro`→`_rename_map.json`(ชื่อใหม่→เดิม), `browser._image_categories` รวมแล้วส่งใน marker; webui จัดกลุ่ม+checkbox "เลือกทั้งหมวด" (ไม่มี manifest=OTHERS หมด ปลอดภัย). E2E จริงผ่าน (2026013046414: INS22/REPORTS4/OTHERS1 หมวดรอดผ่าน rename) |
 | แผงเลือกประเภทงาน (งานต้น/ตาม/SESV/งานรวม) ตอนส่ง | ✅ ยกตรรกะ work_type จาก se-key `content.js` มาไว้ webui submit pause — `wait_for_submit` ส่ง base_type default (SESV จาก prefix) + รับ {base_type,batch,mix} กลับ; `sekey_client.build_payloads` (งานรวม/SESV = หลาย row, SESV→iSurvey ใช้ SEABI), `save_many`. console=default. ทดสอบ parse+build_payloads+EOF/console ผ่าน (รอ user ทดสอบ UI จริง) |
 | โหมดนำเข้า XML (`--import-xml` / webui checkbox) | ✅ E2E verify 2026-06-24 (draft S68426066006) — EMCS import ฟอร์มหลักจาก SURV_REPORT XML (ปุ่ม imbFileImport_XML) → บอทอุดช่องว่าง/แก้ (cascade อำเภอ + เคลียร์เลขรับแจ้ง) → คู่กรณี/ความเสียหาย **free-text 20 ช่อง** (vs cmdNewReport 8) → ค่าใช้จ่าย. รองรับ >8 ดีขึ้น (ดู §6.4); ยังไม่ verify: ผู้บาดเจ็บ/ทรัพย์สิน, >8 เต็ม 20, รูป, กดส่งจริง |
+| โหมด "เรื่องเดิม" บนหน้าเว็บ (แท็บ ISURVEY) | ✅ 2026-08-05 — เพิ่มติ๊ก **กรอกต่อบนเรื่องเดิม** (`--fill-existing`) + **อัปเฉพาะรูปเข้าเรื่องเดิม** (`--images-only`, มี ↳ รวมรูปรถประกัน) + ช่องเลข e-Survey; เดิม `_build_cmd` รองรับ `fillexisting` แต่ไม่มี UI ต้องยิง `/run` เอง. ติ๊ก "อัปรูปอย่างเดียว" คู่ "ไม่ยุ่งกับรูปภาพ" = ฟ้องตั้งแต่ยังไม่รัน. verify จริง: draft S68426080794 จาก 0 ใบ → 32 ใบ แยกประเภทถูกทั้งหมด |
 | ชี้ช่องที่ต้องแก้บนหน้า EMCS | ✅ 2026-08-05 — บอทหยุดเมื่อไหร่ ตีกรอบแดงกระพริบที่ช่องนั้นบน Chrome + เลื่อนจอไปหา + แถบบอกเหตุผลค้างไว้ + ดึงหน้าต่างขึ้นหน้า; ช่องที่เดาแบบคะแนนต่ำย้อมเหลืองไว้ให้คนตรวจ (ดู §6.9) |
 | ตรวจใบขับขี่ผู้เอาประกัน (`--check-license` / webui checkbox) | ⏸️ **โค้ดมี แต่ปิด/ไม่ deploy (user ตัดสิน 2026-06-25: ไม่เปิดใช้ — ช้า + มีคนมอนิเตอร์อยู่แล้ว ไม่คุ้ม).** OCR ในเครื่อง (easyocr) verify รูปจริงแล้ว ✓ (ดู §6.5) แต่ **ถอน torch/easyocr ออกจาก runtime แล้ว** ให้ deploy เบา — โค้ด lazy import ปิด default ไม่กระทบ flow. จะใช้ค่อย `pip install -r requirements-ocr.txt` |
 
@@ -610,6 +611,13 @@ row status ของเคลม flip ถูกหลัง `cmdSendFollow` (ด
   บางทีไม่มา) — ใส่ prefs automatic_downloads แล้วยังเป็น, timeout ลดเหลือ 90s
   และระบบไม่พึ่ง XML ในจุดสำคัญแล้ว (ด่านใช้ type, bill ใช้จอ) — ถ้าจะแก้จริง
   ลอง: เปิด tab ใหม่ต่อการดาวน์โหลด หรือใช้ requests+cookies โหลด URL ตรง
+- **แกลเลอรีเลือกรูปจัดกลุ่มเป็น OTHERS หมด** (เจอ 2026-08-05 เคลม 2026013059072):
+  `browser._image_categories` join สอง manifest ไม่ติด — `_categories.json` เก็บ key
+  เป็น "ชื่อที่ตัวโหลดตั้ง" (`รูปประกอบ_1.jpg`) แต่ `_rename_map.json` ชี้กลับไป
+  "ชื่อต้นทางจากเซิร์ฟเวอร์" (`DOC_Claimform.jpg`) → คนละ namespace หากันไม่เจอ
+  **กระทบแค่การจัดกลุ่มบนจอ** (ปุ่ม "เลือกทั้งหมวด" ใช้ไม่ได้) — **ตอนอัปโหลดจริง
+  แยกประเภทถูก** เพราะ `upload_images` ใช้เส้นข้อมูลคนละเส้น (ยืนยันจากหน้า EMCS:
+  รูปประกอบ×5 / รูปรถประกัน×17 / รูปรถคู่กรณี คันที่ 1×10 ตรงหมด)
 
 ### 6.4 อื่นๆ
 - **`imbFileImport_XML` บนหน้ารายการ EMCS** — ถ้า import SURV_REPORT XML ได้ตรงๆ

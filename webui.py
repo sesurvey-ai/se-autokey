@@ -411,6 +411,8 @@ def _build_cmd(params: dict):
     if params.get("readonly"):
         cmd += ["--read-only"]
     if params.get("skipimages"):
+        if params.get("imagesonly"):
+            return None, "ติ๊ก 'อัปรูปอย่างเดียว' คู่กับ 'ไม่ยุ่งกับรูปภาพ' พร้อมกันไม่ได้"
         cmd += ["--skip-images"]
     if params.get("nosaveprice"):
         cmd += ["--no-save-price"]
@@ -419,9 +421,15 @@ def _build_cmd(params: dict):
     # เรื่องมีอยู่แล้วบน EMCS (หน้าหลักบันทึกไปแล้ว ส่วนที่เหลือยังว่าง) → กรอกต่อบนเรื่องเดิม
     if params.get("fillexisting"):
         cmd += ["--fill-existing"]
-        _es = (params.get("esurvey") or "").strip()
-        if _es:
-            cmd += ["--esurvey", _es]
+    # เติม "เฉพาะรูป" เข้าเรื่องเดิม — ไม่แตะข้อมูลหน้าอื่น (ใช้ตอนกรอกครบแล้วแต่รูปยังไม่ขึ้น)
+    if params.get("imagesonly"):
+        cmd += ["--images-only"]
+        if params.get("includemain"):
+            cmd += ["--include-main-images"]
+    # เลข e-Survey ใช้ร่วมกันทั้ง --fill-existing และ --images-only (เจาะจงเรื่องที่จะแก้)
+    _es = (params.get("esurvey") or "").strip()
+    if _es and (params.get("fillexisting") or params.get("imagesonly")):
+        cmd += ["--esurvey", _es]
     if params.get("checklicense"):
         cmd += ["--check-license"]
 
@@ -1186,6 +1194,16 @@ PAGE = r"""<!doctype html>
         <label><input type="checkbox" id="checklicense"> ตรวจใบขับขี่ผู้เอาประกัน — OCR หา+อ่านรูปใบขับขี่ในชุดรูป (เลขที่/เลขบัตร/ชื่อ) แล้วเทียบกับข้อมูลเคลม · ช้าลงเล็กน้อย</label>
       </div>
 
+      <div class="checks" style="margin-top:2px">
+        <label><input type="checkbox" id="fillexisting"> กรอกต่อบน "เรื่องเดิม" — เปิด draft ที่มีอยู่แล้ว กด "แก้ไข" แล้วกรอกส่วนที่ยังว่าง (ไม่สร้างเรื่องใหม่)</label>
+        <label><input type="checkbox" id="imagesonly"> อัปเฉพาะ "รูป" เข้าเรื่องเดิม — ไม่แตะข้อมูลหน้าอื่น (ใช้ตอนกรอกครบแล้วแต่รูปยังไม่ขึ้น) · มีหน้าให้ติ๊กเลือกรูปก่อนอัป</label>
+        <label><input type="checkbox" id="includemain"> ↳ รวมรูปรถประกันด้วย (ไม่ติ๊ก = อัปเฉพาะรูปรถคู่กรณี กันอัปซ้ำที่อัปไปแล้ว)</label>
+        <div style="margin-top:6px">
+          <label class="fld" for="esurvey">เลข e-Survey ของเรื่องเดิม (เว้นว่าง = เลือก draft ให้อัตโนมัติ)</label>
+          <input id="esurvey" placeholder="S68426080794" style="max-width:260px">
+        </div>
+      </div>
+
       <div class="actions">
         <button class="run" id="runbtn">▶ รันโปรแกรม</button>
       </div>
@@ -1602,6 +1620,10 @@ runBtn.addEventListener("click", async () => {
     forcenew: $("#forcenew").checked,
     importxml: $("#importxml").checked,
     checklicense: $("#checklicense").checked,
+    fillexisting: $("#fillexisting").checked,
+    imagesonly: $("#imagesonly").checked,
+    includemain: $("#includemain").checked,
+    esurvey: $("#esurvey").value.trim(),
     // ค่าที่ผู้ใช้เลือกจากแผง 🔍 ตรวจ (ช่องที่ ISURVEY ไม่มีข้อมูลให้)
     ...(window.__isvPick || {}),
   };
