@@ -1548,7 +1548,8 @@ check("ค่าใช้จ่าย (se-survey): ไม่แตะ 3 ช่�
 check("ค่าใช้จ่าย (se-survey): ไม่แตะตารางราคา",
       _fb.index("fill_fee_table(driver, data.bill)") > _cut)
 check("ค่าใช้จ่าย (se-survey): ยังกด 'บันทึกราคา' ก่อน return (ไม่งั้นหัวบิลไม่ติด)",
-      _cut < _fb.index("_save_and_exit_billing(driver)") < _fb.index("return", _cut))
+      _cut < _fb.index("_save_and_exit_billing(driver, leave=leave)")
+      < _fb.index("return", _cut))
 # call site ต้องผูกกับต้นทางจริง: se-survey → full_billing=False, ISURVEY → ตาม flag
 _main_src = _insp.getsource(_main) if hasattr(_main, "__file__") else open(
     "main.py", encoding="utf-8").read()
@@ -2344,6 +2345,22 @@ check("submit: ไม่รู้เลข e-Survey → ค้นจาก EMCS 
 _ok, _msg, _n = _run_submit([False], esurvey="", status_esurvey="")
 check("submit: ค้นเลข e-Survey ไม่เจอ → บอกให้เปิดเองบนหน้าจอ ไม่เดา",
       _ok is False and _n == 0 and "หาเลข e-Survey" in _msg)
+
+# ---- ต้นเหตุจริงของ "ไม่เจอปุ่มส่งงาน": ออกจากเรื่องก่อนคนจะได้สั่งส่ง ----
+# ปุ่ม 'ส่งงานใหม่' อยู่ในเรื่อง แต่บอทกด 'กลับหน้า Inbox/Outbox' ทันทีหลังบันทึกราคา
+# (เจอ 2 ใบ: 2026013058422, 2026013159949) → ต้องค้างในเรื่องจนรู้ผลว่าจะส่งหรือไม่
+_bsrc = _insp.getsource(emcs.fill_billing)
+check("billing: มีสวิตช์ leave ให้เลือกว่าจะออกจากเรื่องเลยไหม", "leave" in _bsrc)
+for _fn in ("fill_one", "fill_imported", "fill_existing_report", "fill_continuation"):
+    _s = _insp.getsource(getattr(emcs, _fn))
+    check(f"billing: {_fn} ต้องค้างในเรื่องไว้ (leave=False) ปุ่มส่งงานอยู่หน้านั้น",
+          "leave=False" in _s)
+_esrc = _insp.getsource(emcs._save_and_exit_billing)
+check("billing: leave=False → ไม่กดกลับ Inbox", "if leave:" in _esrc)
+# ไม่ส่ง = ต้องออกจากเรื่องเพื่อปลดล็อกให้คนอื่นเปิดต่อ (ไม่งั้นเรื่องค้างล็อก)
+_osrc2 = _insp.getsource(__import__("main")._offer_submit)
+check("offer_submit: ไม่สั่งส่ง → ออกจากเรื่องปลดล็อกให้คนอื่น",
+      "emcs.leave_report(driver)" in _osrc2)
 
 # --report-isurvey (ใช้ตอนคนกดส่งเองบน EMCS) เคยทำแค่แจ้ง ISURVEY → งานไม่มี row
 # ใน se-key และไม่โผล่ในสมุดงาน (เจอจริง 2026013058422) — ต้องครบ 3 อย่างเหมือนปุ่มบนเว็บ

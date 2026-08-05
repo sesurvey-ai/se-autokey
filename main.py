@@ -1527,7 +1527,10 @@ def _offer_submit(driver, cfg, data, esurvey: str = ""):
               "ให้ครบถูกต้องบน EMCS ก่อนกดส่ง (ส่งแล้วแก้ไม่ได้)")
     sel = wait_for_submit(data.claim_value, survey_no=data.invoice_value, reason=reason)
     if not sel:
+        # ไม่ส่ง = จบแค่ draft → ต้องออกจากเรื่องเพื่อปลดล็อกให้คนอื่นเปิดต่อได้
+        # (บอทค้างอยู่ในเรื่องมาถึงตรงนี้เพราะปุ่ม 'ส่งงานใหม่' อยู่ในหน้านั้น)
         log("เก็บเป็น draft — ยังไม่ส่งงาน (browser เปิดค้าง ตรวจ/กดส่งเองได้)")
+        emcs.leave_report(driver)
         return
     ok, msg = emcs.submit_report(driver, cfg, data.claim_value, esurvey=esurvey)
     if not ok:
@@ -1535,6 +1538,7 @@ def _offer_submit(driver, cfg, data, esurvey: str = ""):
         announce_send_failed(data.claim_value, msg)   # การ์ดต้องไม่ขึ้น 'เสร็จแล้ว ✅'
         joblog.record("send_failed", data.claim_value, data.invoice_value,
                       esurvey=esurvey, note=msg)
+        # ⛔ ไม่ออกจากเรื่อง — คนต้องเข้าไปกดส่งเองบนหน้าจอ ออกไปแล้วต้องเปิดใหม่
         return
     log(f"✅ {msg}")
     keyer = isurvey_report.keyer_for(data.claim_value)

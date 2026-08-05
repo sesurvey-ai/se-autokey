@@ -3354,13 +3354,36 @@ def _find_price_save_button(driver):
     return None, ""
 
 
-def _save_and_exit_billing(driver):
+def leave_report(driver) -> bool:
+    """ออกจากเรื่อง (กลับหน้า Inbox/Outbox) = ปลดล็อกให้คนอื่นเปิดต่อได้
+
+    ⚠️ **จังหวะสำคัญ** — EMCS ล็อกเรื่องไว้ระหว่างที่มีคนเปิดค้าง ต้องออกถึงจะปลด
+    แต่ปุ่ม 'ส่งงานใหม่' อยู่ในเรื่อง **ออกก่อน = หาปุ่มไม่เจอ**
+    (เจอจริง 2026013058422 + 2026013159949: บอทออกทันทีหลังบันทึกราคา แล้วค่อยหยุด
+     รอคนสั่งส่ง → พอสั่ง ปุ่มไม่อยู่บนหน้า) → เรียกตัวนี้ **หลังรู้ผลแล้วว่าไม่ส่ง**
+    (ส่งสำเร็จ EMCS พาออกเอง) คืน True เมื่อออกสำเร็จ"""
+    try:
+        click_retry(driver, By.ID, "wuMenuPage1_imbReturn_In_Out")
+        try:
+            accept_alert(driver, timeout=10)   # เผื่อมี confirm/alert ตอนออกจากเรื่อง
+        except Exception:
+            pass
+        log("EMCS: กลับหน้า Inbox/Outbox แล้ว — ออกจากเรื่อง ปลดล็อก (คนอื่นเปิดต่อได้)")
+        return True
+    except Exception as e:
+        log(f"   ⚠️ กดปุ่มกลับ Inbox/Outbox (wuMenuPage1_imbReturn_In_Out) ไม่ได้ "
+            f"({type(e).__name__}) — กดกลับ/ออกจากเรื่องเองเพื่อปลดล็อก")
+        return False
+
+
+def _save_and_exit_billing(driver, leave: bool = True):
     """โหมด draft-park (se-survey ⚡ นำเข้า / เติม draft เดิม): บันทึกหัวบิล
     (เลขที่ใบแจ้งหนี้ + วันที่วางบิล) ด้วยปุ่ม 'บันทึกราคา' — id ต่างกันตามสถานะงาน
     (`btnSurveySave` draft ใหม่ / `btnSurvey_Update` เปิดมาแก้, ดู _PRICE_SAVE_BUTTONS)
     เป็นปุ่มบันทึกเดียวของหน้า จึงเลี่ยงไม่ได้ถ้าอยากให้หัวบิลติด
-    (user อนุญาตให้กดแล้ว 2026-07-27) — จากนั้นกดกลับหน้า Inbox/Outbox
-    (wuMenuPage1_imbReturn_In_Out) = 'ออกจากเรื่อง' ปลดล็อกให้คนอื่นเปิดต่อได้
+    (user อนุญาตให้กดแล้ว 2026-07-27)
+    leave=True → ออกจากเรื่องต่อเลย (ปลดล็อก) · leave=False → **ค้างอยู่ในเรื่อง**
+    เพราะยังจะต้องใช้ปุ่ม 'ส่งงานใหม่' ที่อยู่ในหน้านี้ (ดู leave_report)
     ⛔ ไม่แตะ 'ส่งงานใหม่' (wuFlow1_cmdSendNew) เด็ดขาด
     บันทึกไม่สำเร็จ = ไม่กดกลับ (กันข้อมูลหาย + ปล่อยให้คนตรวจบนหน้าจอ)."""
     # (1) บันทึกหัวบิล (เลขที่ใบแจ้งหนี้ + วันที่วางบิล) — verify ปุ่มไม่ใช่ 'ส่งงาน' ก่อนกด
@@ -3391,20 +3414,16 @@ def _save_and_exit_billing(driver):
             "บันทึก + ออกจากเรื่องเองบนหน้าจอ (ยังไม่กดกลับ Inbox กันข้อมูลหาย)")
         return
     # (2) กลับหน้า Inbox/Outbox = ออกจากเรื่องที่ทำเสร็จ → ปลดล็อกให้คนอื่นเข้าต่อได้
-    try:
-        click_retry(driver, By.ID, "wuMenuPage1_imbReturn_In_Out")
-        try:
-            accept_alert(driver, timeout=10)   # เผื่อมี confirm/alert ตอนออกจากเรื่อง — กด 'ตกลง'
-        except Exception:
-            pass
-        log("EMCS: กลับหน้า Inbox/Outbox แล้ว — ออกจากเรื่อง ปลดล็อก (คนอื่นเปิดต่อได้)")
-    except Exception as e:
-        log(f"   ⚠️ กดปุ่มกลับ Inbox/Outbox (wuMenuPage1_imbReturn_In_Out) ไม่ได้ "
-            f"({type(e).__name__}) — กดกลับ/ออกจากเรื่องเองเพื่อปลดล็อก")
+    #     แต่ถ้ายังจะเสนอให้คนสั่งส่ง ต้อง **ค้างอยู่ในเรื่อง** ไม่งั้นหาปุ่มส่งไม่เจอ
+    if leave:
+        leave_report(driver)
+    else:
+        log("EMCS: ค้างอยู่ในเรื่องไว้ก่อน (ปุ่ม 'ส่งงานใหม่' อยู่ในหน้านี้) — "
+            "ออกจากเรื่องหลังรู้ผลว่าจะส่งหรือไม่ส่ง")
 
 
 def fill_billing(driver, data: ClaimData, full_billing: bool = True,
-                 navigate: bool = True):
+                 navigate: bool = True, leave: bool = True):
     """หน้าค่าใช้จ่าย — **กรอกมาก/น้อยขึ้นกับต้นทางข้อมูล** (กติกา user 2026-08-03)
     แล้วกด "บันทึกราคา" (เป็น draft แก้ได้ — จุดส่งงานจริงคือปุ่ม 'ส่งงานใหม่'
     ซึ่งสคริปต์ไม่กดให้เด็ดขาด ต้องตรวจแล้วกดเอง)
@@ -3487,7 +3506,7 @@ def fill_billing(driver, data: ClaimData, full_billing: bool = True,
         log("EMCS: หน้าค่าใช้จ่าย — กรอกแค่เลขที่ใบแจ้งหนี้ + วันที่วางบิล "
             "(งานจาก se-survey: ความเห็น/เรทราคา หัวหน้ากรอกเองใน EMCS); "
             "บันทึกด้วยปุ่ม 'บันทึกราคา' ไม่กด 'ส่งงานใหม่'")
-        _save_and_exit_billing(driver)
+        _save_and_exit_billing(driver, leave=leave)
         return
 
     # ---- ต้นทาง ISURVEY: หัวหน้ากรอกความเห็น+เรทราคาไว้ในระบบเดิมแล้ว → ยกมาทั้งหน้า ----
@@ -3518,7 +3537,7 @@ def fill_billing(driver, data: ClaimData, full_billing: bool = True,
     # ปุ่มบันทึกบนจอมีปุ่มเดียว value='บันทึกราคา' แต่ id มี 2 แบบ (ยังไม่เคยบันทึกบิล =
     # btnSurveySave / เคยบันทึกแล้ว = btnSurvey_Update) — _save_and_exit_billing ลองทั้งคู่
     # ⛔ 'ส่งงานใหม่' (wuFlow1_cmdSendNew) ยังห้ามแตะเด็ดขาดเหมือนเดิม
-    _save_and_exit_billing(driver)
+    _save_and_exit_billing(driver, leave=leave)
     log("EMCS: บันทึกหน้าค่าใช้จ่ายแล้ว — ตรวจ/แก้ราคา แล้วกด 'ส่งงานใหม่' เอง "
         "(สคริปต์ไม่กดส่งให้)")
 
@@ -3751,7 +3770,8 @@ def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
                       n_opponents=len(data.third_parties or []),
                       n_injuries=len(data.injuries or []),
                       n_assets=len(data.assets or []))
-    fill_billing(driver, data, full_billing=full_billing, navigate=moved)
+    fill_billing(driver, data, full_billing=full_billing, navigate=moved,
+                 leave=False)   # ค้างในเรื่องไว้ ปุ่มส่งงานอยู่หน้านี้
     return esurvey
 
 
@@ -3818,7 +3838,7 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
                       n_injuries=len(data.injuries or []),
                       n_assets=len(data.assets or []))
 
-    fill_billing(driver, data, full_billing=full_billing)
+    fill_billing(driver, data, full_billing=full_billing, leave=False)
     return esurvey
 
 
@@ -4138,7 +4158,7 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
                       n_injuries=len(data.injuries or []),
                       n_assets=len(data.assets or []))
 
-    fill_billing(driver, data, full_billing=full_billing)
+    fill_billing(driver, data, full_billing=full_billing, leave=False)
     return esurvey
 
 
@@ -4199,7 +4219,7 @@ def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",
                       n_opponents=len(data.third_parties or []),
                       n_injuries=len(data.injuries or []),
                       n_assets=len(data.assets or []))
-    fill_billing(driver, data, full_billing=full_billing)
+    fill_billing(driver, data, full_billing=full_billing, leave=False)
     return target
 
 
