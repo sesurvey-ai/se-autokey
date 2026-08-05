@@ -674,6 +674,19 @@ def wait_for_manual_fill(field_label, reason="", select_id=None, options=None,
 
 
 SUBMIT_MARKER = "@@READY_SUBMIT@@"  # ต้องตรงกับค่าใน webui.py
+SENT_MARKER = "@@JOB_SENT@@"        # ต้องตรงกับค่าใน webui.py (ส่งงานสำเร็จแล้ว)
+
+
+def announce_sent(claim: str, esurvey: str = "", keyer: str = ""):
+    """บอกหน้าเว็บว่า "งานนี้ส่งขึ้น EMCS สำเร็จและตรวจสถานะแล้ว"
+
+    ใช้เป็นสัญญาณให้การ์ดปิดตัวเอง — ประกาศ **หลัง** verify สถานะบน EMCS เท่านั้น
+    (ไม่ใช่แค่กดปุ่มแล้วเชื่อ) ข้อมูลไม่หายเพราะลงสมุดงานถาวรไว้แล้ว"""
+    if not _WEBUI:
+        return
+    print(SENT_MARKER + json.dumps(
+        {"claim": claim, "esurvey": esurvey, "keyer": keyer}, ensure_ascii=False),
+        flush=True)
 
 
 def wait_for_submit(claim, survey_no="", reason=""):

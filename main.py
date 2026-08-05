@@ -38,8 +38,9 @@ from pathlib import Path
 
 from selenium.common.exceptions import UnexpectedAlertPresentException
 
-from autokey import emcs, isurvey, isurvey_api
+from autokey import emcs, isurvey, isurvey_api, joblog
 from autokey.browser import (
+    announce_sent,
     log,
     log_plain,
     make_driver,
@@ -561,7 +562,9 @@ def run_import_xml(cfg, args):
                             tag=f"done_import_{data.claim_value}")
         banner("กรอกครบทุกหน้าแล้ว (draft, นำเข้า XML)"
                + (f" | e-Survey {esurvey}" if esurvey else ""))
-        _offer_submit(driver, cfg, data)
+        joblog.record("draft", data.claim_value, data.invoice_value, esurvey,
+                      note="นำเข้า XML")
+        _offer_submit(driver, cfg, data, esurvey=esurvey)
     except Exception:
         save_debug_snapshot(
             driver, cfg.runs_dir / "logs",
@@ -1482,7 +1485,7 @@ def _sekey_dup_skip(cfg, data) -> str:
     return ""
 
 
-def _offer_submit(driver, cfg, data):
+def _offer_submit(driver, cfg, data, esurvey: str = ""):
     """A1: หลังกรอกครบ (live session, ปุ่ม 'ส่งงานใหม่' พร้อม) — รอผู้ใช้ตรวจ draft
     แล้วสั่งส่ง → กด 'ส่งงานใหม่' ให้ + แจ้ง ISURVEY + บันทึก se-key.
     ไม่สั่ง (EOF/ปิด) = เก็บเป็น draft
@@ -1502,6 +1505,13 @@ def _offer_submit(driver, cfg, data):
     log(f"✅ {msg}")
     keyer = isurvey_report.keyer_for(data.claim_value)
     when = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # ลงสมุดงานทันทีที่ EMCS ยืนยันสถานะแล้ว — ไม่รอผลแจ้ง ISURVEY/se-key เพราะ
+    # "ส่งงานบน EMCS แล้ว" เป็นข้อเท็จจริงที่ต้องเก็บไว้ ต่อให้ 2 ระบบหลังยิงพลาด
+    joblog.record("sent", data.claim_value, data.invoice_value,
+                  esurvey=esurvey, keyer=keyer,
+                  work_type=sel["base_type"] + (" +งานรวม" if sel["batch"] else ""),
+                  note=msg)
+    announce_sent(data.claim_value, esurvey, keyer)   # ให้การ์ดบนหน้าเว็บปิดตัวเอง
     # SESV เคลมเงินบน iSurvey ด้วยเลข SESV ไม่ได้ → แจ้งด้วย SEABI invoice ตัวแรก (mix[0])
     report_invoice = (sel["mix"][0] if (sel["base_type"] == "SESV" and sel["mix"])
                       else data.invoice_value)
@@ -1829,10 +1839,11 @@ def main():
 
     banner("กรอกครบทุกหน้าแล้ว (draft)"
            + (f" | e-Survey {esurvey}" if esurvey else ""))
+    joblog.record("draft", data.claim_value, data.invoice_value, esurvey)
     # A1: เสนอกด "ส่งงาน + แจ้ง ISURVEY" — ทั้งเคลมแห้งและเคลมสด (live session ปุ่มพร้อม)
     # เคลมสด: _offer_submit ใส่คำเตือนให้ตรวจคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินหนักกว่าก่อนส่ง
     # (ยังไม่กด 'ส่งงานใหม่' เองจนกว่าผู้ใช้กดปุ่มบน webui + confirm)
-    _offer_submit(driver, cfg, data)
+    _offer_submit(driver, cfg, data, esurvey=esurvey)
 
 
 if __name__ == "__main__":

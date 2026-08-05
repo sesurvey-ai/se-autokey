@@ -6,12 +6,18 @@ flow ปลายทาง: บอทกรอก EMCS draft → user ตรว�
 ความปลอดภัย: ผู้เรียกต้อง "ยืนยันว่าส่งงานใน EMCS แล้วจริง" ก่อน (emcs.is_report_submitted)
 — report_sent ตัวนี้แค่ยิง POST ไม่ได้ตรวจสถานะเอง
 """
+import json
+from pathlib import Path
+
 import requests
 
 from .browser import log
 
-# คนคีย์รับผิดชอบตามเลขท้ายของเลขเคลม (คนละ 2 เลข)
-KEYER_BY_LAST_DIGIT = {
+# ไฟล์ตั้งค่าคนคีย์ — แก้ได้จากหน้า "⚙ ตั้งค่า" ของ webui ไม่ต้องแตะโค้ด
+KEYERS_FILE = Path(__file__).resolve().parent.parent / "settings" / "keyers.json"
+
+# ค่าสำรอง (ใช้เมื่อไฟล์หาย/พัง) — คนคีย์รับผิดชอบตามเลขท้ายของเลขเคลม คนละ 2 เลข
+DEFAULT_KEYERS = {
     "0": "วรนุช น้ำพุ", "1": "วรนุช น้ำพุ",
     "2": "กัญญารัตน์ เสนคำ", "3": "กัญญารัตน์ เสนคำ",
     "4": "วิสุดา ดอนหมัน", "5": "วิสุดา ดอนหมัน",
@@ -20,10 +26,48 @@ KEYER_BY_LAST_DIGIT = {
 }
 
 
+def load_keyers() -> dict:
+    """อ่านตารางคนคีย์จากไฟล์ตั้งค่า — คืน {'0'..'9': ชื่อ}
+
+    อ่านไม่ได้/ไฟล์พัง = ใช้ค่าสำรอง (งานต้องเดินต่อได้ ไม่ใช่ล้มเพราะไฟล์ตั้งค่า)
+    เลขไหนไม่มีในไฟล์ก็ถอยไปใช้ค่าสำรองของเลขนั้น — แก้ทีละคนได้ ไม่ต้องใส่ครบ 10
+    """
+    table = dict(DEFAULT_KEYERS)
+    try:
+        raw = json.loads(KEYERS_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return table
+    except Exception as e:
+        log(f"   ⚠️ อ่าน {KEYERS_FILE.name} ไม่ได้ ({type(e).__name__}) — ใช้ค่าสำรองในโค้ด")
+        return table
+    if not isinstance(raw, dict):
+        log(f"   ⚠️ {KEYERS_FILE.name} รูปแบบไม่ถูก (ต้องเป็น object) — ใช้ค่าสำรองในโค้ด")
+        return table
+    src = raw.get("by_last_digit") if isinstance(raw.get("by_last_digit"), dict) else raw
+    for k, v in src.items():
+        k = str(k).strip()
+        if k in table and str(v).strip():
+            table[k] = str(v).strip()
+    return table
+
+
+def save_keyers(table: dict) -> None:
+    """เขียนตารางคนคีย์ลงไฟล์ตั้งค่า (เก็บเฉพาะเลข 0-9 ที่มีชื่อจริง)"""
+    clean = {str(k): str(v).strip() for k, v in (table or {}).items()
+             if str(k) in DEFAULT_KEYERS and str(v).strip()}
+    KEYERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    KEYERS_FILE.write_text(
+        json.dumps({"by_last_digit": clean}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8")
+
+
 def keyer_for(claim: str) -> str:
-    """คืนชื่อคนคีย์ตามเลขท้ายของเลขเคลม ('' ถ้าหาเลขท้ายไม่ได้)"""
+    """คืนชื่อคนคีย์ตามเลขท้ายของเลขเคลม ('' ถ้าหาเลขท้ายไม่ได้)
+
+    อ่านไฟล์ตั้งค่าทุกครั้ง — แก้บนหน้าเว็บแล้วมีผลกับงานถัดไปทันที ไม่ต้องรีสตาร์ต
+    """
     digits = "".join(ch for ch in str(claim) if ch.isdigit())
-    return KEYER_BY_LAST_DIGIT.get(digits[-1], "") if digits else ""
+    return load_keyers().get(digits[-1], "") if digits else ""
 
 
 def report_sent(cfg, claim: str, invoice: str, keyer: str = "",

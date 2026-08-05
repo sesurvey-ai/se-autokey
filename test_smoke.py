@@ -2099,6 +2099,78 @@ _p, _m = _run_fuzzy_marks(_DISTRICTS, "วัฒนา", 60)
 check("mark: คะแนนสูง (มั่นใจ) → ไม่ย้อม ไม่งั้นทั้งหน้าเหลืองหมดจนไม่มีความหมาย",
       _p == "เขตวัฒนา" and _m == [])
 
+# ---- 22f. ตารางคนคีย์: ย้ายไปไฟล์ตั้งค่า แก้ได้โดยไม่แตะโค้ด ----
+import autokey.isurvey_report as _ir  # noqa: E402
+
+
+def _with_keyers_file(content):
+    """เขียนไฟล์ตั้งค่าชั่วคราวแล้วคืนค่าเดิมให้ (content=None = ลบไฟล์ทิ้ง)"""
+    orig = _ir.KEYERS_FILE
+    tmp = pathlib.Path(tempfile.mkdtemp()) / "keyers.json"
+    if content is not None:
+        tmp.write_text(content, encoding="utf-8")
+    _ir.KEYERS_FILE = tmp
+    return orig, tmp
+
+
+_o, _tmp = _with_keyers_file(_json.dumps(
+    {"by_last_digit": {"3": "คนใหม่ ทดสอบ"}}, ensure_ascii=False))
+try:
+    check("keyers: แก้เลขเดียวในไฟล์ → มีผลเฉพาะเลขนั้น",
+          _ir.keyer_for("2026013057363") == "คนใหม่ ทดสอบ"
+          and _ir.keyer_for("2026013057367") == _ir.DEFAULT_KEYERS["7"])
+    # รับทั้งแบบมี by_last_digit และ dict ตรง ๆ (เผื่อคนแก้ไฟล์เองแบบง่าย)
+    _tmp.write_text(_json.dumps({"3": "แบบไม่มี wrapper"}, ensure_ascii=False), encoding="utf-8")
+    check("keyers: ไฟล์แบบ dict ตรง ๆ ก็อ่านได้",
+          _ir.keyer_for("2026013057363") == "แบบไม่มี wrapper")
+    _tmp.write_text("{ พัง", encoding="utf-8")
+    check("keyers: ไฟล์พัง → ถอยไปค่าในโค้ด ไม่ล้ม",
+          _ir.keyer_for("2026013057363") == _ir.DEFAULT_KEYERS["3"])
+    _tmp.unlink()
+    check("keyers: ไม่มีไฟล์ → ใช้ค่าในโค้ด",
+          _ir.keyer_for("2026013057363") == _ir.DEFAULT_KEYERS["3"])
+    # save แล้วต้องอ่านกลับได้ + ไม่เก็บคีย์แปลกปลอม/ชื่อว่าง
+    _ir.save_keyers({**_ir.DEFAULT_KEYERS, "3": "บันทึกใหม่", "x": "ไม่ใช่เลข", "4": "  "})
+    _saved = _json.loads(_tmp.read_text(encoding="utf-8"))["by_last_digit"]
+    check("keyers: save → อ่านกลับได้ + ตัดคีย์แปลกปลอม/ชื่อว่างทิ้ง",
+          _ir.keyer_for("2026013057363") == "บันทึกใหม่"
+          and "x" not in _saved and "4" not in _saved)
+finally:
+    _ir.KEYERS_FILE = _o
+check("keyers: ไฟล์จริงในโปรเจกต์อ่านได้ครบ 10 เลข",
+      sorted(_ir.load_keyers()) == list("0123456789"))
+
+# ---- 22g. สมุดงาน: เลขเคลม/เลขเซอร์เวย์ที่ทำไปแล้ว ----
+import autokey.joblog as _jl  # noqa: E402
+
+_o = _jl.JOBS_FILE
+_jl.JOBS_FILE = pathlib.Path(tempfile.mkdtemp()) / "runs" / "jobs.jsonl"
+try:
+    check("joblog: เขียนได้แม้โฟลเดอร์ยังไม่มี",
+          _jl.record("draft", "2026013057363", "SEABI-1", "S684"))
+    _jl.record("sent", "2026013057363", "SEABI-1", "S684", keyer="ก ข", work_type="งานต้น")
+    _jl.record("sent", "2026013099999", "SEABI-2", "S685", keyer="ค ง")
+    _rows = _jl.read_jobs()
+    check("joblog: อ่านกลับ ใหม่สุดขึ้นก่อน",
+          len(_rows) == 3 and _rows[0]["claim"] == "2026013099999")
+    check("joblog: ค้นด้วยเลขเคลม", len(_jl.read_jobs(q="2026013057363")) == 2)
+    check("joblog: ค้นด้วยเลขเซอร์เวย์/คนคีย์",
+          len(_jl.read_jobs(q="SEABI-2")) == 1 and len(_jl.read_jobs(q="ก ข")) == 1)
+    check("joblog: limit ตัดจำนวนได้", len(_jl.read_jobs(limit=2)) == 2)
+    # บรรทัดเสียต้องไม่ทำให้ทั้งไฟล์อ่านไม่ได้
+    with open(_jl.JOBS_FILE, "a", encoding="utf-8") as _f:
+        _f.write("{ บรรทัดพัง\n")
+    check("joblog: บรรทัดพัง → ข้ามไป อ่านที่เหลือได้", len(_jl.read_jobs()) == 3)
+    _jl.JOBS_FILE = pathlib.Path(tempfile.mkdtemp()) / "ยังไม่มี.jsonl"
+    check("joblog: ยังไม่มีไฟล์ → คืนลิสต์ว่าง ไม่ error", _jl.read_jobs() == [])
+finally:
+    _jl.JOBS_FILE = _o
+
+# marker บอกหน้าเว็บว่าส่งงานแล้ว ต้องตรงกันสองฝั่ง
+check("sent marker: ค่าใน browser.py กับ webui.py ตรงกัน",
+      _br.SENT_MARKER == _webui_mod.SENT_MARKER
+      if (_webui_mod := __import__("webui")) else False)
+
 # ---- 23. webui._build_cmd: โหมดเคลม (dry = เคลมแห้ง / fresh = เคลมสด) ----
 import webui as _webui  # noqa: E402
 _cmd, _e = _webui._build_cmd({"claims": "2026013041465", "claimmode": "dry"})

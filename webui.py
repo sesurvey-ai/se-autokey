@@ -354,6 +354,7 @@ MANUAL_MARKER = "@@MANUAL_FILL@@"
 SUBMIT_MARKER = "@@READY_SUBMIT@@"   # ต้องตรงกับ autokey/browser.py (พร้อมส่งงาน)
 SELECT_MARKER = "@@SELECT_IMAGES@@"  # ต้องตรงกับ autokey/browser.py (เลือกรูปอัปโหลด)
 INJURY_MARKER = "@@INJURY_INPUTS@@"  # ต้องตรงกับ autokey/browser.py (กรอกข้อมูลผู้บาดเจ็บ)
+SENT_MARKER = "@@JOB_SENT@@"         # ต้องตรงกับ autokey/browser.py (ส่งงาน+verify แล้ว)
 
 # จำนวนงานที่รันพร้อมกันได้สูงสุด (กันเปิด Chrome เยอะเกินจนเครื่องค้าง)
 MAX_CONCURRENT = int(os.environ.get("SE_MAX_CONCURRENT", "4") or "4")
@@ -579,6 +580,19 @@ def _reader(proc, run_id: int):
                 marker, kind = SELECT_MARKER, "images"
             elif line.startswith(INJURY_MARKER):
                 marker, kind = INJURY_MARKER, "injury"
+            elif line.startswith(SENT_MARKER):
+                # ส่งงานสำเร็จ + verify สถานะบน EMCS แล้ว → ให้การ์ดปิดตัวเองได้
+                # (ไม่ใช่จุดหยุด จึงไม่แตะ status/pause) ข้อมูลอยู่ในสมุดงานแล้ว
+                try:
+                    info = json.loads(line[len(SENT_MARKER):])
+                except Exception:
+                    info = {}
+                with _lock:
+                    r = _runs.get(run_id)
+                    if r is None:
+                        break
+                    r["sent"] = info or {"claim": ""}
+                continue
             else:
                 marker = None
             if marker:
@@ -699,6 +713,7 @@ def poll_state(offsets: dict) -> dict:
                 "id": run_id, "status": r["status"], "returncode": r["returncode"],
                 "cmd": r["cmd"], "title": r["title"], "pause": r["pause"],
                 "kind": r.get("kind", "fill"), "claims": r.get("claims", []),
+                "sent": r.get("sent"),   # มีค่า = ส่งงาน+verify แล้ว (การ์ดปิดตัวเองได้)
                 "lines": new, "next_offset": len(lines),
             })
         return {"runs": runs_out, "active": _active_count(), "max": MAX_CONCURRENT}
@@ -805,6 +820,20 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 res, err = check_isurvey_case(claim, inv)
                 self._send(502 if err else 200, {"error": err} if err else res)
+        elif u.path == "/jobs":
+            # สมุดงาน: เลขเคลม/เลขเซอร์เวย์ที่ทำไปแล้ว (ค้นด้วย q)
+            q = parse_qs(u.query)
+            from autokey import joblog
+            try:
+                limit = int((q.get("limit") or ["300"])[0])
+            except ValueError:
+                limit = 300
+            self._send(200, {"jobs": joblog.read_jobs(
+                limit=max(1, min(limit, 2000)), q=((q.get("q") or [""])[0]))})
+        elif u.path == "/settings":
+            from autokey import isurvey_report as _ir
+            self._send(200, {"keyers": _ir.load_keyers(),
+                             "file": str(_ir.KEYERS_FILE)})
         elif u.path == "/isurvey-cases":
             q = parse_qs(u.query)
             rows, err = fetch_isurvey_cases(
@@ -872,6 +901,28 @@ class Handler(BaseHTTPRequestHandler):
                        {"continued": continue_run(self._id(p), p.get("payload"))})
         elif u.path == "/forget":
             self._send(200, {"forgot": forget_run(self._id(self._read_json()))})
+        elif u.path == "/settings":
+            # แก้ตารางคนคีย์จากหน้าเว็บ — เฉพาะหน้า operator ท้องถิ่นเท่านั้น
+            if self._cors_origin() is not None:
+                self._send(403, {"error": "แก้ตั้งค่าได้จากหน้า operator ในเครื่องเท่านั้น"})
+                return
+            from autokey import isurvey_report as _ir
+            body = self._read_json() or {}
+            table = body.get("keyers")
+            if not isinstance(table, dict) or not table:
+                self._send(400, {"error": "ไม่มีข้อมูลตารางคนคีย์ที่จะบันทึก"})
+                return
+            missing = [d for d in "0123456789" if not str(table.get(d, "")).strip()]
+            if missing:
+                self._send(400, {"error": "ต้องมีชื่อคนคีย์ครบทุกเลขท้าย — ยังว่าง: "
+                                          + ", ".join(missing)})
+                return
+            try:
+                _ir.save_keyers(table)
+            except OSError as e:
+                self._send(500, {"error": f"เขียนไฟล์ไม่ได้: {e}"})
+                return
+            self._send(200, {"keyers": _ir.load_keyers()})
         elif u.path == "/api/import-sesurvey":
             # ปุ่ม "นำเข้า EMCS": หน้า operator ท้องถิ่น (same-origin) หรือ inspector (cross-origin)
             params = self._read_json()
@@ -1070,6 +1121,20 @@ PAGE = r"""<!doctype html>
   .case-btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
   .case-btns button{padding:6px 11px;font-size:12.5px;border-radius:8px;box-shadow:none}
   .caselist{max-height:70vh;overflow:auto}
+  /* สมุดงาน + ตั้งค่า */
+  .jobtbl{width:100%;border-collapse:collapse;font-size:12.5px}
+  .jobtbl th{text-align:left;color:var(--muted);font-weight:600;padding:6px 8px;
+    border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff}
+  .jobtbl td{padding:6px 8px;border-bottom:1px solid #f1f5f9;
+    font-variant-numeric:tabular-nums}
+  .jobtbl tr:hover td{background:#f8fafc}
+  .ev{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700}
+  .ev-sent{background:#dcfce7;color:#166534}
+  .ev-draft{background:#fef3c7;color:#92400e}
+  .keyrow{display:flex;align-items:center;gap:10px;margin-bottom:7px}
+  .keyrow .dg{width:34px;height:34px;flex:none;border-radius:9px;background:#eef2ff;
+    color:#3730a3;font-weight:800;display:flex;align-items:center;justify-content:center}
+  .keyrow input{flex:1;max-width:320px}
   @media(max-width:900px){.dash{grid-template-columns:1fr}}
   @media(max-width:560px){.grid{grid-template-columns:1fr}.run-cmd{display:none}}
 </style>
@@ -1087,6 +1152,8 @@ PAGE = r"""<!doctype html>
   <div class="tabs">
     <button class="tab active" data-pane="sesurvey">📥 นำเข้า SE Survey</button>
     <button class="tab" data-pane="isurvey">🖊 กรอกเคลม ISURVEY</button>
+    <button class="tab" data-pane="jobs">📚 สมุดงาน</button>
+    <button class="tab" data-pane="settings">⚙ ตั้งค่า</button>
   </div>
 
   <div class="dash">
@@ -1215,6 +1282,44 @@ PAGE = r"""<!doctype html>
         • ตรวจ draft บน Chrome แล้วกดปุ่ม <b>"✅ ส่งงาน + แจ้ง ISURVEY"</b> — ระบบจะกด "ส่งงานใหม่" ให้ + แจ้งกลับ ISURVEY<br>
         • ระบบ <b>ไม่กดส่งงานเอง</b> จนกว่าคุณจะสั่งผ่านปุ่ม (ถ้าไม่กด = เก็บเป็น draft)<br>
         • เคลมที่ไม่ใช่เคลมแห้ง หรือมีเรื่องใน EMCS อยู่แล้ว จะถูกข้ามพร้อมบอกเหตุผล
+      </div>
+     </div>
+    </div>
+
+    <div class="tabpane" id="pane-jobs" hidden>
+     <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+       <b style="font-size:15px">📚 สมุดงาน</b>
+       <span style="color:var(--muted);font-size:12.5px">เลขเคลม/เลขเซอร์เวย์ที่ทำไปแล้ว</span>
+       <button id="jobsreload" class="ghost" style="margin-left:auto">↻ โหลดใหม่</button>
+      </div>
+      <input id="jobsq" placeholder="ค้นเลขเคลม / เลขเซอร์เวย์ / e-Survey / ชื่อคนคีย์">
+      <div id="jobsbox" class="caselist" style="margin-top:10px">
+        <div style="color:var(--muted);font-size:13px;padding:8px 0">กำลังโหลด…</div>
+      </div>
+      <div class="note" style="margin-top:10px">
+       • บันทึกอัตโนมัติ 2 จังหวะ: <b>draft</b> = กรอกครบแล้ว · <b>ส่งแล้ว</b> = กด "ส่งงานใหม่" + ตรวจสถานะบน EMCS ผ่าน<br>
+       • เก็บถาวรที่ <code>runs/jobs.jsonl</code> — ไม่หายตอนปิดการ์ด/รีสตาร์ตโปรแกรม
+      </div>
+     </div>
+    </div>
+
+    <div class="tabpane" id="pane-settings" hidden>
+     <div class="card">
+      <b style="font-size:15px">⚙ คนคีย์ตามเลขท้ายเลขเคลม</b>
+      <div style="color:var(--muted);font-size:12.5px;margin:4px 0 12px">
+       ชื่อนี้ถูกส่งไปกับการแจ้ง ISURVEY (ช่อง EMCSby) ตอนกด "ส่งงาน" — บอทดูเลขท้ายของเลขเคลมอย่างเดียว ไม่ได้ดูว่าใครนั่งกด
+      </div>
+      <div id="keyersbox"><div style="color:var(--muted);font-size:13px">กำลังโหลด…</div></div>
+      <div class="actions" style="margin-top:6px">
+       <button class="run" id="savekeyers">💾 บันทึกตั้งค่า</button>
+       <button class="ghost" id="reloadkeyers">↻ ยกเลิกการแก้</button>
+      </div>
+      <div id="keyersmsg" style="font-size:12.5px;margin-top:8px"></div>
+      <div class="note" style="margin-top:10px">
+       • บันทึกแล้วมีผลกับงานถัดไปทันที ไม่ต้องรีสตาร์ตโปรแกรม<br>
+       • เก็บที่ <code id="keyersfile">settings/keyers.json</code> — ไฟล์หาย/พัง ระบบถอยไปใช้ค่าเดิมในโค้ดเอง งานไม่ล้ม<br>
+       • ต้องมีชื่อครบทั้ง 10 เลขท้าย ไม่งั้นบันทึกไม่ผ่าน (บอทจะไม่ยิงแจ้ง ISURVEY ถ้าหาคนคีย์ไม่ได้)
       </div>
      </div>
     </div>
@@ -1515,12 +1620,33 @@ function renderRun(r){
   const c = cards[r.id] || makeCard(r);
   appendLines(c, r.lines);
   offsets[r.id] = r.next_offset;
+  // กำลังนับถอยหลังปิดตัวเองอยู่ — ห้าม poll วาดสถานะทับ (ไม่งั้นข้อความกะพริบ
+  // สลับ "ปิดใน N วิ" กับ "เสร็จแล้ว ✅" ทุกรอบ poll)
+  if (c.autoClose) return;
   const [cls,txt] = STATUS[r.status] || STATUS.idle;
   c.badgeEl.className = "badge " + cls;
   c.stEl.textContent = txt;
   const active = (r.status === "running" || r.status === "waiting");
   c.stopBtn.hidden = !active;
   c.closeBtn.hidden = active;
+  // ส่งงานสำเร็จ + บอท verify สถานะบน EMCS แล้ว → ปิดการ์ดให้เอง ไม่ต้องมากดทีละใบ
+  // (ไม่รีบปิดทันที เผื่ออ่าน 3 บรรทัดสุดท้าย; ข้อมูลอยู่ใน 📚 สมุดงาน ถาวรอยู่แล้ว)
+  if (r.sent && !active && !c.autoClose){
+    c.autoClose = true;
+    let left = 8;
+    c.stEl.textContent = "ส่งแล้ว ✓ · ปิดใน " + left + " วิ";
+    const tick = setInterval(async () => {
+      left -= 1;
+      if (!cards[r.id]){ clearInterval(tick); return; }
+      if (left > 0){ c.stEl.textContent = "ส่งแล้ว ✓ · ปิดใน " + left + " วิ"; return; }
+      clearInterval(tick);
+      try{ await postJSON("/forget", {id:r.id}); }catch(e){}
+      removeCard(r.id);
+      if (!$("#pane-jobs").hidden) loadJobs();   // เปิดสมุดงานอยู่ → ให้เห็นแถวใหม่เลย
+    }, 1000);
+    c.closeBtn.addEventListener("click", () => clearInterval(tick), {once: true});
+    return;    // ไม่ต้องวาดแผงหยุดรอต่อ งานจบแล้ว
+  }
   if (r.status === "waiting" && r.pause){
     const k = r.pause.kind || "fill";
     const rs = r.pause.reason || "";
@@ -2068,13 +2194,81 @@ loadIsvBtn.addEventListener("click", async () => {
   finally{ loadIsvBtn.disabled = false; }
 });
 
-// แท็บสลับ SE Survey / ISURVEY (client-side toggle หน้าเดียว)
+// ---------------- 📚 สมุดงาน: เลขเคลม/เลขเซอร์เวย์ที่ทำไปแล้ว ----------------
+const jobsBox = $("#jobsbox"), jobsQ = $("#jobsq");
+const EV_LABEL = {sent: "ส่งแล้ว", draft: "draft"};
+
+async function loadJobs(){
+  jobsBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">กำลังโหลด…</div>';
+  try{
+    const r = await fetch("/jobs?q=" + encodeURIComponent(jobsQ.value.trim()));
+    const d = await r.json();
+    const rows = d.jobs || [];
+    if (!rows.length){
+      jobsBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">'
+        + (jobsQ.value.trim() ? "ไม่พบงานที่ตรงกับที่ค้น" : "ยังไม่มีงานในสมุด") + '</div>';
+      return;
+    }
+    jobsBox.innerHTML = '<table class="jobtbl"><thead><tr>'
+      + '<th>เวลา</th><th>สถานะ</th><th>เลขเคลม</th><th>เลขเซอร์เวย์</th>'
+      + '<th>e-Survey</th><th>คนคีย์</th><th>ประเภทงาน</th></tr></thead><tbody>'
+      + rows.map(j => '<tr>'
+        + '<td style="white-space:nowrap">' + escHtml(j.ts || "") + '</td>'
+        + '<td><span class="ev ev-' + (j.event === "sent" ? "sent" : "draft") + '">'
+        + escHtml(EV_LABEL[j.event] || j.event || "") + '</span></td>'
+        + '<td>' + escHtml(j.claim || "") + '</td>'
+        + '<td>' + escHtml(j.invoice || "") + '</td>'
+        + '<td>' + escHtml(j.esurvey || "") + '</td>'
+        + '<td>' + escHtml(j.keyer || "") + '</td>'
+        + '<td>' + escHtml(j.work_type || "") + '</td>'
+        + '</tr>').join("") + '</tbody></table>';
+  }catch(e){
+    jobsBox.innerHTML = '<div style="color:var(--err);font-size:13px">โหลดสมุดงานไม่ได้: ' + escHtml(String(e)) + '</div>';
+  }
+}
+$("#jobsreload").addEventListener("click", loadJobs);
+let jobsTimer = null;
+jobsQ.addEventListener("input", () => { clearTimeout(jobsTimer); jobsTimer = setTimeout(loadJobs, 300); });
+
+// ---------------- ⚙ ตั้งค่า: คนคีย์ตามเลขท้ายเลขเคลม ----------------
+const keyersBox = $("#keyersbox"), keyersMsg = $("#keyersmsg");
+
+async function loadKeyers(){
+  keyersMsg.textContent = "";
+  try{
+    const r = await fetch("/settings");
+    const d = await r.json();
+    const k = d.keyers || {};
+    if (d.file) $("#keyersfile").textContent = d.file;
+    keyersBox.innerHTML = "0123456789".split("").map(dg =>
+      '<div class="keyrow"><div class="dg">' + dg + '</div>'
+      + '<input class="keyin" data-dg="' + dg + '" value="' + escHtml(k[dg] || "") + '"'
+      + ' placeholder="ชื่อ-นามสกุล คนคีย์"></div>').join("");
+  }catch(e){
+    keyersBox.innerHTML = '<div style="color:var(--err);font-size:13px">โหลดตั้งค่าไม่ได้: ' + escHtml(String(e)) + '</div>';
+  }
+}
+$("#reloadkeyers").addEventListener("click", loadKeyers);
+$("#savekeyers").addEventListener("click", async () => {
+  const table = {};
+  keyersBox.querySelectorAll(".keyin").forEach(i => { table[i.dataset.dg] = i.value.trim(); });
+  keyersMsg.textContent = "กำลังบันทึก…"; keyersMsg.style.color = "var(--muted)";
+  try{
+    const {ok, data} = await postJSON("/settings", {keyers: table});
+    if (!ok){ keyersMsg.textContent = "❌ " + (data.error || "บันทึกไม่สำเร็จ"); keyersMsg.style.color = "var(--err)"; return; }
+    keyersMsg.textContent = "✅ บันทึกแล้ว — มีผลกับงานถัดไปทันที"; keyersMsg.style.color = "var(--ok)";
+  }catch(e){ keyersMsg.textContent = "❌ ติดต่อเซิร์ฟเวอร์ไม่ได้: " + e; keyersMsg.style.color = "var(--err)"; }
+});
+
+// แท็บสลับ (client-side toggle หน้าเดียว)
+const PANES = ["sesurvey", "isurvey", "jobs", "settings"];
 document.querySelectorAll(".tab").forEach(t => {
   t.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
     const p = t.dataset.pane;
-    $("#pane-sesurvey").hidden = (p !== "sesurvey");
-    $("#pane-isurvey").hidden = (p !== "isurvey");
+    PANES.forEach(n => { $("#pane-" + n).hidden = (n !== p); });
+    if (p === "jobs") loadJobs();
+    if (p === "settings") loadKeyers();
   });
 });
 loadCasesBtn.click();   // auto-load รายการเคสตอนเปิดหน้า
