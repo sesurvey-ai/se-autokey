@@ -2309,6 +2309,22 @@ check("วันที่: ค่าเริ่มต้นเป็นวั�
       '$("#isvfrom").value = $("#isvto").value = todayStr();' in _page)
 check("วันที่: ใช้เวลาเครื่อง ไม่ใช่ UTC (ไทย UTC+7 ตอนเช้าจะเพี้ยนเป็นเมื่อวาน)",
       "toISOString().slice" not in _page and "getFullYear()" in _page)
+
+# ---- แถบ "รอคุณอยู่" — บอทหยุดรอแล้วไม่มีใครเห็น = รอเก้อ (เจอจริง 2026-08-05) ----
+check("waitbar: มีแถบรอ + แถบส่งไม่สำเร็จ แยกกัน",
+      'id="waitbar"' in _page and 'id="failbar"' in _page)
+for _k, _txt in (("images", "เลือกรูป"), ("injury", "กรอกข้อมูลผู้บาดเจ็บ"),
+                 ("submit", "ตรวจ draft แล้วสั่งส่งงาน")):
+    check(f"waitbar: ข้อความของจุดหยุดชนิด {_k}",
+          f'p.kind === "{_k}"' in _page and _txt in _page)
+check("waitbar: ชนิดอื่น (fill) ใช้ชื่อช่องที่ EMCS ฟ้อง",
+      '"กรอก: " + (p.label' in _page)
+check("waitbar: ไม่มีอะไรรอ → ซ่อนแถบ ไม่กินที่",
+      "if (!rows.length){ el.hidden = true; return; }" in _page)
+check("waitbar: เขียน title แท็บด้วย (แจ้งเตือนแบบไม่มีเสียง)",
+      "document.title = waiting.length" in _page and "BASE_TITLE" in _page)
+check("waitbar: กด 'ไปที่งาน' → เลื่อนไปการ์ด + กะพริบ",
+      "scrollIntoView" in _page and 'classList.add("flash")' in _page)
 check("joblog: มี event send_failed ให้บันทึกด้วย",
       "send_failed" in _jl.EVENTS)
 

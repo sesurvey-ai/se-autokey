@@ -1157,6 +1157,23 @@ PAGE = r"""<!doctype html>
   .ev-sent{background:#dcfce7;color:#166534}
   .ev-draft{background:#fef3c7;color:#92400e}
   .ev-fail{background:#fee2e2;color:#991b1b}
+  /* แถบ "รอคุณอยู่" — โทนเดียวกับ badge สถานะ waiting ที่มีอยู่ */
+  .waitbar{border:1px solid #fdba74;background:#fff7ed;border-radius:12px;
+    padding:11px 14px;margin-bottom:12px}
+  .waitbar.fail{border-color:#fca5a5;background:#fef2f2}
+  .wb-head{font-size:14px;font-weight:700;color:#9a3412;margin-bottom:2px}
+  .waitbar.fail .wb-head{color:#991b1b}
+  .wb-row{display:flex;align-items:center;gap:10px;padding:5px 0;font-size:13px}
+  .wb-row + .wb-row{border-top:1px dashed #fed7aa}
+  .waitbar.fail .wb-row + .wb-row{border-top-color:#fecaca}
+  .wb-claim{font-weight:700;font-variant-numeric:tabular-nums}
+  .wb-what{color:var(--muted)}
+  .wb-go{margin-left:auto;flex:none;padding:5px 12px;font-size:12.5px;border-radius:8px;
+    background:var(--warn);color:#fff;box-shadow:none}
+  .waitbar.fail .wb-go{background:var(--err)}
+  @keyframes wbflash{0%,100%{box-shadow:0 0 0 0 rgba(217,119,6,0)}
+    30%{box-shadow:0 0 0 5px rgba(217,119,6,.45)}}
+  .run-card.flash{animation:wbflash 1.1s 2}
   /* กล่องตัวเลือกขั้นสูง — พับไว้ เปิดเมื่อต้องซ่อม/ทดสอบ */
   .adv{margin-top:14px;border:1px solid var(--line);border-radius:10px;background:#fbfcfe}
   .adv > summary{cursor:pointer;padding:9px 12px;font-size:13px;font-weight:600;
@@ -1355,6 +1372,10 @@ PAGE = r"""<!doctype html>
    </div>
 
    <div class="col-main">
+     <!-- แถบ "รอคุณอยู่" — บอทหยุดรอคนตอบ ถ้าไม่มีใครเห็นก็รอเก้อ (เจอจริง
+          2026-08-05: หาหน้าเว็บไม่เจอ บอทค้าง 10 นาที) ไม่มีอะไรรอ = ซ่อนทั้งแถบ -->
+     <div id="waitbar" class="waitbar" hidden></div>
+     <div id="failbar" class="waitbar fail" hidden></div>
      <h2 style="font-size:16px;margin:0 0 12px">📋 รายละเอียดการนำเข้า EMCS <span class="badge idle" id="capbadge" style="margin-left:8px;vertical-align:middle">กำลังรัน 0/4</span></h2>
      <div id="runs"></div>
      <div class="emptyruns" id="emptyruns">ยังไม่มีงาน — เลือกงานจากรายการซ้าย แล้วกด "นำเข้า"</div>
@@ -1751,12 +1772,66 @@ function renderRun(r){
   }
   updateEmpty();
 }
+// ---- แถบ "รอคุณอยู่" ----
+// บอทหยุดรอคนตอบอยู่ ถ้าไม่มีใครเห็นก็รอเก้อ — สรุปไว้บนสุดว่ามีอะไรรออยู่บ้าง
+// + เขียนลง title ของแท็บด้วย (เห็นได้แม้สลับไปแท็บอื่น โดยไม่ต้องมีเสียง)
+const BASE_TITLE = document.title;
+
+function waitWhat(r){
+  const p = r.pause || {};
+  if (p.kind === "images") return "เลือกรูป " + (p.images || []).length + " ใบ";
+  if (p.kind === "injury") return "กรอกข้อมูลผู้บาดเจ็บ " + (p.persons || []).length + " คน";
+  if (p.kind === "submit") return "ตรวจ draft แล้วสั่งส่งงาน";
+  return "กรอก: " + (p.label || "ข้อมูลที่ขาด");
+}
+function shortTitle(r){
+  const p = r.pause || {};
+  return p.kind === "images" ? "รอเลือกรูป"
+       : p.kind === "injury" ? "รอข้อมูลผู้บาดเจ็บ"
+       : p.kind === "submit" ? "รอสั่งส่งงาน" : "รอกรอกข้อมูล";
+}
+function claimOf(r){ return (r.claims || [])[0] || r.title || ("#" + r.id); }
+
+function goToCard(id){
+  const c = cards[id];
+  if (!c) return;
+  c.root.scrollIntoView({behavior: "smooth", block: "center"});
+  c.root.classList.remove("flash");
+  void c.root.offsetWidth;          // restart animation
+  c.root.classList.add("flash");
+}
+function fillBar(el, rows, head, cls){
+  if (!rows.length){ el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = '<div class="wb-head">' + head + '</div>'
+    + rows.map(x => '<div class="wb-row"><span class="wb-claim">' + escHtml(x.claim)
+        + '</span><span class="wb-what">' + escHtml(x.what) + '</span>'
+        + '<button class="run wb-go" data-go="' + x.id + '">ไปที่งาน</button></div>').join("");
+  el.querySelectorAll("[data-go]").forEach(b =>
+    b.addEventListener("click", () => goToCard(b.dataset.go)));
+}
+function updateWaitBar(runs){
+  const waiting = runs.filter(r => r.status === "waiting" && r.pause)
+    .map(r => ({id: r.id, claim: claimOf(r), what: waitWhat(r), t: shortTitle(r)}));
+  const failed = runs.filter(r => r.send_failed)
+    .map(r => ({id: r.id, claim: claimOf(r),
+                what: (r.send_failed.reason || "ส่งงานไม่สำเร็จ").slice(0, 90)}));
+  fillBar($("#waitbar"), waiting, "⏸ รอคุณอยู่ " + waiting.length + " งาน");
+  fillBar($("#failbar"), failed,
+          "❌ ส่งงานไม่สำเร็จ " + failed.length + " งาน — ต้องเข้าไปกดส่งเองบน EMCS");
+  // title แท็บ = ช่องทางแจ้งเตือนที่ไม่ส่งเสียง เห็นได้จากแถบแท็บแม้อยู่หน้าอื่น
+  document.title = waiting.length
+    ? "(" + waiting.length + ") " + waiting[0].t + " · se-autokey"
+    : (failed.length ? "(!) ส่งงานไม่สำเร็จ · se-autokey" : BASE_TITLE);
+}
+
 async function poll(){
   try{
     const {data} = await postJSON("/poll", {offsets});
     const seen = new Set();
     for (const r of data.runs){ seen.add(String(r.id)); renderRun(r); }
     for (const id of Object.keys(cards)){ if (!seen.has(String(id))) removeCard(id); }
+    updateWaitBar(data.runs);
     runBtn.disabled = data.active >= data.max;
     capBadge.textContent = "กำลังรัน " + data.active + "/" + data.max;
     capBadge.className = "badge " + (data.active > 0 ? "running" : "idle");
