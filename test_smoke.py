@@ -2286,6 +2286,13 @@ check("badge: ส่งไม่ผ่าน → เปลี่ยนป้า�
       'txt = "ส่งงานไม่สำเร็จ ❌"; }' in _page)
 check("badge: ส่งไม่ผ่าน → การ์ดไม่ปิดตัวเอง (เงื่อนไขปิดดูที่ r.sent เท่านั้น)",
       "if (r.sent && !active && !c.autoClose)" in _page)
+# แท็บ ISURVEY = งานประจำวัน ต้องเปิดมาเจอเลย (SE Survey เคยเป็น default ทั้งที่ไม่ได้ใช้)
+check("แท็บ: ISURVEY เป็นแท็บหลัก เปิดมาเห็นทันที",
+      '<button class="tab active" data-pane="isurvey">' in _page
+      and '<div class="tabpane" id="pane-isurvey">' in _page
+      and '<div class="tabpane" id="pane-sesurvey" hidden>' in _page)
+check("แท็บ: รายการ SE Survey โหลดตอนเปิดแท็บ ไม่ใช่ทุกครั้งที่เปิดหน้า",
+      "__seLoaded" in _page and "loadCasesBtn.click();   // auto-load" not in _page)
 check("joblog: มี event send_failed ให้บันทึกด้วย",
       "send_failed" in _jl.EVENTS)
 

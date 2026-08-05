@@ -1176,15 +1176,15 @@ PAGE = r"""<!doctype html>
   </header>
 
   <div class="tabs">
-    <button class="tab active" data-pane="sesurvey">📥 นำเข้า SE Survey</button>
-    <button class="tab" data-pane="isurvey">🖊 กรอกเคลม ISURVEY</button>
+    <button class="tab active" data-pane="isurvey">🖊 กรอกเคลม ISURVEY</button>
+    <button class="tab" data-pane="sesurvey">📥 นำเข้า SE Survey</button>
     <button class="tab" data-pane="jobs">📚 สมุดงาน</button>
     <button class="tab" data-pane="settings">⚙ ตั้งค่า</button>
   </div>
 
   <div class="dash">
    <div class="col-left">
-    <div class="tabpane" id="pane-sesurvey">
+    <div class="tabpane" id="pane-sesurvey" hidden>
      <div class="card">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
         <h2 style="font-size:16px;margin:0">📥 งานสำรวจ (SE Survey)</h2>
@@ -1216,7 +1216,7 @@ PAGE = r"""<!doctype html>
      </div>
     </div>
 
-    <div class="tabpane" id="pane-isurvey" hidden>
+    <div class="tabpane" id="pane-isurvey">
      <div class="card">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
         <h2 style="font-size:16px;margin:0">✅ งานจบแล้ว (ISURVEY)</h2>
@@ -2295,7 +2295,7 @@ $("#savekeyers").addEventListener("click", async () => {
 });
 
 // แท็บสลับ (client-side toggle หน้าเดียว)
-const PANES = ["sesurvey", "isurvey", "jobs", "settings"];
+const PANES = ["isurvey", "sesurvey", "jobs", "settings"];
 document.querySelectorAll(".tab").forEach(t => {
   t.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
@@ -2303,9 +2303,11 @@ document.querySelectorAll(".tab").forEach(t => {
     PANES.forEach(n => { $("#pane-" + n).hidden = (n !== p); });
     if (p === "jobs") loadJobs();
     if (p === "settings") loadKeyers();
+    // โหลดรายการเคส SE Survey ตอนเปิดแท็บครั้งแรก (เดิมโหลดตอนเปิดหน้าทุกครั้ง
+    // ซึ่งตอนนี้เป็นแท็บที่ซ่อนอยู่ = ยิง API ทิ้งเปล่าทุกครั้งที่ refresh)
+    if (p === "sesurvey" && !window.__seLoaded){ window.__seLoaded = true; loadCasesBtn.click(); }
   });
 });
-loadCasesBtn.click();   // auto-load รายการเคสตอนเปิดหน้า
 
 setInterval(poll, 1200);
 poll();
