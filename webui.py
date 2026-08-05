@@ -1271,9 +1271,8 @@ PAGE = r"""<!doctype html>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
           <input type="checkbox" id="isvall"> เลือกทั้งหมด
         </label>
-        <span id="isvcount" style="color:var(--muted);font-size:13px"></span>
-        <button class="run" id="isvchkall" style="margin-left:auto;padding:7px 12px;font-size:13px;background:#64748b">🔍 ตรวจที่เลือก</button>
-        <button class="run" id="isvrunall" style="padding:7px 12px;font-size:13px">⚡ นำเข้าที่เลือก</button>
+        <button class="run" id="isvchkall" style="margin-left:auto;padding:7px 12px;font-size:13px;background:#64748b;white-space:nowrap">🔍 ตรวจที่เลือก</button>
+        <button class="run" id="isvrunall" style="padding:7px 12px;font-size:13px;white-space:nowrap">⚡ นำเข้าที่เลือก</button>
       </div>
       <div id="isvsummary" style="color:var(--muted);font-size:12.5px;margin:2px 0 6px"></div>
       <div id="isvqueue" hidden style="margin:8px 0;padding:8px 10px;border-radius:8px;background:#0f172a11;font-size:13px"></div>
@@ -2156,7 +2155,7 @@ function renderIsvCases(){
 const isvSelected = () => [...isvBox.querySelectorAll(".isvsel:checked")];
 function updateIsvCount(){
   const n = isvSelected().length;
-  $("#isvcount").textContent = n ? ("เลือกไว้ " + n + " เรื่อง") : "";
+  // จำนวนที่เลือกอยู่บนปุ่มน้ำเงินแล้ว ('⚡ นำเข้าที่เลือก (N)') ไม่ต้องมีป้ายซ้ำ
   $("#isvrunall").textContent = n ? ("⚡ นำเข้าที่เลือก (" + n + ")") : "⚡ นำเข้าที่เลือก";
 }
 $("#isvhidesent").addEventListener("change", () => renderIsvCases());
