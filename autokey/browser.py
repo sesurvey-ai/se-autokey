@@ -675,6 +675,19 @@ def wait_for_manual_fill(field_label, reason="", select_id=None, options=None,
 
 SUBMIT_MARKER = "@@READY_SUBMIT@@"  # ต้องตรงกับค่าใน webui.py
 SENT_MARKER = "@@JOB_SENT@@"        # ต้องตรงกับค่าใน webui.py (ส่งงานสำเร็จแล้ว)
+SEND_FAIL_MARKER = "@@JOB_SEND_FAIL@@"   # ต้องตรงกับค่าใน webui.py (กดส่งแล้วไม่ผ่าน)
+
+
+def announce_send_failed(claim: str, reason: str = ""):
+    """บอกหน้าเว็บว่า "สั่งส่งงานแล้วแต่ไม่สำเร็จ"
+
+    ทำไมต้องมี: process จบด้วย exit code 0 (งานอื่นทำครบ) → การ์ดขึ้น
+    "เสร็จแล้ว ✅" ทั้งที่ส่งไม่ผ่าน = รายงานหลอกตา คนเห็นแล้วนึกว่าจบ
+    ทั้งที่ยังต้องไปกดส่งเองบน EMCS"""
+    if not _WEBUI:
+        return
+    print(SEND_FAIL_MARKER + json.dumps(
+        {"claim": claim, "reason": reason}, ensure_ascii=False), flush=True)
 
 
 def announce_sent(claim: str, esurvey: str = "", keyer: str = ""):

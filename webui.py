@@ -361,6 +361,7 @@ SUBMIT_MARKER = "@@READY_SUBMIT@@"   # ต้องตรงกับ autokey/br
 SELECT_MARKER = "@@SELECT_IMAGES@@"  # ต้องตรงกับ autokey/browser.py (เลือกรูปอัปโหลด)
 INJURY_MARKER = "@@INJURY_INPUTS@@"  # ต้องตรงกับ autokey/browser.py (กรอกข้อมูลผู้บาดเจ็บ)
 SENT_MARKER = "@@JOB_SENT@@"         # ต้องตรงกับ autokey/browser.py (ส่งงาน+verify แล้ว)
+SEND_FAIL_MARKER = "@@JOB_SEND_FAIL@@"   # ต้องตรงกับ autokey/browser.py (สั่งส่งแล้วไม่ผ่าน)
 
 # จำนวนงานที่รันพร้อมกันได้สูงสุด (กันเปิด Chrome เยอะเกินจนเครื่องค้าง)
 MAX_CONCURRENT = int(os.environ.get("SE_MAX_CONCURRENT", "4") or "4")
@@ -586,6 +587,19 @@ def _reader(proc, run_id: int):
                 marker, kind = SELECT_MARKER, "images"
             elif line.startswith(INJURY_MARKER):
                 marker, kind = INJURY_MARKER, "injury"
+            elif line.startswith(SEND_FAIL_MARKER):
+                # สั่งส่งแล้วไม่ผ่าน — process ยังจบ exit 0 (งานอื่นทำครบ) ถ้าไม่จำไว้
+                # การ์ดจะขึ้น "เสร็จแล้ว ✅" ทั้งที่ยังต้องไปกดส่งเองบน EMCS
+                try:
+                    info = json.loads(line[len(SEND_FAIL_MARKER):])
+                except Exception:
+                    info = {}
+                with _lock:
+                    r = _runs.get(run_id)
+                    if r is None:
+                        break
+                    r["send_failed"] = info or {"reason": ""}
+                continue
             elif line.startswith(SENT_MARKER):
                 # ส่งงานสำเร็จ + verify สถานะบน EMCS แล้ว → ให้การ์ดปิดตัวเองได้
                 # (ไม่ใช่จุดหยุด จึงไม่แตะ status/pause) ข้อมูลอยู่ในสมุดงานแล้ว
@@ -720,6 +734,7 @@ def poll_state(offsets: dict) -> dict:
                 "cmd": r["cmd"], "title": r["title"], "pause": r["pause"],
                 "kind": r.get("kind", "fill"), "claims": r.get("claims", []),
                 "sent": r.get("sent"),   # มีค่า = ส่งงาน+verify แล้ว (การ์ดปิดตัวเองได้)
+                "send_failed": r.get("send_failed"),   # มีค่า = สั่งส่งแล้วไม่ผ่าน
                 "lines": new, "next_offset": len(lines),
             })
         return {"runs": runs_out, "active": _active_count(), "max": MAX_CONCURRENT}
@@ -1141,6 +1156,7 @@ PAGE = r"""<!doctype html>
   .ev{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700}
   .ev-sent{background:#dcfce7;color:#166534}
   .ev-draft{background:#fef3c7;color:#92400e}
+  .ev-fail{background:#fee2e2;color:#991b1b}
   .keyrow{display:flex;align-items:center;gap:10px;margin-bottom:7px}
   .keyrow .dg{width:34px;height:34px;flex:none;border-radius:9px;background:#eef2ff;
     color:#3730a3;font-weight:800;display:flex;align-items:center;justify-content:center}
@@ -1633,7 +1649,10 @@ function renderRun(r){
   // กำลังนับถอยหลังปิดตัวเองอยู่ — ห้าม poll วาดสถานะทับ (ไม่งั้นข้อความกะพริบ
   // สลับ "ปิดใน N วิ" กับ "เสร็จแล้ว ✅" ทุกรอบ poll)
   if (c.autoClose) return;
-  const [cls,txt] = STATUS[r.status] || STATUS.idle;
+  let [cls,txt] = STATUS[r.status] || STATUS.idle;
+  // สั่งส่งงานแล้วไม่ผ่าน = ยังไม่จบจริง ห้ามขึ้น "เสร็จแล้ว ✅" หลอกตา
+  // (process จบ exit 0 เพราะงานอื่นทำครบ แต่คนยังต้องไปกดส่งเองบน EMCS)
+  if (r.send_failed && r.status === "done"){ cls = "error"; txt = "ส่งงานไม่สำเร็จ ❌"; }
   c.badgeEl.className = "badge " + cls;
   c.stEl.textContent = txt;
   const active = (r.status === "running" || r.status === "waiting");
@@ -2206,7 +2225,7 @@ loadIsvBtn.addEventListener("click", async () => {
 
 // ---------------- 📚 สมุดงาน: เลขเคลม/เลขเซอร์เวย์ที่ทำไปแล้ว ----------------
 const jobsBox = $("#jobsbox"), jobsQ = $("#jobsq");
-const EV_LABEL = {sent: "ส่งแล้ว", draft: "draft"};
+const EV_LABEL = {sent: "ส่งแล้ว", draft: "draft", send_failed: "ส่งไม่ผ่าน"};
 
 async function loadJobs(){
   jobsBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">กำลังโหลด…</div>';
@@ -2224,7 +2243,8 @@ async function loadJobs(){
       + '<th>e-Survey</th><th>คนคีย์</th><th>ประเภทงาน</th></tr></thead><tbody>'
       + rows.map(j => '<tr>'
         + '<td style="white-space:nowrap">' + escHtml(j.ts || "") + '</td>'
-        + '<td><span class="ev ev-' + (j.event === "sent" ? "sent" : "draft") + '">'
+        + '<td><span class="ev ev-' + (j.event === "sent" ? "sent"
+              : j.event === "send_failed" ? "fail" : "draft") + '">'
         + escHtml(EV_LABEL[j.event] || j.event || "") + '</span></td>'
         + '<td>' + escHtml(j.claim || "") + '</td>'
         + '<td>' + escHtml(j.invoice || "") + '</td>'

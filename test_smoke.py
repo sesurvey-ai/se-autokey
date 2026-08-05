@@ -2272,10 +2272,21 @@ try:
 finally:
     _jl.JOBS_FILE = _o
 
-# marker บอกหน้าเว็บว่าส่งงานแล้ว ต้องตรงกันสองฝั่ง
+# marker บอกหน้าเว็บว่าส่งงานแล้ว/ส่งไม่ผ่าน ต้องตรงกันสองฝั่ง
+_webui_mod = __import__("webui")
 check("sent marker: ค่าใน browser.py กับ webui.py ตรงกัน",
       _br.SENT_MARKER == _webui_mod.SENT_MARKER
-      if (_webui_mod := __import__("webui")) else False)
+      and _br.SEND_FAIL_MARKER == _webui_mod.SEND_FAIL_MARKER)
+# "สั่งส่งแล้วไม่ผ่าน" ต้องไม่ขึ้น 'เสร็จแล้ว ✅' — process จบ exit 0 เพราะงานอื่นทำครบ
+# แต่คนยังต้องไปกดส่งเองบน EMCS (เจอจริง เคลม 2026013058422 / S68426080893)
+_page = _webui_mod.PAGE
+check("badge: ส่งไม่ผ่าน → เปลี่ยนป้ายเป็น error ไม่ปล่อยขึ้นเสร็จแล้ว",
+      'if (r.send_failed && r.status === "done"){ cls = "error"; '
+      'txt = "ส่งงานไม่สำเร็จ ❌"; }' in _page)
+check("badge: ส่งไม่ผ่าน → การ์ดไม่ปิดตัวเอง (เงื่อนไขปิดดูที่ r.sent เท่านั้น)",
+      "if (r.sent && !active && !c.autoClose)" in _page)
+check("joblog: มี event send_failed ให้บันทึกด้วย",
+      "send_failed" in _jl.EVENTS)
 
 # ---- 23. webui._build_cmd: โหมดเคลม (dry = เคลมแห้ง / fresh = เคลมสด) ----
 import webui as _webui  # noqa: E402

@@ -7,7 +7,8 @@
 รูปแบบ: JSONL (บรรทัดละ 1 เหตุการณ์) — append อย่างเดียว ไม่แก้ของเดิม
 ไฟล์เสียบางบรรทัดก็ยังอ่านบรรทัดที่เหลือได้ ต่างจาก JSON ก้อนเดียวที่พังทั้งไฟล์
 
-event: 'draft' = กรอกครบเป็น draft แล้ว / 'sent' = ส่งงาน+แจ้ง ISURVEY สำเร็จ
+event: 'draft' = กรอกครบเป็น draft แล้ว · 'sent' = ส่งงาน+verify บน EMCS ผ่าน
+       'send_failed' = สั่งส่งแล้วไม่ผ่าน (ยังต้องไปกดเองบน EMCS)
 """
 import json
 from datetime import datetime
@@ -16,7 +17,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 JOBS_FILE = BASE_DIR / "runs" / "jobs.jsonl"
 
-EVENTS = ("draft", "sent")
+EVENTS = ("draft", "sent", "send_failed")
 
 
 def record(event: str, claim: str, invoice: str = "", esurvey: str = "",

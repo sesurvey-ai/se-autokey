@@ -40,6 +40,7 @@ from selenium.common.exceptions import UnexpectedAlertPresentException
 
 from autokey import emcs, isurvey, isurvey_api, joblog
 from autokey.browser import (
+    announce_send_failed,
     announce_sent,
     log,
     log_plain,
@@ -1501,6 +1502,9 @@ def _offer_submit(driver, cfg, data, esurvey: str = ""):
     ok, msg = emcs.submit_report(driver, cfg, data.claim_value)
     if not ok:
         log(f"❌ ส่งงานไม่สำเร็จ: {msg} — ตรวจบน EMCS เอง (ยังไม่แจ้ง ISURVEY)")
+        announce_send_failed(data.claim_value, msg)   # การ์ดต้องไม่ขึ้น 'เสร็จแล้ว ✅'
+        joblog.record("send_failed", data.claim_value, data.invoice_value,
+                      esurvey=esurvey, note=msg)
         return
     log(f"✅ {msg}")
     keyer = isurvey_report.keyer_for(data.claim_value)
