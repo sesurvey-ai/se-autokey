@@ -1907,6 +1907,61 @@ check("missing: แยกชื่อช่องจาก validation ของ 
 check("missing: ไม่มีข้อความ → ลิสต์ว่าง (ไม่พังตอน alert หาย)",
       emcs._missing_field_list("") == [] and emcs._parse_missing_fields("") == "")
 
+# ---- 22e-1. คลิกไม่ถึง onclick → ยิง __doPostBack ตรงแทน ----
+# สาเหตุจริงของ "กดบันทึกแล้วเงียบ" (เคลม 2026013059072): ข้อมูลครบ ด่านตรวจผ่าน
+# แต่คลิกไม่ถึง handler — บังคับให้เกิดในเทสไม่ได้ตอนรันจริง จึงจำลองที่นี่
+
+
+def _run_click_save(vf_ok, js_ok=True):
+    """คลิกไม่ติดทุกครั้ง (ปุ่มไม่เคยถูก disable) → คืน (ผล, JS ที่ยิง, จำนวนครั้งที่คลิก)"""
+    got = {"js": [], "clicks": 0}
+
+    class _Btn:
+        def click(self):
+            got["clicks"] += 1
+
+    class _NeverReady:
+        def __init__(self, *a, **k): pass
+        def until(self, *a, **k):
+            raise _sel_exc.TimeoutException()
+
+    def _exec(js, *a):
+        got["js"].append((js, a))
+        return js_ok
+
+    _o = (emcs.wait_clickable, emcs.WebDriverWait, emcs._read_validform,
+          emcs.log, emcs.time)
+    emcs.wait_clickable = lambda *a, **k: _Btn()
+    emcs.WebDriverWait = _NeverReady
+    emcs._read_validform = lambda d: {"ok": vf_ok, "err": "", "missing": [], "control": ""}
+    emcs.log = lambda *a, **k: None
+    emcs.time = _types.SimpleNamespace(sleep=lambda s: None)   # ไม่ต้องรอจริงในเทส
+    try:
+        ok = emcs._click_save_button(
+            _types.SimpleNamespace(execute_script=_exec), "btnUpdate")
+    finally:
+        (emcs.wait_clickable, emcs.WebDriverWait, emcs._read_validform,
+         emcs.log, emcs.time) = _o
+    return ok, got["js"], got["clicks"]
+
+
+_ok, _js, _n = _run_click_save(vf_ok=True)
+check("click_save: คลิกไม่ถึง handler แต่ข้อมูลผ่าน → ยิง __doPostBack ตรง",
+      _ok is True and _n == 3 and any("__doPostBack" in j for j, _ in _js),
+      f"คลิก {_n} ครั้ง / ยิง JS {len(_js)} ครั้ง")
+check("click_save: JS ที่ยิงต้องผ่าน validForm ก่อนเสมอ (ไม่ข้ามด่านตรวจ EMCS)",
+      any("validForm" in j and "__doPostBack" in j for j, _ in _js))
+check("click_save: ยิงใส่ปุ่มที่ถูกตัว",
+      any(a == ("btnUpdate",) for j, a in _js if "__doPostBack" in j))
+# ช่องบังคับขาด = กดซ้ำไม่ช่วย ต้องออกตั้งแต่รอบแรก และห้ามยิง postback ข้ามด่าน
+_ok, _js, _n = _run_click_save(vf_ok=False)
+check("click_save: ช่องบังคับขาด → ออกตั้งแต่คลิกแรก ไม่ยิง postback",
+      _ok is False and _n == 1 and not any("__doPostBack" in j for j, _ in _js),
+      f"คลิก {_n} ครั้ง")
+# validForm ปัดตกตอนยิง JS (ข้อมูลเปลี่ยนระหว่างทาง) → ต้องไม่รายงานว่าสำเร็จ
+_ok, _js, _n = _run_click_save(vf_ok=True, js_ok=False)
+check("click_save: postback ไม่ผ่าน → คืน False (ไม่แจ้งสำเร็จลวง)", _ok is False)
+
 # ---- 22e-2. ขุดชื่อช่องที่ EMCS ไม่ยอมบอก (vlidSurvey คอมเมนต์ AlertSummary ทิ้ง) ----
 
 
