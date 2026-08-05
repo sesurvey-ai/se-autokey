@@ -1252,16 +1252,20 @@ PAGE = r"""<!doctype html>
 
     <div class="tabpane" id="pane-isurvey">
      <div class="card">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
         <h2 style="font-size:16px;margin:0">✅ งานจบแล้ว (ISURVEY)</h2>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin-left:auto">
           <input type="checkbox" id="isvhidesent" checked> ซ่อนที่นำเข้าแล้ว
         </label>
-        <label class="fld" for="isvfrom" style="margin:0;font-weight:400">วันที่</label>
-        <input type="date" id="isvfrom" style="width:145px;padding:6px 8px">
-        <span style="color:var(--muted)">–</span>
-        <input type="date" id="isvto" style="width:145px;padding:6px 8px">
-        <button class="run" id="loadisvbtn" style="padding:7px 12px;font-size:13px">↻ โหลดรายการ</button>
+      </div>
+      <!-- ช่วงวันที่ + ปุ่มดึงข้อมูล อยู่แถวเดียวกัน (nowrap) — ตัดป้าย "วันที่" ทิ้ง
+           เพราะ input type=date บอกตัวเองอยู่แล้ว และย่อช่องให้พอดีคอลัมน์ซ้าย -->
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap;margin-bottom:10px">
+        <input type="date" id="isvfrom" style="flex:1;min-width:0;padding:6px 8px">
+        <span style="color:var(--muted);flex:none">–</span>
+        <input type="date" id="isvto" style="flex:1;min-width:0;padding:6px 8px">
+        <button class="run" id="loadisvbtn"
+                style="flex:none;padding:7px 12px;font-size:13px;white-space:nowrap">↻ ดึงข้อมูล</button>
       </div>
       <div id="isvtoolbar" hidden style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 2px">
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
