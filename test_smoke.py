@@ -2334,6 +2334,14 @@ check("การ์ด: regex แยก timestamp ยังทำงาน (เ�
       "ln.match(/^(\\[[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\\] )" in _page)
 check("หน้าเว็บ: ไม่มีอักขระควบคุมหลุดเข้าไฟล์ (heredoc กิน escape)",
       not any(ch in _page for ch in ("\x07", "\x08", "\x0b", "\x0c")))
+# รายการงาน: โชว์แค่เลขเคลม+เลขเซอร์เวย์ ที่เหลือโดน ellipsis ตัดจนอ่านไม่ออก → ไป tooltip
+check("รายการงาน: บรรทัดรองโชว์แค่เลขเซอร์เวย์",
+      "'<div style=\"color:var(--muted);font-size:12px\" title=\"' + escHtml(more)" in _page)
+check("รายการงาน: ทะเบียน/พนักงาน/วันเสร็จ/จังหวัด ย้ายไป tooltip",
+      "const more = [r.plate_no, r.surveyor_name," in _page)
+# JS ของหน้าเว็บต้อง parse ได้ — เคยพังจากการต่อสตริงข้ามบรรทัดผิด (+ .filter)
+check("หน้าเว็บ: ไม่มี '+ .' ที่ทำให้ JS พัง",
+      not __import__("re").search(r"\n\s*\+\s*\.", _page))
 # คำอธิบายต้องกระชับ — ก้อนยาว ๆ ไม่มีใครอ่าน
 for _m in __import__("re").finditer(r'<div class="note"[^>]*>(.*?)</div>', _page, __import__("re").S):
     _txt = " ".join(__import__("re").sub(r"<[^>]+>", "", _m.group(1)).split())

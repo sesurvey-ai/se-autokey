@@ -2116,15 +2116,18 @@ function renderIsvCases(){
         + (r.emcs_by ? ' · ' + escHtml(r.emcs_by) : '')
         + (r.emcs_date ? ' · ' + escHtml(String(r.emcs_date).slice(0,16)) : '') + '</span>'
       : '';
+    const more = [r.plate_no, r.surveyor_name,
+                  r.finish_dt ? "เสร็จงาน " + r.finish_dt : "",
+                  r.acc_province].filter(Boolean).join(" · ");
     return '<div class="caseitem" style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">'
       + '<input type="checkbox" class="isvsel" style="flex:none"' + (r.emcs_sent ? ' disabled' : '')
       +   ' data-claim="' + escHtml(r.claim_no || "") + '" data-inv="' + escHtml(r.survey_no || "") + '">'
       + '<div style="flex:1;min-width:0">'
       +   '<div style="font-weight:600;font-size:13px">' + escHtml(r.claim_no || "") + ' ' + badge + '</div>'
-      +   '<div style="color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
-      +     escHtml(r.survey_no || "") + ' · ' + escHtml(r.plate_no || "-") + ' · ' + escHtml(r.surveyor_name || "-")
-      +     ' · เสร็จงาน ' + escHtml(r.finish_dt || "-")
-      +     (r.acc_province ? ' · ' + escHtml(r.acc_province) : '')
+      // โชว์แค่เลขเคลม + เลขเซอร์เวย์ — ที่เหลือ (ทะเบียน/พนักงาน/วันเสร็จ/จังหวัด)
+      // คอลัมน์แคบจนโดนตัดด้วย ellipsis อ่านไม่ออกอยู่ดี ย้ายไปเป็น tooltip แทน
+      +   '<div style="color:var(--muted);font-size:12px" title="' + escHtml(more) + '">'
+      +     escHtml(r.survey_no || "")
       +   '</div>'
       + '</div>'
       + '<button class="run isvchk" style="padding:7px 12px;font-size:13px;white-space:nowrap;background:#64748b" '
