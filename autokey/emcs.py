@@ -1926,6 +1926,76 @@ def _read_validform(driver) -> dict:
     return res
 
 
+# ---- ตัวดักคลิก: ครั้งหน้าที่ "กดแล้วเงียบ" ต้องบอกได้ว่าเงียบตรงไหน ----
+#
+# บั๊กนี้เกิดไม่สม่ำเสมอ บังคับให้เกิดตอนรันจริงไม่ได้ (เคลม 2026013059072: บอทกด
+# ไม่ติด 2 รอบ แต่คนกดปุ่มเดียวกันบนหน้าเดียวกันผ่านทันที) — เดาสาเหตุจาก log เดิม
+# ไม่ได้เลย เพราะมันบอกได้แค่ "ปุ่มไม่เปลี่ยนสถานะ" ซึ่งเกิดได้จากหลายเหตุ
+#
+# ก่อนคลิกจึงติดตัวดัก 2 ชั้นไว้บนปุ่ม แล้วอ่านทีหลังว่าเดินไปถึงไหน:
+#   got=false                → event คลิกไม่ถึงปุ่มเลย (มีอะไรบัง/คลิกผิดจุด)
+#   got=true, ran=false      → event ถึง แต่ onclick ไม่ทำงาน (handler หลุด)
+#   ran=true, ret=false      → onclick ทำงานแล้ว "ปัดตกเอง" (validForm คืน false)
+#   ran=true, err=…          → onclick พังกลางทาง (JS error)
+#   ran=true, ret≠false      → onclick ผ่านหมด แต่ postback ไม่ออก
+# ตัวห่อคืนค่าเดิมของ onclick เสมอ → พฤติกรรมปุ่มไม่เปลี่ยน (return false ยังยกเลิก submit ได้)
+_JS_ARM_CLICK = """
+var id = arguments[0], b = document.getElementById(id);
+if (!b) return false;
+window.__seClick = {got: false, ran: false, ret: null, err: '', over: ''};
+if (!b.__seArmed) {
+  b.__seArmed = true;
+  b.addEventListener('click', function () { window.__seClick.got = true; }, true);
+  var orig = b.onclick;
+  b.onclick = function (e) {
+    window.__seClick.ran = true;
+    try { window.__seClick.ret = orig ? orig.call(this, e) : null; }
+    catch (err) { window.__seClick.err = String((err && err.message) || err); throw err; }
+    return window.__seClick.ret;
+  };
+}
+/* ใครนั่งทับจุดที่ selenium จะคลิก (กึ่งกลางปุ่ม) — เลื่อนเข้าจอก่อนวัด เพราะ
+   selenium ก็เลื่อนก่อนคลิกเหมือนกัน ไม่งั้น elementFromPoint คืน null ทุกครั้ง
+   ที่ปุ่มอยู่ใต้ fold แล้วรายงานเป็น '(นอกจอ)' หลอก */
+try { b.scrollIntoView({block: 'center'}); } catch (e) {}
+var r = b.getBoundingClientRect();
+var top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+window.__seClick.over = (top === b || (top && b.contains(top))) ? ''
+  : (top ? (top.tagName + (top.id ? '#' + top.id : '') +
+            (top.className ? '.' + String(top.className).split(' ')[0] : '')) : '(นอกจอ)');
+return true;
+"""
+
+
+def _arm_click_probe(driver, button_id: str):
+    """ติดตัวดักบนปุ่มก่อนคลิก (ล้มเหลวเงียบ — เป็นแค่เครื่องมือวินิจฉัย)"""
+    try:
+        driver.execute_script(_JS_ARM_CLICK, button_id)
+    except Exception:
+        pass
+
+
+def _read_click_probe(driver) -> str:
+    """อ่านผลตัวดัก → ข้อความอธิบายว่าคลิกไปตายตรงไหน ('' = อ่านไม่ได้/ไม่มีข้อมูล)"""
+    try:
+        c = driver.execute_script("return window.__seClick || null;")
+    except Exception:
+        return ""
+    if not isinstance(c, dict):
+        return ""
+    over = c.get("over") or ""
+    if not c.get("got"):
+        return ("event คลิกไม่ถึงปุ่มเลย"
+                + (f" — มี {over} ทับจุดที่คลิกอยู่" if over else " (ปุ่มอาจเลื่อน/ถูกวาดใหม่ระหว่างคลิก)"))
+    if not c.get("ran"):
+        return "event คลิกถึงปุ่มแล้ว แต่ onclick ของ EMCS ไม่ทำงาน (handler หลุดจาก DOM)"
+    if c.get("err"):
+        return f"onclick ของ EMCS พังกลางทาง: {str(c['err'])[:160]}"
+    if c.get("ret") is False:
+        return "onclick ทำงานแล้วปัดตกเอง (validForm() คืน false) — ข้อมูลยังไม่ครบ/ไม่ถูกรูปแบบ"
+    return "onclick ผ่านหมดแล้วแต่ postback ไม่ออก (ฝั่ง ASP.NET ไม่ยิงฟอร์ม)"
+
+
 def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
     """กดปุ่มบันทึก แล้ว **ยืนยันว่าคลิกติดจริง** — คืน True เมื่อติด
 
@@ -1949,6 +2019,7 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
         except Exception:
             pass
         btn = wait_clickable(driver, By.ID, button_id)
+        _arm_click_probe(driver, button_id)     # ไว้บอกทีหลังว่าคลิกไปตายตรงไหน
         btn.click()
         try:    # onclick ทำงาน → ปุ่มถูกปิด/เปลี่ยนข้อความทันที
             WebDriverWait(driver, 5).until(
@@ -1964,6 +2035,9 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
         #  ก) validForm() ปัดตก (ช่องบังคับขาด) → onclick return false ก่อนถึง disable
         #     กดซ้ำอีกกี่ครั้งก็ผลเดิม — ออกไปให้ผู้เรียกอ่านรายชื่อช่องที่ขาดเลย
         #  ข) คลิกไม่ถึง handler จริง ๆ (หน้า postback ค้าง) → ค่อยกดซ้ำ
+        _probe = _read_click_probe(driver)
+        if _probe:
+            log(f"   🔎 {button_id} รอบ {i}: {_probe}")
         if _read_validform(driver).get("ok") is False:
             log(f"   ⚠️ {button_id} ไม่ตอบสนองเพราะ validForm() ปัดตก (ช่องบังคับขาด) "
                 "— ไม่กดซ้ำ")

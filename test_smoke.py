@@ -1907,6 +1907,36 @@ check("missing: แยกชื่อช่องจาก validation ของ 
 check("missing: ไม่มีข้อความ → ลิสต์ว่าง (ไม่พังตอน alert หาย)",
       emcs._missing_field_list("") == [] and emcs._parse_missing_fields("") == "")
 
+# ---- 22e-0. ตัวดักคลิก: แยกให้ออกว่า "กดแล้วเงียบ" เงียบตรงไหน ----
+# verify กับหน้า EMCS จริง (เสิร์ฟ snapshot แล้วคลิกใน browser) ครบทั้ง 4 ทางแล้ว
+def _probe_says(c):
+    return emcs._read_click_probe(_types.SimpleNamespace(execute_script=lambda *a: c))
+
+
+check("probe: มีอะไรทับจุดคลิก → บอกชื่อ element ที่ทับ",
+      "DIV#fakeOverlay" in _probe_says(
+          {"got": False, "ran": False, "ret": None, "err": "", "over": "DIV#fakeOverlay"}))
+check("probe: คลิกไม่ถึงแต่ไม่มีอะไรทับ → ไม่กล่าวหาว่ามีตัวบัง",
+      "ทับ" not in _probe_says(
+          {"got": False, "ran": False, "ret": None, "err": "", "over": ""}))
+check("probe: event ถึงแต่ onclick ไม่ทำงาน → บอก handler หลุด",
+      "handler หลุด" in _probe_says(
+          {"got": True, "ran": False, "ret": None, "err": "", "over": ""}))
+check("probe: onclick พังกลางทาง → ติดข้อความ error มาด้วย",
+      "CheckRadioBtnValid" in _probe_says(
+          {"got": True, "ran": True, "ret": None,
+           "err": "CheckRadioBtnValid is not defined", "over": ""}))
+check("probe: onclick ปัดตกเอง (validForm false) → ชี้ไปที่ข้อมูลไม่ครบ",
+      "validForm" in _probe_says(
+          {"got": True, "ran": True, "ret": False, "err": "", "over": ""}))
+check("probe: onclick ผ่านหมดแต่ postback ไม่ออก",
+      "postback ไม่ออก" in _probe_says(
+          {"got": True, "ran": True, "ret": None, "err": "", "over": ""}))
+check("probe: อ่านไม่ได้ (browser ตาย/ยังไม่ติดตัวดัก) → เงียบ ไม่เดา",
+      _probe_says(None) == "" and emcs._read_click_probe(
+          _types.SimpleNamespace(execute_script=lambda *a: (_ for _ in ()).throw(
+              RuntimeError("x")))) == "")
+
 # ---- 22e-1. คลิกไม่ถึง onclick → ยิง __doPostBack ตรงแทน ----
 # สาเหตุจริงของ "กดบันทึกแล้วเงียบ" (เคลม 2026013059072): ข้อมูลครบ ด่านตรวจผ่าน
 # แต่คลิกไม่ถึง handler — บังคับให้เกิดในเทสไม่ได้ตอนรันจริง จึงจำลองที่นี่
