@@ -3571,7 +3571,21 @@ def submit_report(driver, cfg, claim, esurvey: str = ""):
     บ่ายไม่ได้เปิด เลยล้ม — snapshot ตอนจบงานเป็นหน้า Inbox ทั้ง 2 รอบ ยืนยันแล้ว)
     → ไม่เจอปุ่ม = เปิดเรื่องกลับเข้าหน้าค่าใช้จ่ายเองก่อน แล้วค่อยหาใหม่"""
     btn, label = _find_submit_button(driver)
-    if btn is None and esurvey:
+    if btn is None:
+        # ไม่รู้เลข e-Survey ก็หาเอาจาก EMCS ได้ — อย่าให้ "ความไม่รู้" มาปิดทางกู้
+        # (เกิดจริง 2026013159949: บันทึกหน้าหลักสำเร็จแต่บอทไม่ทันจับ alert ที่มีเลข
+        #  → esurvey='' → เส้นกู้ถูกข้าม → ส่งงานไม่ได้ทั้งที่เรื่องมีอยู่จริง)
+        if not esurvey:
+            try:
+                goto_mainpage(driver, cfg, "")
+                esurvey = (report_status(driver, claim) or {}).get("esurvey", "")
+                if esurvey:
+                    log(f"   ℹ️ ไม่รู้เลข e-Survey มาก่อน — ค้นจาก EMCS ได้ {esurvey}")
+            except Exception:
+                esurvey = ""
+        if not esurvey:
+            return False, ("ไม่เจอปุ่มส่งงาน และหาเลข e-Survey ของเคลมนี้ใน EMCS ไม่เจอ "
+                           "— เปิดเรื่องเองบนหน้าจอแล้วกดส่ง")
         log("   ↻ ไม่เจอปุ่มส่งงานบนหน้าปัจจุบัน — เปิดเรื่องกลับเข้าหน้าค่าใช้จ่ายก่อน")
         try:
             _open_report_billing(driver, claim, esurvey)

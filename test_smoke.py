@@ -2292,7 +2292,7 @@ check("joblog: มี event send_failed ให้บันทึกด้วย"
 # ---- 22h. สั่งส่งงาน: ห้ามสมมติว่ายังอยู่หน้าค่าใช้จ่าย ----
 # หลังบันทึกราคา บอทกลับหน้า Inbox เพื่อปลดล็อกเรื่อง → พอคนสั่งส่งทีหลัง ปุ่มไม่อยู่
 # บนหน้า (เจอจริง S68426080893) → ต้องเปิดเรื่องกลับเข้าหน้าค่าใช้จ่ายเองก่อน
-def _run_submit(found_first, esurvey="S684", reopen_ok=True):
+def _run_submit(found_first, esurvey="S684", reopen_ok=True, status_esurvey="S684"):
     """คืน (ok, msg, เปิดเรื่องกลับกี่ครั้ง)"""
     state = {"reopen": 0, "found": list(found_first)}
 
@@ -2313,7 +2313,8 @@ def _run_submit(found_first, esurvey="S684", reopen_ok=True):
     emcs.log = lambda *a, **k: None
     emcs.accept_alert = lambda *a, **k: ""
     emcs.goto_mainpage = lambda *a, **k: ""
-    emcs.report_status = lambda d, c: {"status": "ประกันตรวจสอบรายงาน"}
+    emcs.report_status = lambda d, c: {"status": "ประกันตรวจสอบรายงาน",
+                                       "esurvey": status_esurvey}
     emcs.time = _types.SimpleNamespace(sleep=lambda s: None)
     try:
         drv = _types.SimpleNamespace(find_elements=lambda *a, **k: [])
@@ -2335,8 +2336,14 @@ check("submit: เปิดกลับแล้วยังไม่เจอ�
 _ok, _msg, _n = _run_submit([False], reopen_ok=False)
 check("submit: เปิดเรื่องกลับไม่ได้ → บอกให้เปิดเองบนหน้าจอ",
       _ok is False and "เปิดเองบนหน้าจอ" in _msg)
-_ok, _msg, _n = _run_submit([False], esurvey="")
-check("submit: ไม่รู้เลข e-Survey → ไม่เดา ไม่เปิดมั่ว", _ok is False and _n == 0)
+# ไม่รู้เลข e-Survey (บันทึกสำเร็จแต่ไม่ทันจับ alert ที่มีเลข — เกิดจริง 2026013159949)
+# ต้องค้นจาก EMCS เอง แล้วเปิดเรื่องกลับ ไม่ใช่ยอมแพ้
+_ok, _msg, _n = _run_submit([False, True], esurvey="", status_esurvey="S68426099999")
+check("submit: ไม่รู้เลข e-Survey → ค้นจาก EMCS แล้วเปิดเรื่องกลับ ส่งได้",
+      _ok is True and _n == 1, f"reopen {_n} / {_msg[:40]}")
+_ok, _msg, _n = _run_submit([False], esurvey="", status_esurvey="")
+check("submit: ค้นเลข e-Survey ไม่เจอ → บอกให้เปิดเองบนหน้าจอ ไม่เดา",
+      _ok is False and _n == 0 and "หาเลข e-Survey" in _msg)
 
 # --report-isurvey (ใช้ตอนคนกดส่งเองบน EMCS) เคยทำแค่แจ้ง ISURVEY → งานไม่มี row
 # ใน se-key และไม่โผล่ในสมุดงาน (เจอจริง 2026013058422) — ต้องครบ 3 อย่างเหมือนปุ่มบนเว็บ
