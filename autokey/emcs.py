@@ -461,9 +461,11 @@ def _save_section(driver, button_id: str, name: str, max_rounds: int = 5) -> boo
         if "กรุณา" not in (alert_text or ""):
             log(f"EMCS: บันทึก{name}สำเร็จ ✓")
             return True
-        missing = _parse_missing_fields(alert_text)
+        fields = _missing_field_list(alert_text)
+        missing = ", ".join(fields)
         label = f"ข้อมูล{name}ที่ยังขาด" + (f": {missing}" if missing else "")
-        if wait_for_manual_fill(label, reason=(alert_text or "").strip()):
+        if wait_for_manual_fill(label, reason=(alert_text or "").strip(),
+                                focus_labels=fields, driver=driver):
             log(f"   ↻ ลองบันทึก{name}ใหม่หลังผู้ใช้กรอกข้อมูล")
             continue
         log(f"   ⚠️ {name}ยังไม่ถูกบันทึก (ช่องบังคับขาด — ISURVEY ไม่มีข้อมูล) → "
@@ -1384,7 +1386,7 @@ def _select_car_brand(driver, car_brand, label="ยี่ห้อรถ"):
     else:
         wait_for_manual_fill(
             label, "ตัวเลือกยี่ห้อยังไม่โหลด (postback ประเภทรถ ไม่สมบูรณ์)",
-            select_id="ddlCMFG")
+            select_id="ddlCMFG", driver=driver)
 
 
 def fill_car(driver, data: ClaimData):
@@ -1484,7 +1486,8 @@ def fill_driver(driver, data: ClaimData):
     else:
         log("   ⚠️ ไม่ทราบเพศผู้ขับขี่ (ISURVEY ว่าง + ชื่อไม่มีคำนำหน้า)")
         wait_for_manual_fill("เพศผู้ขับขี่ (ชาย/หญิง)",
-                             "ISURVEY ไม่มีเพศ + แยกจากคำนำหน้าไม่ได้ — ต้องเลือกเอง")
+                             "ISURVEY ไม่มีเพศ + แยกจากคำนำหน้าไม่ได้ — ต้องเลือกเอง",
+                             focus_ids=["rdoGender_0", "rdoGender_1"], driver=driver)
 
     # คำนำหน้าผู้ขับขี่ (บังคับ) — 'คุณ' คือค่ากลางตอนรู้แค่ว่าเป็นผู้หญิง
     # (แยก นาง/นางสาว ไม่ได้) ปล่อยผ่านเป็น draft ให้หัวหน้าแก้ตอนตรวจ
@@ -1498,7 +1501,8 @@ def fill_driver(driver, data: ClaimData):
         log("   ⚠️ หาคำนำหน้าผู้ขับขี่ไม่ได้ (ไม่มีคำนำหน้าในชื่อ + ไม่รู้เพศ)")
         wait_for_manual_fill(
             "คำนำหน้าผู้ขับขี่",
-            "ต้นทางไม่มีคำนำหน้า และไม่มีเพศให้อนุมาน — เลือกเอง")
+            "ต้นทางไม่มีคำนำหน้า และไม่มีเพศให้อนุมาน — เลือกเอง",
+            select_id="ddlDri_Title_ID", driver=driver)
 
     # ตัดคำนำหน้าที่ติดมากับชื่อ (เช่น 'น.ส.ปฐมาวดี'→'ปฐมาวดี') — ไม่งั้นชื่อจะมีคำนำหน้าซ้ำ
     _t, dri_first, dri_last = split_thai_name(
@@ -1663,7 +1667,9 @@ def fill_verdict(driver, data: ClaimData):
         if _tie:
             log(f"   ⚠️ ผลคดี '{_res}' คลุมเครือ (คะแนนเท่ากับ {_tie}) — ไม่เดา ข้ามให้คนเลือกเอง")
             wait_for_manual_fill("ผลคดี (ฝ่ายประมาท)",
-                                 f"ข้อความ '{_res}' ตรงได้หลายตัวเลือก เลือกเองบนหน้า EMCS")
+                                 f"ข้อความ '{_res}' ตรงได้หลายตัวเลือก เลือกเองบนหน้า EMCS",
+                                 focus_ids=sorted(set(CAUSE_RADIO.values())),
+                                 driver=driver)
             return
     log(f"   ✓ ผลคดี: '{_res}' → '{label}' (score {score:.0f})")
     driver.find_element(By.ID, CAUSE_RADIO[label]).click()
@@ -1826,12 +1832,17 @@ def _refill_missing_fields(driver, data: ClaimData, alert_text: str) -> bool:
     return fixed
 
 
+def _missing_field_list(alert_text: str) -> list:
+    """ชื่อช่องที่ระบบฟ้อง (บรรทัดแบบ '1. สถานที่เกิดเหตุ') — ใช้ทั้งขึ้น log
+    และส่งให้ browser ไปตีกรอบแดงช่องนั้นบนหน้า EMCS"""
+    if not alert_text:
+        return []
+    return [s.strip() for s in re.findall(r"\d+\.\s*(.+)", alert_text) if s.strip()]
+
+
 def _parse_missing_fields(alert_text: str) -> str:
     """ดึงรายชื่อช่องที่ระบบฟ้องจากข้อความ validation (บรรทัดแบบ '1. สถานที่เกิดเหตุ')"""
-    if not alert_text:
-        return ""
-    items = re.findall(r"\d+\.\s*(.+)", alert_text)
-    return ", ".join(s.strip() for s in items if s.strip())
+    return ", ".join(_missing_field_list(alert_text))
 
 
 def verify_car_saved(driver, data: ClaimData, save_fn=None) -> bool:
@@ -2070,9 +2081,11 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
             continue
 
         # ซ่อมอัตโนมัติไม่ได้ (เช่น text field ว่าง) → หยุดรอให้คนกรอกช่องที่ฟ้องเอง
-        missing = _parse_missing_fields(alert_text)
+        fields = _missing_field_list(alert_text)
+        missing = ", ".join(fields)
         label = "ข้อมูลหน้าหลักที่ยังขาด" + (f": {missing}" if missing else "")
-        if wait_for_manual_fill(label, reason=(alert_text or "").strip()):
+        if wait_for_manual_fill(label, reason=(alert_text or "").strip(),
+                                focus_labels=fields, driver=driver):
             log("   ↻ ลองบันทึกหน้าหลักใหม่หลังผู้ใช้กรอกข้อมูล")
             continue
 
@@ -3142,7 +3155,8 @@ def fill_billing(driver, data: ClaimData, full_billing: bool = True,
             log(f"   ⚠️ เข้าหน้าค่าใช้จ่ายไม่ได้ (EMCS gate): {alert_text[:140]}")
             if wait_for_manual_fill(
                     "ข้อมูลที่ EMCS บังคับก่อนเข้าหน้าค่าใช้จ่าย (เช่น เลขทะเบียนผู้บาดเจ็บ)",
-                    reason=alert_text):
+                    reason=alert_text, focus_labels=_missing_field_list(alert_text),
+                    driver=driver):
                 click_retry(driver, By.ID, "wuMenuPage1_imbSpend")
             else:
                 log("   → ข้ามหน้าค่าใช้จ่าย — เข้า/กรอกเองภายหลัง")

@@ -1872,6 +1872,87 @@ _pick, _ask = _run_fuzzy([("-- ระบุ --", "0"), ("TRUMPCHI", "1"), ("MG",
 check("guard: min_score=90 กันยี่ห้อเกาะผิด (TRIUMPH ไม่กลายเป็น TRUMPCHI)",
       _pick is None and _ask)
 
+# ---- 22e. ชี้ช่องที่ต้องแก้บนหน้า EMCS (ตีกรอบแดง/ย้อมเหลือง) ----
+# ฟอร์ม EMCS ยาวมาก คนต้องรู้ว่า "ช่องไหน" ไม่ใช่แค่ว่า "มีช่องขาด"
+check("missing: แยกชื่อช่องจาก validation ของ EMCS ได้",
+      emcs._missing_field_list("กรุณาใส่ข้อมูลให้ครบ\n1. สถานที่เกิดเหตุ\n2. ประเภทรถ")
+      == ["สถานที่เกิดเหตุ", "ประเภทรถ"])
+check("missing: ไม่มีข้อความ → ลิสต์ว่าง (ไม่พังตอน alert หาย)",
+      emcs._missing_field_list("") == [] and emcs._parse_missing_fields("") == "")
+
+
+def _run_pause(**kw):
+    """เรียก wait_for_manual_fill จริง (stdin=EOF) → คืน (payload ที่ยิงเข้าหน้า, เคลียร์ไหม)"""
+    sent, cleared = [], []
+    _o = (_br._safe_js, _br.bring_to_front, _br._ACTIVE_DRIVER, _br.log, _br.log_plain)
+    _br._safe_js = lambda drv, js, *a: (
+        sent.append(a[0]) if js is _br._HL_SHOW_JS else cleared.append(js), 1)[1]
+    _br.bring_to_front = lambda drv: sent.append("FRONT")
+    _br._ACTIVE_DRIVER = object()
+    _br.log = _br.log_plain = lambda *a, **k: None
+    _si = sys.stdin
+    sys.stdin = _io.StringIO("")         # EOF = ไม่มีคนเฝ้า
+    try:
+        _br.wait_for_manual_fill("ประเภทรถคู่กรณี 1", "ISURVEY ไม่มีข้อมูล", **kw)
+    finally:
+        sys.stdin = _si
+        (_br._safe_js, _br.bring_to_front, _br._ACTIVE_DRIVER, _br.log,
+         _br.log_plain) = _o
+    return sent, bool(cleared)
+
+
+_sent, _cleared = _run_pause(select_id="ddlCType")
+check("pause: ชี้ช่องที่รอ (select_id) + ดึง Chrome ขึ้นหน้า",
+      _sent[0]["ids"] == ["ddlCType"] and "FRONT" in _sent)
+check("pause: ตอบแล้วเก็บกรอบแดง/แถบแจ้งเตือนทิ้ง (ไม่ค้างข้ามช่อง)", _cleared)
+_sent, _ = _run_pause(focus_labels=["สถานที่เกิดเหตุ", "ประเภทรถ"])
+check("pause: ไม่รู้ id → ส่ง 'ชื่อช่อง' ที่ EMCS ฟ้อง ไปหาช่องจากป้ายในฟอร์ม",
+      _sent[0]["labels"] == ["สถานที่เกิดเหตุ", "ประเภทรถ"] and _sent[0]["ids"] == [])
+# มี dropdown ให้เลือกบนหน้าเว็บแล้ว = คนกำลังจะกดที่หน้าเว็บ ห้ามแย่งโฟกัสไป Chrome
+_wo = _br._WEBUI
+_br._WEBUI = True
+try:
+    _sent, _ = _run_pause(select_id="ddlCType", options=["เก๋งเอเชีย", "กระบะ"])
+finally:
+    _br._WEBUI = _wo
+check("pause: ตอบได้บนหน้าเว็บ → ยังตีกรอบแดงให้ แต่ไม่ดึง Chrome มาแย่งโฟกัส",
+      _sent[0]["ids"] == ["ddlCType"] and "FRONT" not in _sent)
+# browser ปิดไปแล้ว/หน้าเปลี่ยน = ยิง JS ไม่ได้ ต้องไม่ทำให้การหยุดรอพัง
+_bad = _types.SimpleNamespace(
+    execute_script=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no session")))
+check("pause: browser ปิดแล้ว → ไฮไลต์ล้มเหลวเงียบ ไม่ลาก error ออกมา",
+      _br._safe_js(_bad, "return 1") is None
+      and _br.highlight_wait(_bad, "ddlX", "x") == 0)
+
+
+def _run_fuzzy_marks(opts, value, warn):
+    """คืนรายการช่องที่ถูกย้อมเหลือง 'ให้คนตรวจ' หลังเรียก fuzzy_select"""
+    fake, marks = _FSel(opts), []
+    _o = (_br.Select, _br.wait_present, _br._current_select_text, _br.mark_check,
+          _br.FUZZY_WARN_SCORE, _br.log)
+    _br.Select = lambda _e: fake
+    _br.wait_present = lambda *a, **k: None
+    _br._current_select_text = lambda *a, **k: fake.picked or ""
+    _br.mark_check = lambda drv, eid, note="": marks.append((eid, note))
+    _br.FUZZY_WARN_SCORE = warn
+    _br.log = lambda *a, **k: None
+    try:
+        _br.fuzzy_select(_types.SimpleNamespace(find_element=lambda *a, **k: None),
+                         "ddlX", value, wait_options=False)
+    finally:
+        (_br.Select, _br.wait_present, _br._current_select_text, _br.mark_check,
+         _br.FUZZY_WARN_SCORE, _br.log) = _o
+    return fake.picked, marks
+
+
+# ค่าไม่ตรงเป๊ะ (ตรงเป๊ะจะ return ก่อนถึงเส้น fuzzy) + warn=101 = บังคับเข้าเส้น "คะแนนต่ำ"
+_p, _m = _run_fuzzy_marks(_DISTRICTS, "วัฒนา", 101)
+check("mark: เดาแบบคะแนนต่ำ → เลือกให้ แต่ย้อมเหลืองไว้ให้คนตรวจ",
+      _p == "เขตวัฒนา" and len(_m) == 1 and _m[0][0] == "ddlX" and "ตรวจ" in _m[0][1])
+_p, _m = _run_fuzzy_marks(_DISTRICTS, "วัฒนา", 60)
+check("mark: คะแนนสูง (มั่นใจ) → ไม่ย้อม ไม่งั้นทั้งหน้าเหลืองหมดจนไม่มีความหมาย",
+      _p == "เขตวัฒนา" and _m == [])
+
 # ---- 23. webui._build_cmd: โหมดเคลม (dry = เคลมแห้ง / fresh = เคลมสด) ----
 import webui as _webui  # noqa: E402
 _cmd, _e = _webui._build_cmd({"claims": "2026013041465", "claimmode": "dry"})

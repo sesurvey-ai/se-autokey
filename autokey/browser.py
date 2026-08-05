@@ -139,7 +139,9 @@ def make_driver(detach: bool = True, download_dir=None) -> webdriver.Chrome:
     options.add_argument("--start-maximized")
     if detach:
         options.add_experimental_option("detach", True)
-    return webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(options=options)
+    set_active_driver(driver)
+    return driver
 
 
 # ---------------------------------------------------------------- รอ element
@@ -405,6 +407,180 @@ def today_buddhist() -> str:
     return f"{t:%d}/{t:%m}/{t.year + 543}"
 
 
+# ------------------------------------------- ชี้ช่องที่ต้องแก้บนหน้า EMCS (Chrome)
+#
+# เวลาบอทหยุดรอ คนต้องไล่หาเองว่า "ช่องไหน" ในฟอร์มยาว ๆ ของ EMCS — ยิง CSS/JS
+# เข้าไปตีกรอบแดงกระพริบที่ช่องนั้น + เลื่อนจอไปหา + ขึ้นแถบบอกเหตุผลค้างไว้
+# (alert ของ EMCS กดตกลงแล้วหาย อ่านย้อนไม่ได้) + ดึงหน้าต่าง Chrome ขึ้นหน้า
+#
+# ⚠️ ทุกอย่างหายเมื่อหน้า postback (ASP.NET โหลดหน้าใหม่) — ตั้งใจให้เป็นแบบนั้น
+# ไฮไลต์คือ "ป้ายชั่วคราว" ไม่ใช่ state ที่ต้องรักษา ห้ามให้ความล้มเหลวของมัน
+# ทำให้การหยุดรอพัง (เรียกผ่าน _safe_js ที่กลืน error ทุกชนิด)
+
+_ACTIVE_DRIVER = None      # Chrome ของ process นี้ (1 process = 1 browser เสมอ)
+
+
+def set_active_driver(driver):
+    """จำ driver ไว้ ให้ wait_for_manual_fill ชี้ช่องบนหน้า EMCS ได้
+    โดยไม่ต้องส่ง driver ผ่านทุกชั้นที่เรียกมัน"""
+    global _ACTIVE_DRIVER
+    _ACTIVE_DRIVER = driver
+
+
+_HL_CSS = """
+@keyframes se-hl-pulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.7)}
+70%{box-shadow:0 0 0 12px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
+.se-hl-target{outline:3px solid #dc2626!important;outline-offset:1px;
+background:#fff1f2!important;animation:se-hl-pulse 1.5s infinite}
+.se-hl-check{outline:2px dashed #d97706!important;background:#fffbeb!important}
+#se-hl-bar{position:fixed;right:18px;bottom:18px;z-index:2147483647;max-width:400px;
+background:#dc2626;color:#fff;border-radius:10px;padding:12px 38px 12px 14px;
+font:600 14px/1.45 "Segoe UI",Tahoma,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+#se-hl-bar small{display:block;font-weight:400;font-size:12.5px;opacity:.93;margin-top:4px}
+#se-hl-bar .se-hl-tip{opacity:.8;font-style:italic}
+#se-hl-x{position:absolute;top:6px;right:8px;background:none;border:0;color:#fff;
+font-size:16px;line-height:1;cursor:pointer;opacity:.75}
+"""
+
+_HL_SHOW_JS = r"""
+var q = arguments[0], css = arguments[1], d = document, w = window;
+if (!d.getElementById('se-hl-css')) {
+  var s = d.createElement('style'); s.id = 'se-hl-css'; s.textContent = css;
+  (d.head || d.documentElement).appendChild(s);
+}
+Array.prototype.forEach.call(d.querySelectorAll('.se-hl-target'), function (e) {
+  e.classList.remove('se-hl-target');
+});
+var first = null, hit = 0;
+(q.ids || []).forEach(function (id) {
+  var e = d.getElementById(id);
+  if (!e) return;
+  e.classList.add('se-hl-target');
+  if (!first) first = e;
+  hit++;
+});
+/* ไม่รู้ id (validation ของ EMCS ฟ้องมาเป็น "ชื่อช่อง") — หาจากป้ายในฟอร์ม:
+   cell ที่ข้อความ "เกือบเท่ากับ" ชื่อช่องพอดี = ป้าย ไม่ใช่กล่องครอบทั้งหน้า
+   แล้วไล่ไปหา input/select ตัวแรกในช่องถัดไป (ฟอร์ม EMCS เป็นตาราง) */
+(q.labels || []).forEach(function (t) {
+  t = (t || '').replace(/\s+/g, ' ').trim();
+  if (t.length < 3) return;
+  var cells = d.querySelectorAll('td,th,label,span'), i, c, txt, f, sib;
+  for (i = 0; i < cells.length; i++) {
+    c = cells[i];
+    if (c.querySelector('input,select,textarea')) continue;
+    txt = (c.textContent || '').replace(/\s+/g, ' ').trim();
+    if (txt.indexOf(t) < 0 || txt.length > t.length + 25) continue;
+    f = null; sib = c.nextElementSibling;
+    while (sib && !f) {
+      f = sib.querySelector('input:not([type=hidden]),select,textarea');
+      sib = sib.nextElementSibling;
+    }
+    if (!f && c.closest('tr')) {
+      f = c.closest('tr').querySelector('input:not([type=hidden]),select,textarea');
+    }
+    if (f) { f.classList.add('se-hl-target'); if (!first) first = f; hit++; }
+    break;
+  }
+});
+var bar = d.getElementById('se-hl-bar');
+if (!bar) { bar = d.createElement('div'); bar.id = 'se-hl-bar'; d.body.appendChild(bar); }
+bar.textContent = '';
+var x = d.createElement('button');
+x.id = 'se-hl-x'; x.textContent = '✕';
+x.onclick = function () { bar.remove(); };
+bar.appendChild(x);
+var h = d.createElement('div');
+h.textContent = '⏸️ ' + (q.title || '');   /* ⏸️ */
+bar.appendChild(h);
+[q.reason, q.tip].forEach(function (t, i) {
+  if (!t) return;
+  var sm = d.createElement('small');
+  if (i) sm.className = 'se-hl-tip';
+  sm.textContent = t;
+  bar.appendChild(sm);
+});
+if (first) first.scrollIntoView({block: 'center', behavior: 'smooth'});
+if (!w.__seHlTitle) w.__seHlTitle = d.title;
+d.title = '⏸️ ' + (q.title || 'se-autokey');
+return hit;
+"""
+
+_HL_CLEAR_JS = r"""
+var d = document, w = window, bar = d.getElementById('se-hl-bar');
+if (bar) bar.remove();
+Array.prototype.forEach.call(d.querySelectorAll('.se-hl-target'), function (e) {
+  e.classList.remove('se-hl-target');
+});
+if (w.__seHlTitle) { d.title = w.__seHlTitle; w.__seHlTitle = null; }
+"""
+
+_HL_MARK_JS = r"""
+var d = document, e = d.getElementById(arguments[0]), css = arguments[2];
+if (!d.getElementById('se-hl-css')) {
+  var s = d.createElement('style'); s.id = 'se-hl-css'; s.textContent = css;
+  (d.head || d.documentElement).appendChild(s);
+}
+if (!e) return false;
+e.classList.add('se-hl-check');
+if (arguments[1]) e.title = arguments[1];
+return true;
+"""
+
+
+def _safe_js(driver, script, *args):
+    """ยิง JS ตกแต่งหน้า — ล้มเหลวเงียบเสมอ (browser ปิด/มี alert ค้าง/หน้าเปลี่ยน)
+    การชี้ช่องเป็นของแถม ห้ามทำให้งานหลักพัง"""
+    if driver is None:
+        return None
+    try:
+        return driver.execute_script(script, *args)
+    except Exception:
+        return None
+
+
+def bring_to_front(driver):
+    """ดึงหน้าต่าง Chrome ขึ้นมาหน้าสุด — คนอาจกำลังดูหน้าเว็บ webui อยู่"""
+    if driver is None:
+        return
+    try:
+        driver.execute_cdp_cmd("Page.bringToFront", {})
+    except Exception:
+        pass
+
+
+def highlight_wait(driver, ids, title, reason="", tip="", raise_window=True,
+                   labels=None):
+    """ตีกรอบแดง + เลื่อนจอไปหาช่องที่บอทรออยู่ พร้อมแถบบอกเหตุผลค้างไว้
+
+    ids    = id ของช่อง (รู้แน่ ๆ ว่าช่องไหน)
+    labels = "ชื่อช่อง" ที่ EMCS ฟ้องมาใน validation — หาช่องจากป้ายในฟอร์มให้
+    raise_window=False เมื่อคนตอบได้บนหน้า webui อยู่แล้ว (มี dropdown ให้เลือก) —
+    ดึง Chrome ขึ้นหน้าตอนนั้นคือแย่งโฟกัสจากหน้าที่เขากำลังจะกด
+    คืนจำนวนช่องที่ชี้ได้ (0 = ขึ้นแค่แถบแจ้งเตือน)"""
+    ids = [i for i in ([ids] if isinstance(ids, str) else (ids or [])) if i]
+    labels = [str(s).strip() for s in ([labels] if isinstance(labels, str)
+                                       else (labels or [])) if str(s).strip()]
+    hit = _safe_js(driver, _HL_SHOW_JS,
+                   {"ids": ids, "labels": labels, "title": title,
+                    "reason": reason, "tip": tip},
+                   _HL_CSS)
+    if raise_window:
+        bring_to_front(driver)
+    return int(hit or 0)
+
+
+def highlight_clear(driver):
+    """เก็บกรอบแดง + แถบแจ้งเตือน (ย้อมเหลือง se-hl-check ยังอยู่ ให้คนตรวจต่อ)"""
+    _safe_js(driver, _HL_CLEAR_JS)
+
+
+def mark_check(driver, elem_id, note=""):
+    """ย้อมเหลืองช่องที่ "บอทกรอกให้แล้วแต่ไม่มั่นใจ" — ค้างไว้จนกว่าหน้าจะ postback
+    ให้คนตรวจกวาดตาเห็นได้ทันทีว่าต้องดูช่องไหนก่อนกดส่งงาน"""
+    return bool(_safe_js(driver, _HL_MARK_JS, elem_id, note, _HL_CSS))
+
+
 # ----------------------------------------------- หยุดรอให้คนกรอกข้อมูลเอง
 
 def _parse_choice(line: str, options) -> str:
@@ -425,7 +601,8 @@ def _parse_choice(line: str, options) -> str:
     return val if (not options or val in options) else ""
 
 
-def wait_for_manual_fill(field_label, reason="", select_id=None, options=None):
+def wait_for_manual_fill(field_label, reason="", select_id=None, options=None,
+                         focus_ids=None, focus_labels=None, driver=None):
     """หยุดรอให้ผู้ใช้กรอก/เลือกข้อมูลช่องนี้ แล้วค่อยทำงานต่อ
 
     ใช้เมื่อข้อมูลจาก ISURVEY ไม่ครบ หรือกรอกอัตโนมัติไม่ได้ — ดีกว่าปล่อย
@@ -435,6 +612,10 @@ def wait_for_manual_fill(field_label, reason="", select_id=None, options=None):
       ไม่ต้องสลับไปหน้าต่าง EMCS (ผู้เรียกเอาค่าที่คืนไปเลือกลงช่องเอง)
     - หน้าเว็บ ไม่มี options: โชว์ปุ่ม 'ดำเนินการต่อ' เฉย ๆ (คนไปกรอกบน EMCS)
     - console จริง: ผู้ใช้กด Enter ที่หน้าต่างเอง
+
+    ทุกกรณี: ตีกรอบแดงกระพริบให้ช่องนั้นบนหน้า EMCS + ขึ้นแถบบอกเหตุผลค้างไว้
+    (focus_ids = id ช่องที่จะชี้; ไม่ส่งมาจะใช้ select_id) — จะได้ไม่ต้องไล่หาเอง
+    ว่าฟอร์มยาว ๆ นี้ติดตรงไหน
     - ไม่มี console/stdin ปิด (รันแบบไม่มีคนเฝ้า): readline คืน "" ทันที →
       ไปต่อ ไม่ค้าง (อาศัย EOF ของ stdin ไม่พึ่ง isatty ที่บน Windows เชื่อถือไม่ได้)
     ไม่ขึ้นกับ -y (นี่คือการหยุดเพราะข้อมูลไม่ครบ ไม่ใช่ถามยืนยัน)
@@ -446,17 +627,29 @@ def wait_for_manual_fill(field_label, reason="", select_id=None, options=None):
     (str ที่ไม่ว่างเป็น truthy ผู้เรียกเดิมที่เช็ค `if wait_for_manual_fill(...)` ใช้ได้เหมือนเดิม)
     """
     options = [o for o in (options or []) if str(o).strip()]
+    on_web = bool(_WEBUI and options)     # ตอบบนหน้าเว็บได้ ไม่ต้องไปแตะ EMCS
     log_plain("")
     log(f"⏸️  ต้องกรอกข้อมูลเอง: {field_label}")
     if reason:
         log(f"     สาเหตุ: {reason}")
-    if _WEBUI and options:
+    if on_web:
         log(f"     → เลือกค่าบนหน้าเว็บได้เลย ({len(options)} ตัวเลือก) "
             "ไม่ต้องสลับไปหน้าต่าง EMCS")
     else:
         log("     → กรอก/เลือกข้อมูลช่องนี้ในหน้าต่าง EMCS (Chrome) ให้เรียบร้อย แล้ว"
             + ("กดปุ่ม 'ดำเนินการต่อ' บนหน้าเว็บ"
                if _WEBUI else "กลับมากด Enter ที่หน้าต่างนี้") + " เพื่อทำงานต่อ")
+    # ชี้ช่องบนหน้า EMCS ให้เห็นด้วยตา (ไม่ขัดจังหวะการทำงาน ถ้าทำไม่ได้ก็ข้าม)
+    drv = driver if driver is not None else _ACTIVE_DRIVER
+    ids = focus_ids if focus_ids is not None else select_id
+    hit = highlight_wait(
+        drv, ids, field_label, reason, labels=focus_labels,
+        tip=("เลือกค่าบนหน้าเว็บ se-autokey ได้เลย" if on_web
+             else "กรอกช่องนี้ แล้วสั่ง 'ดำเนินการต่อ' ที่หน้าเว็บ se-autokey"
+             if _WEBUI else "กรอกช่องนี้ แล้วกด Enter ที่หน้าต่างคำสั่ง"),
+        raise_window=not on_web)
+    if hit:
+        log(f"     🔴 ตีกรอบแดงไว้บนหน้า EMCS แล้ว {hit} ช่อง (เลื่อนจอไปให้เห็นด้วย)")
     if _WEBUI:
         # marker บรรทัดเดียว ให้ webui จับไปโชว์กล่องแจ้งเตือน + dropdown (ถ้ามี)
         print(MANUAL_MARKER + json.dumps(
@@ -467,6 +660,7 @@ def wait_for_manual_fill(field_label, reason="", select_id=None, options=None):
         line = sys.stdin.readline()   # block จนได้ Enter (console)/payload (webui); "" ถ้า EOF
     except Exception:
         line = ""
+    highlight_clear(drv)              # ตอบแล้ว เก็บกรอบแดง+แถบแจ้งเตือน
     if line == "":
         # stdin ปิด/EOF = ไม่มีคนเฝ้า → ไปต่อ ไม่ค้าง (ช่องนี้ต้องกรอกเองภายหลัง)
         log("     (ไม่มีการตอบกลับจาก stdin — ไปต่อ ตรวจ/กรอกช่องนี้เองภายหลัง)")
@@ -757,10 +951,13 @@ def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
 
             mark = "⚠️" if score < FUZZY_WARN_SCORE else "✓"
             log(f"   {mark} {name}: '{value}' → '{text}' (score {score:.0f})")
+            Select(driver.find_element(By.ID, select_id)).select_by_visible_text(text)
             if score < FUZZY_WARN_SCORE:
                 log(f"     ** คะแนนต่ำ ควรตรวจสอบด้วยตาก่อนบันทึก **")
-
-            Select(driver.find_element(By.ID, select_id)).select_by_visible_text(text)
+                # ย้อมเหลืองค้างไว้บนหน้า EMCS — คนตรวจจะได้เห็นว่า "ช่องไหน"
+                # ที่บอทเดาแบบไม่มั่นใจ ไม่ต้องไล่อ่าน log ย้อนหลัง
+                mark_check(driver, select_id,
+                           f"se-autokey เดาจาก '{value}' (คะแนน {score:.0f}) — ตรวจก่อนส่งงาน")
             return text, score
         except StaleElementReferenceException as e:
             last_err = e
@@ -798,7 +995,8 @@ def _manual_pick(driver, select_id, name, options, placeholder, reason):
         options = _live_options(driver, select_id)
     picks = [o for o in (options or [])
              if o and o != placeholder and not _is_placeholder_option(o)]
-    ans = wait_for_manual_fill(name, reason, select_id=select_id, options=picks)
+    ans = wait_for_manual_fill(name, reason, select_id=select_id, options=picks,
+                               driver=driver)
     if isinstance(ans, str) and ans:
         try:
             Select(driver.find_element(By.ID, select_id)).select_by_visible_text(ans)
