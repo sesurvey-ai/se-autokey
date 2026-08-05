@@ -1282,8 +1282,8 @@ PAGE = r"""<!doctype html>
         <b>“✓ นำเข้าแล้ว”</b> อ่านจาก ISURVEY เอง
       </div>
 
-      <h2 style="font-size:16px;margin:0 0 12px">🖊 กรอกเคลมอัตโนมัติ (ISURVEY)</h2>
-      <label class="fld" for="claims">เลขเคลม <span style="color:var(--muted);font-weight:400">(หลายเคลมได้ — บรรทัดละเลข)</span></label>
+      <h2 style="font-size:16px;margin:0 0 12px">🖊 กรอกเคลมอัตโนมัติ (ISURVEY) สร้าง draft</h2>
+      <label class="fld" for="claims">เลขเคลม <span style="color:var(--muted);font-weight:400">(หลายเคลมได้ — บรรทัดละเลข คั่นด้วย comma หรือ เว้นวรรค)</span></label>
       <textarea id="claims"></textarea>
 
       <label class="fld" for="invoice">เลขเซอร์เวย์ <span style="color:var(--muted);font-weight:400">(ใส่เมื่อค้นเจอหลายแถว — เฉพาะกรณีเคลมเดียว)</span></label>
