@@ -123,6 +123,9 @@ def fetch_isurvey_cases(date_from: str = "", date_to: str = "",
                 "claim_no": x.get("claim_no") or "",
                 "survey_no": x.get("survey_no") or "",
                 "surveyor_name": x.get("empcode") or "",
+                # หัวหน้าที่ตรวจแล้วปิดงานให้เป็น "จบงาน" (ไม่ใช่คนสำรวจ)
+                "check_by": x.get("checkByName") or "",
+                "check_dt": x.get("checker_dt") or "",
                 "acc_province": x.get("acc_province") or "",
                 "plate_no": x.get("plate_no") or "",
                 "finish_dt": x.get("finish_dt") or "",
@@ -1277,7 +1280,7 @@ PAGE = r"""<!doctype html>
            ถ้าช่องกรองอยู่ในนั้นด้วยจะล้างค่าไม่ได้ ต้องกดดึงข้อมูลใหม่ -->
       <div id="isvtailrow" hidden style="margin-bottom:8px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <span class="fltlab">ผู้ตรวจสอบ</span>
+          <span class="fltlab">หัวหน้าตรวจ</span>
           <select id="isvwho" style="flex:1;min-width:0;padding:6px 8px"></select>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
@@ -2149,9 +2152,10 @@ function keyerOfDigits(d){
   return names.length === 1 ? names[0] : "";   // คนละคนกัน = ไม่ต้องบอกชื่อ
 }
 
-// dropdown "ผู้ตรวจสอบ" = พนักงานสำรวจของงานที่ดึงมา (ISURVEY ส่งมาเป็น "รหัส ชื่อ")
+// dropdown "หัวหน้าตรวจ" = หัวหน้าที่ตรวจแล้วปิดงานให้เป็น "จบงาน"
+// (คอลัมน์ checkByName ของรายงาน ISURVEY — ไม่ใช่ empcode ที่เป็นคนออกไปสำรวจ)
 // ตัวเลือกคิดจากงานที่เหลือหลังกรองเลขท้ายแล้ว → เลือกเลขท้าย 0,1 ก็เห็นเฉพาะ
-// คนที่มีงานในเลขนั้น (ตัวเลขในวงเล็บ = จำนวนงานของคนนั้น)
+// หัวหน้าที่มีงานในเลขนั้น (ตัวเลขในวงเล็บ = จำนวนงานที่คนนั้นปิด)
 function nameKey(s){
   return String(s).replace(/^SEC?[0-9]+\s*/, "")
                   .replace(/^(นาย|นาง|นางสาว)\s*/, "").trim();
@@ -2162,7 +2166,7 @@ function rebuildWhoOptions(rows){
   const cur = sel.value;
   const cnt = {};
   rows.forEach(r => {
-    const n = (r.surveyor_name || "").trim();
+    const n = (r.check_by || "").trim();
     if (n) cnt[n] = (cnt[n] || 0) + 1;
   });
   const names = Object.keys(cnt).sort((a, b) => nameKey(a).localeCompare(nameKey(b), "th"));
@@ -2197,7 +2201,7 @@ function renderIsvCases(){
                                  && matchTail(r.claim_no, digits));
   rebuildWhoOptions(base);
   const who = $("#isvwho").value;
-  const rows = who ? base.filter(r => (r.surveyor_name || "").trim() === who) : base;
+  const rows = who ? base.filter(r => (r.check_by || "").trim() === who) : base;
   $("#isvtailrow").hidden = !isvCache.length;
   updateIsvSummary(rows.length, who);
   if (!rows.length){
@@ -2218,6 +2222,7 @@ function renderIsvCases(){
         + (r.emcs_date ? ' · ' + escHtml(String(r.emcs_date).slice(0,16)) : '') + '</span>'
       : '';
     const more = [r.plate_no, r.surveyor_name,
+                  r.check_by ? "ตรวจโดย " + r.check_by : "",
                   r.finish_dt ? "เสร็จงาน " + r.finish_dt : "",
                   r.acc_province].filter(Boolean).join(" · ");
     return '<div class="caseitem" style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">'

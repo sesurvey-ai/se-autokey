@@ -2378,22 +2378,30 @@ check("กรองเลขท้าย: สรุปยอดนับผล�
 check("กรองเลขท้าย: จำค่าไว้ให้ ไม่ต้องพิมพ์ใหม่ทุกวัน",
       'localStorage.setItem("isvtail"' in _page
       and 'localStorage.getItem("isvtail")' in _page)
-# dropdown "ผู้ตรวจสอบ" = พนักงานสำรวจของงานที่ดึงมา (ISURVEY ส่งมาเป็น "รหัส ชื่อ")
-check("ผู้ตรวจสอบ: มี dropdown แยกจากช่องเลขท้าย (ใช้อันเดียวหรือคู่กันก็ได้)",
+# dropdown "หัวหน้าตรวจ" = คนที่ตรวจแล้วปิดงานเป็น "จบงาน" (checkByName)
+# ⚠️ ไม่ใช่ empcode — นั่นคือพนักงานที่ออกไปสำรวจ คนละคนกัน (user ชี้เอง 2026-08-06)
+_webui_src = __import__("pathlib").Path(_webui_mod.__file__).read_text(encoding="utf-8")
+check("หัวหน้าตรวจ: ดึงคอลัมน์ checkByName + checker_dt มาจากรายงาน",
+      '"check_by": x.get("checkByName")' in _webui_src
+      and '"check_dt": x.get("checker_dt")' in _webui_src)
+check("หัวหน้าตรวจ: มี dropdown แยกจากช่องเลขท้าย (ใช้อันเดียวหรือคู่กันก็ได้)",
       'id="isvwho"' in _page and "function rebuildWhoOptions(rows)" in _page)
-check("ผู้ตรวจสอบ: ชื่อมาจากงานที่ดึงมา ไม่ใช่ตารางคนคีย์",
-      'r.surveyor_name || ""' in _page
-      and "const rows = who ? base.filter(" in _page)
-check("ผู้ตรวจสอบ: ตัวเลือกคิดจากงานที่เหลือหลังกรองเลขท้ายแล้ว",
+check("หัวหน้าตรวจ: กรองด้วย check_by ไม่ใช่ surveyor_name",
+      'r.check_by || ""' in _page
+      and 'base.filter(r => (r.check_by || "").trim() === who)' in _page
+      and 'const n = (r.surveyor_name || "").trim();' not in _page)
+check("หัวหน้าตรวจ: ตัวเลือกคิดจากงานที่เหลือหลังกรองเลขท้ายแล้ว",
       _page.index("rebuildWhoOptions(base)") > _page.index("&& matchTail(r.claim_no, digits));"))
-check("ผู้ตรวจสอบ: บอกจำนวนงานของแต่ละคนในวงเล็บ",
+check("หัวหน้าตรวจ: บอกจำนวนงานของแต่ละคนในวงเล็บ",
       "cnt[n] = (cnt[n] || 0) + 1" in _page and "' (' + (cnt[n] || 0) + ')</option>'" in _page)
-check("ผู้ตรวจสอบ: เรียงตามชื่อ ไม่ใช่รหัสพนักงาน",
+check("หัวหน้าตรวจ: เรียงตามชื่อ ไม่ใช่รหัสพนักงาน",
       "function nameKey(s)" in _page and 'localeCompare(nameKey(b), "th")' in _page)
-check("ผู้ตรวจสอบ: เลือกคนที่ไม่มีงานในชุดนี้ → คงตัวเลือกไว้ให้เห็นว่า (0)",
+check("หัวหน้าตรวจ: เลือกคนที่ไม่มีงานในชุดนี้ → คงตัวเลือกไว้ให้เห็นว่า (0)",
       "if (cur && !cnt[cur]) names.push(cur);" in _page and "sel.value = cur;" in _page)
-check("ผู้ตรวจสอบ: ไม่เจอ → บอกว่าไม่มีงานของคนนั้น ไม่ใช่ 'นำเข้าไปแล้ว'",
+check("หัวหน้าตรวจ: ไม่เจอ → บอกว่าไม่มีงานของคนนั้น ไม่ใช่ 'นำเข้าไปแล้ว'",
       "'ไม่มีงานของ '" in _page)
+check("หัวหน้าตรวจ: ชื่ออยู่ใน tooltip ของแถวด้วย",
+      '"ตรวจโดย " + r.check_by' in _page)
 check("เลขท้าย: สรุปยอดบอกว่าเลขนั้นเป็นของคนคีย์คนไหน",
       "function keyerOfDigits(d)" in _page and "loadKeyerNames()" in _page)
 check("เลขท้าย: placeholder จางกว่าข้อความจริง",
