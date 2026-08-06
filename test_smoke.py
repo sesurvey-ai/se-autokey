@@ -2493,6 +2493,19 @@ check("สมุดงาน: กรองช่วงวันที่ได�
       and 'String(j.ts || "").slice(0, 10)' in _page)
 check("สมุดงาน: กรองวันที่ → ดึงมาให้เยอะขึ้น (default 300 แถวอาจไม่ครอบคลุม)",
       '(from || to ? 2000 : 300)' in _page)
+# ---- แท็บ SE Survey ให้หน้าตาเหมือนแท็บ ISURVEY ----
+check("SE Survey: มีติ๊ก 'ซ่อนที่นำเข้าแล้ว' เปิดไว้เป็นค่าเริ่มต้น",
+      'id="sehideimported" checked' in _page
+      and "const hideDone = $(\"#sehideimported\").checked;" in _page)
+check("SE Survey: ซ่อนหมดแล้ว → บอกวิธีดูกลับ ไม่ใช่ปล่อยว่าง",
+      "ทุกเคสในรายการนำเข้า EMCS ไปแล้ว" in _page)
+check("SE Survey: แถวโชว์เลขเคลมตัวหนา + เลขเซอร์เวย์บรรทัดล่าง (เหมือน ISURVEY)",
+      "'<span class=\"case-sv\">'+escHtml(c.claim_no||\"(ไม่มีเลขเคลม)\")" in _page
+      and "escHtml(c.survey_job_no||\"-\")+'</div>'" in _page)
+check("SE Survey: บริษัทประกัน/ผู้สำรวจ/เลขเคส ย้ายไป tooltip",
+      "const more = [c.insurance_company," in _page and 'title="'+"'+escAttr(more)+'" in _page)
+check("SE Survey: toolbar ดูจากแถวที่แสดงอยู่ ไม่ใช่ทั้ง cache",
+      '$("#setoolbar").hidden = !rows.some(c => !c.emcs_imported_at);' in _page)
 check("ตัวกรอง: ไม่เหลือซากของ dropdown คนคีย์ตัวเก่า",
       "isvkeyer" not in _page and "syncKeyerSelect" not in _page
       and "__custom" not in _page)

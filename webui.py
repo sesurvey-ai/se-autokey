@@ -1238,7 +1238,10 @@ PAGE = r"""<!doctype html>
      <div class="card">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
         <h2 style="font-size:16px;margin:0">📥 งานสำรวจ (SE Survey)</h2>
-        <button class="run" id="loadcasesbtn" style="margin-left:auto;padding:7px 12px;font-size:13px">↻ โหลดรายการ</button>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin-left:auto">
+          <input type="checkbox" id="sehideimported" checked> ซ่อนที่นำเข้าแล้ว
+        </label>
+        <button class="run" id="loadcasesbtn" style="padding:7px 12px;font-size:13px">↻ โหลดรายการ</button>
       </div>
       <div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;flex-wrap:wrap">
         <div style="flex:1;min-width:150px">
@@ -1983,9 +1986,20 @@ let seCasesCache = [];
 function renderSeCasesFromCache(){
   if (!seCasesCache.length){
     seCasesBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">— ไม่มีเคสสำรวจแล้ว (กด ↻ โหลดรายการ) —</div>';
+    $("#setoolbar").hidden = true;
     return;
   }
-  seCasesBox.innerHTML = seCasesCache.map(c => {
+  // ซ่อนที่นำเข้าแล้ว = ค่าเริ่มต้น (เหมือนแท็บ ISURVEY) — งานประจำวันดูแต่ที่ยังไม่ทำ
+  // ปุ่มกู้/ซ่อม draft อยู่บนแถวที่นำเข้าแล้ว → เอาติ๊กออกเพื่อเข้าถึง
+  const hideDone = $("#sehideimported").checked;
+  const rows = seCasesCache.filter(c => !(hideDone && c.emcs_imported_at));
+  if (!rows.length){
+    seCasesBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">'
+      + 'ทุกเคสในรายการนำเข้า EMCS ไปแล้ว (เอาติ๊ก “ซ่อนที่นำเข้าแล้ว” ออกเพื่อดู)</div>';
+    $("#setoolbar").hidden = true;
+    return;
+  }
+  seCasesBox.innerHTML = rows.map(c => {
     const id = String(c.id);
     const claim = escAttr(c.claim_no||"");
     const who = c.surveyor_name && c.surveyor_name.trim() ? c.surveyor_name : "-";
@@ -2006,16 +2020,21 @@ function renderSeCasesFromCache(){
     }
     if (!imported) act = '<button class="run sechk" data-id="'+id+'" style="background:#64748b">🔍 ตรวจ</button>' + act;
     act += '<button class="xmlbtn" data-id="'+id+'" style="background:transparent;color:var(--muted);border:1px solid var(--line)" title="ดาวน์โหลด XML (.txt) ไป import EMCS เอง — สำรอง">📄 XML</button>';
+    // แถวเหมือนแท็บ ISURVEY: เลขเคลมตัวหนา + เลขเซอร์เวย์บรรทัดล่าง
+    // ที่เหลือ (บริษัทประกัน/ผู้สำรวจ/เลขเคส) ย้ายไป tooltip — คอลัมน์แคบ
+    // โชว์แล้วโดน ellipsis ตัดจนอ่านไม่ออกอยู่ดี
+    const more = [c.insurance_company, who !== "-" ? who : "",
+                  "เคส #" + id].filter(Boolean).join(" · ");
     return '<div class="case-item">'
       + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">'
       +   '<span style="display:flex;align-items:center;gap:8px;min-width:0">'
       +     '<input type="checkbox" class="sesel"' + (imported ? ' disabled' : '')
       +       ' data-id="'+id+'" data-claim="'+claim+'">'
-      +     '<span class="case-sv">'+escHtml(c.survey_job_no||"(ไม่มีเลขเซอร์เวย์)")+'</span>'
+      +     '<span class="case-sv">'+escHtml(c.claim_no||"(ไม่มีเลขเคลม)")+'</span>'
       +   '</span>'+statusBadge
       + '</div>'
-      + '<div class="case-claim">'+escHtml(c.claim_no||"-")+'</div>'
-      + '<div class="case-meta">'+escHtml(c.insurance_company||"-")+' · '+escHtml(who)+'</div>'
+      + '<div class="case-claim" title="'+escAttr(more)+'">'
+      +   escHtml(c.survey_job_no||"-")+'</div>'
       + '<div class="case-btns">'+act+'</div>'
       + '<div class="sepanel" data-for="'+id+'" hidden style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#0f172a11;font-size:12.5px"></div>'
       + '</div>';
@@ -2030,7 +2049,7 @@ function renderSeCasesFromCache(){
     b.addEventListener("click", () => checkSeCase(b.dataset.id));
   });
   seCasesBox.querySelectorAll(".sesel").forEach(c => c.addEventListener("change", updateSeCount));
-  $("#setoolbar").hidden = !seCasesCache.some(c => !c.emcs_imported_at);
+  $("#setoolbar").hidden = !rows.some(c => !c.emcs_imported_at);
   $("#seall").checked = false;
   updateSeCount();
 }
@@ -2041,6 +2060,7 @@ function updateSeCount(){
   $("#secount").textContent = n ? ("เลือกไว้ " + n + " เคส") : "";
   $("#serunall").textContent = n ? ("⚡ นำเข้าที่เลือก (" + n + ")") : "⚡ นำเข้าที่เลือก";
 }
+$("#sehideimported").addEventListener("change", renderSeCasesFromCache);
 $("#seall").addEventListener("change", e => {
   seCasesBox.querySelectorAll(".sesel:not([disabled])").forEach(c => { c.checked = e.target.checked; });
   updateSeCount();
