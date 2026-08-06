@@ -324,6 +324,9 @@ def read_tab1_summary(driver, data: ClaimData):
         data.surveyor_name = data.oss_surveyor
         log(f"   ใช้ชื่อพนักงาน outsource เป็นพนักงานสำรวจ: {data.oss_surveyor}"
             + (f" ({data.oss_company})" if data.oss_company.strip() else ""))
+    # จ่ายงานเวลา (tab-1) = วันที่ บ.ประกันแจ้งสำรวจภัย ของ EMCS — user ยืนยัน 2026-08-06
+    data.dispatch_date = get_value(driver, "tab1_dispatch_date-inputEl")
+    data.dispatch_time = get_value(driver, "tab1_dispatch_time-inputEl")
     data.arrive_date = get_value(driver, "tab1_arrive_date-inputEl")
     data.arrive_time = get_value(driver, "tab1_arrive_time-inputEl")
     data.finish_date = get_value(driver, "tab1_finish_date-inputEl")

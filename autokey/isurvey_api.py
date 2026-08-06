@@ -454,6 +454,13 @@ class ISurveyAPI:
             d.surveyor_name = d.oss_surveyor
             log(f"   ใช้ชื่อพนักงาน outsource เป็นพนักงานสำรวจ: {d.oss_surveyor}"
                 + (f" ({d.oss_company})" if d.oss_company.strip() else ""))
+        # ชุดเวลาทำงานทั้งหมดมาจาก tab-1 Summary (Dispatch) — user ยืนยัน 2026-08-06
+        # ว่าเวลาบน "หน้าการ์ด" (tab-8) ไม่ตรงกับของจริง ห้ามเอามาใช้
+        #   จ่ายงานเวลา → วันที่ บ.ประกันแจ้งสำรวจภัย (EMCS)
+        #   ถึงที่เกิดเหตุเวลา → วันที่สำรวจภัย
+        #   เสร็จงานเวลา → วันที่สำรวจภัยเสร็จ
+        d.dispatch_date = _ddmmyyyy(disp.get("dispatch_date"))
+        d.dispatch_time = disp.get("dispatch_time", "")
         d.arrive_date = _ddmmyyyy(disp.get("arrive_date"))
         d.arrive_time = disp.get("arrive_time", "")
         d.finish_date = _ddmmyyyy(disp.get("finish_date"))

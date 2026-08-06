@@ -1732,12 +1732,19 @@ def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห�
     ch, cm = split_hhmm(data.call_time)
     if not (ch or cm):
         ch, cm = nh, nm
+    # "บ.ประกันแจ้งสำรวจภัย" = จ่ายงานเวลา (tab-1 Summary) — user ยืนยัน 2026-08-06
+    # ว่าเวลาบนหน้าการ์ด (tab-8 notified_*) ไม่ตรง ห้ามใช้ ถ้าไม่มีจ่ายงาน (เส้น
+    # se-survey/XML ที่ส่ง acc_insurance_notify_date มาทาง noti_*) ค่อยถอยไปใช้ noti_*
+    ins_date = to_buddhist_date(data.dispatch_date) or noti_date
+    ih, im = split_hhmm(data.dispatch_time)
+    if not (ih or im):
+        ih, im = nh, nm
     set_text(driver, "wuCale_Acc_Call_Date_txtCalendar", call_date)
     set_text(driver, "txtAcc_Call_Date_Hour", ch)
     set_text(driver, "txtAcc_Call_Date_Minute", cm)
-    set_text(driver, "wuCale_Ins_Calling_Surv_Date_txtCalendar", noti_date)
-    set_text(driver, "txtIns_Calling_Surv_Date_Hour", nh)
-    set_text(driver, "txtIns_Calling_Surv_Date_Minute", nm)
+    set_text(driver, "wuCale_Ins_Calling_Surv_Date_txtCalendar", ins_date)
+    set_text(driver, "txtIns_Calling_Surv_Date_Hour", ih)
+    set_text(driver, "txtIns_Calling_Surv_Date_Minute", im)
 
     # วัน-เวลาถึงที่เกิดเหตุ
     set_text(driver, "wuCale_Acc_Reach_txtCalendar", to_buddhist_date(data.arrive_date))
