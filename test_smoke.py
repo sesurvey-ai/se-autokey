@@ -2357,6 +2357,27 @@ for _m in __import__("re").finditer(r'<div class="note"[^>]*>(.*?)</div>', _page
     check(f"คำอธิบายสั้นพอ ({len(_txt)} ตัวอักษร): {_txt[:34]}…", len(_txt) <= 260, _txt[:60])
 check("joblog: มี event send_failed ให้บันทึกด้วย",
       "send_failed" in _jl.EVENTS)
+# ---- กรองรายการด้วยเลขท้ายเลขเคลม (คนคีย์แบ่งงานกันตามเลขท้าย) ----
+check("กรองเลขท้าย: มีช่องกรอง + ปุ่มล้าง",
+      'id="isvtailrow"' in _page and 'id="isvtail"' in _page
+      and 'id="isvtailclear"' in _page)
+check("กรองเลขท้าย: รับได้ทั้ง '0,1' / '0 1' / '01' (เอาเฉพาะตัวเลข)",
+      'match(/[0-9]/g)' in _page and "function tailDigits()" in _page)
+check("กรองเลขท้าย: เทียบตัวท้ายของเลขเคลม",
+      'digits.has(String(claim || "").trim().slice(-1))' in _page)
+check("กรองเลขท้าย: ว่าง = แสดงทุกเลข",
+      "if (!digits.size) return true;" in _page)
+# กรองแล้วไม่เหลือแถว → toolbar ซ่อน ถ้าช่องกรองอยู่ในนั้นด้วยจะล้างค่าไม่ได้
+check("กรองเลขท้าย: ช่องกรองอยู่นอก toolbar (กรองไม่เจอก็ยังล้างได้)",
+      _page.index('id="isvtailrow"') < _page.index('id="isvtoolbar"'))
+check("กรองเลขท้าย: ไม่เจอ → บอกว่าไม่มีเลขนั้น ไม่ใช่ 'นำเข้าไปแล้ว'",
+      "ไม่มีเคลมลงท้ายด้วย" in _page)
+check("กรองเลขท้าย: สรุปยอดนับผลกรองด้วย (คำนวณที่เดียวใน renderIsvCases)",
+      "function updateIsvSummary(shown)" in _page
+      and _page.count("'จบงาน ' + isvCache.length") == 1)
+check("กรองเลขท้าย: จำค่าไว้ให้ ไม่ต้องพิมพ์ใหม่ทุกวัน",
+      'localStorage.setItem("isvtail"' in _page
+      and 'localStorage.getItem("isvtail")' in _page)
 
 
 # ---- 22h. สั่งส่งงาน: ห้ามสมมติว่ายังอยู่หน้าค่าใช้จ่าย ----

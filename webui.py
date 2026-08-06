@@ -1267,6 +1267,17 @@ PAGE = r"""<!doctype html>
         <button class="run" id="loadisvbtn"
                 style="flex:none;padding:7px 12px;font-size:13px;white-space:nowrap">↻ ดึงข้อมูล</button>
       </div>
+      <!-- กรองด้วยเลขท้ายเลขเคลม — คนคีย์แบ่งงานกันตามเลขท้ายอยู่แล้ว
+           (แถวนี้โผล่เมื่อดึงข้อมูลมาแล้วเท่านั้น · ว่าง = แสดงทุกเลข)
+           อยู่นอก #isvtoolbar ตั้งใจ — กรองแล้วไม่เหลือแถว toolbar จะซ่อน
+           ถ้าช่องกรองอยู่ในนั้นด้วยจะล้างค่าไม่ได้ ต้องกดดึงข้อมูลใหม่ -->
+      <div id="isvtailrow" hidden style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="color:var(--muted);font-size:13px;flex:none">เลขท้าย</span>
+        <input type="text" id="isvtail" inputmode="numeric" placeholder="เช่น 0,1 — ว่าง = ทุกเลข"
+               style="flex:1;min-width:0;padding:6px 8px">
+        <button type="button" id="isvtailclear" class="run"
+                style="flex:none;padding:7px 10px;font-size:13px;background:#64748b">ล้าง</button>
+      </div>
       <div id="isvtoolbar" hidden style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 2px">
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
           <input type="checkbox" id="isvall"> เลือกทั้งหมด
@@ -2103,13 +2114,39 @@ function todayStr(){
 }
 $("#isvfrom").value = $("#isvto").value = todayStr();
 
+// เลขท้ายที่พิมพ์ในช่องกรอง — เอาเฉพาะตัวเลข พิมพ์ "0,1" / "0 1" / "01" ได้หมด
+function tailDigits(){
+  return new Set(($("#isvtail").value || "").match(/[0-9]/g) || []);
+}
+function matchTail(claim, digits){
+  if (!digits.size) return true;
+  return digits.has(String(claim || "").trim().slice(-1));
+}
+function saveTail(){
+  try{ localStorage.setItem("isvtail", $("#isvtail").value); }catch(e){}
+}
+function updateIsvSummary(shown){
+  if (!isvCache.length){ $("#isvsummary").textContent = ""; return; }
+  const sent = isvCache.filter(x => x.emcs_sent).length;
+  let t = 'จบงาน ' + isvCache.length + ' เรื่อง · นำเข้าแล้ว ' + sent
+        + ' · รอนำเข้า ' + (isvCache.length - sent);
+  const d = [...tailDigits()].sort();
+  if (d.length) t += ' · เลขท้าย ' + d.join(",") + ' → แสดง ' + shown + ' เรื่อง';
+  $("#isvsummary").textContent = t;
+}
+
 function renderIsvCases(){
   const hideSent = $("#isvhidesent").checked;
-  const rows = isvCache.filter(r => !(hideSent && r.emcs_sent));
+  const digits = tailDigits();
+  const rows = isvCache.filter(r => !(hideSent && r.emcs_sent)
+                                 && matchTail(r.claim_no, digits));
+  $("#isvtailrow").hidden = !isvCache.length;
+  updateIsvSummary(rows.length);
   if (!rows.length){
     isvBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">'
-      + (isvCache.length ? 'ทุกเรื่องในช่วงนี้นำเข้า EMCS ไปแล้ว (เอาติ๊ก “ซ่อนที่นำเข้าแล้ว” ออกเพื่อดู)'
-                         : 'ไม่พบงานสถานะ “จบงาน” ในช่วงวันที่นี้') + '</div>';
+      + (!isvCache.length ? 'ไม่พบงานสถานะ “จบงาน” ในช่วงวันที่นี้'
+         : digits.size ? 'ไม่มีเคลมลงท้ายด้วย ' + [...digits].sort().join(",") + ' ในช่วงนี้ (กดปุ่ม “ล้าง” เพื่อดูทั้งหมด)'
+                       : 'ทุกเรื่องในช่วงนี้นำเข้า EMCS ไปแล้ว (เอาติ๊ก “ซ่อนที่นำเข้าแล้ว” ออกเพื่อดู)') + '</div>';
     $("#isvtoolbar").hidden = true;
     return;
   }
@@ -2159,6 +2196,12 @@ function updateIsvCount(){
   $("#isvrunall").textContent = n ? ("⚡ นำเข้าที่เลือก (" + n + ")") : "⚡ นำเข้าที่เลือก";
 }
 $("#isvhidesent").addEventListener("change", () => renderIsvCases());
+// จำเลขท้ายที่กรองไว้ให้ด้วย — คนคีย์คนเดิมใช้เลขเดิมทุกวัน ไม่ต้องพิมพ์ซ้ำ
+try{ $("#isvtail").value = localStorage.getItem("isvtail") || ""; }catch(e){}
+$("#isvtail").addEventListener("input", () => { saveTail(); renderIsvCases(); });
+$("#isvtailclear").addEventListener("click", () => {
+  $("#isvtail").value = ""; saveTail(); renderIsvCases();
+});
 $("#isvall").addEventListener("change", e => {
   isvBox.querySelectorAll(".isvsel").forEach(c => { c.checked = e.target.checked; });
   updateIsvCount();
@@ -2327,10 +2370,7 @@ loadIsvBtn.addEventListener("click", async () => {
     const data = await r.json();
     if (!r.ok){ isvBox.innerHTML = '<div style="color:var(--err);font-size:13px;padding:8px 0">'+escHtml(data.error||"โหลดไม่สำเร็จ")+'</div>'; return; }
     isvCache = data.cases || [];
-    const sent = isvCache.filter(x => x.emcs_sent).length;
-    $("#isvsummary").textContent = 'จบงาน ' + isvCache.length + ' เรื่อง · นำเข้าแล้ว ' + sent
-                                 + ' · รอนำเข้า ' + (isvCache.length - sent);
-    renderIsvCases();
+    renderIsvCases();   // สรุปยอดอัปเดตในนั้น (นับผลกรองเลขท้ายด้วย)
   }catch(e){ isvBox.innerHTML = '<div style="color:var(--err);font-size:13px;padding:8px 0">ติดต่อเซิร์ฟเวอร์ไม่ได้</div>'; }
   finally{ loadIsvBtn.disabled = false; }
 });
