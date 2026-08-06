@@ -2378,6 +2378,25 @@ check("กรองเลขท้าย: สรุปยอดนับผล�
 check("กรองเลขท้าย: จำค่าไว้ให้ ไม่ต้องพิมพ์ใหม่ทุกวัน",
       'localStorage.setItem("isvtail"' in _page
       and 'localStorage.getItem("isvtail")' in _page)
+# dropdown "ผู้ตรวจ" = ตารางคนคีย์ — เลือกชื่อ/เลือกเลข อย่างใดอย่างหนึ่งก็ได้
+check("ผู้ตรวจ: มี dropdown ที่ดึงชื่อจากตารางคนคีย์ (/settings)",
+      'id="isvkeyer"' in _page and "async function loadIsvKeyerFilter()" in _page
+      and 'fetch("/settings")' in _page)
+check("ผู้ตรวจ: คนหนึ่งถือได้หลายเลขท้าย (รวมเป็นตัวเลือกเดียว)",
+      "(byName[n] = byName[n] || []).push(dg)" in _page
+      and 'byName[n].join(",")' in _page)
+check("ผู้ตรวจ: เลือกชื่อ → เติมเลขท้ายให้เอง",
+      '$("#isvtail").value = e.target.value;' in _page)
+check("ผู้ตรวจ: พิมพ์เลขเอง → ชื่อใน dropdown เด้งตาม",
+      "function syncKeyerSelect()" in _page
+      and "saveTail(); syncKeyerSelect(); renderIsvCases();" in _page)
+check("ผู้ตรวจ: เลขที่ไม่ตรงกับใคร → ป้าย 'เลือกเลขเอง' (ไม่ใช่ค้างชื่อคนอื่น)",
+      'value="__custom" hidden' in _page
+      and 'if (e.target.value === "__custom") return;' in _page)
+check("ผู้ตรวจ: แก้ตารางคนคีย์แล้ว dropdown อัปเดตตาม ไม่ต้องรีเฟรช",
+      _page.count("loadIsvKeyerFilter()") >= 3)
+check("ผู้ตรวจ: placeholder ช่องเลขท้ายจางกว่าข้อความจริง",
+      "#isvtail::placeholder{color:var(--muted);opacity:.45}" in _page)
 
 
 # ---- 22h. สั่งส่งงาน: ห้ามสมมติว่ายังอยู่หน้าค่าใช้จ่าย ----

@@ -1002,6 +1002,10 @@ PAGE = r"""<!doctype html>
   textarea:focus,input:focus,select:focus{border-color:var(--brand2);
     box-shadow:0 0 0 3px rgba(99,102,241,.15)}
   .grid{display:grid;grid-template-columns:1fr 160px;gap:12px;margin-top:12px}
+  /* ตัวกรองรายการงาน — ป้ายกว้างเท่ากันสองบรรทัด ช่องกรอกจะได้ตรงกัน */
+  .fltlab{color:var(--muted);font-size:13px;flex:none;width:52px}
+  /* placeholder เป็นแค่คำใบ้ — จางกว่าข้อความจริงชัดๆ ไม่งั้นดูเหมือนกรอกไว้แล้ว */
+  #isvtail::placeholder{color:var(--muted);opacity:.45}
   .checks{display:flex;flex-wrap:wrap;gap:18px;margin-top:14px}
   .checks label{display:flex;align-items:center;gap:8px;font-size:14px;
     color:#334155;cursor:pointer;user-select:none}
@@ -1271,12 +1275,18 @@ PAGE = r"""<!doctype html>
            (แถวนี้โผล่เมื่อดึงข้อมูลมาแล้วเท่านั้น · ว่าง = แสดงทุกเลข)
            อยู่นอก #isvtoolbar ตั้งใจ — กรองแล้วไม่เหลือแถว toolbar จะซ่อน
            ถ้าช่องกรองอยู่ในนั้นด้วยจะล้างค่าไม่ได้ ต้องกดดึงข้อมูลใหม่ -->
-      <div id="isvtailrow" hidden style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="color:var(--muted);font-size:13px;flex:none">เลขท้าย</span>
-        <input type="text" id="isvtail" inputmode="numeric" placeholder="เช่น 0,1 — ว่าง = ทุกเลข"
-               style="flex:1;min-width:0;padding:6px 8px">
-        <button type="button" id="isvtailclear" class="run"
-                style="flex:none;padding:7px 10px;font-size:13px;background:#64748b">ล้าง</button>
+      <div id="isvtailrow" hidden style="margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span class="fltlab">ผู้ตรวจ</span>
+          <select id="isvkeyer" style="flex:1;min-width:0;padding:6px 8px"></select>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="fltlab">เลขท้าย</span>
+          <input type="text" id="isvtail" inputmode="numeric" placeholder="เช่น 0,1 — ว่าง = ทุกเลข"
+                 style="flex:1;min-width:0;padding:6px 8px">
+          <button type="button" id="isvtailclear" class="run"
+                  style="flex:none;padding:7px 10px;font-size:13px;background:#64748b">ล้าง</button>
+        </div>
       </div>
       <div id="isvtoolbar" hidden style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 2px">
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
@@ -2125,13 +2135,50 @@ function matchTail(claim, digits){
 function saveTail(){
   try{ localStorage.setItem("isvtail", $("#isvtail").value); }catch(e){}
 }
+// dropdown "ผู้ตรวจ" = ตารางคนคีย์ (เลขท้าย → ชื่อ) จากหน้าตั้งค่า
+// เลือกชื่อ = เติมเลขท้ายของคนนั้นให้ · พิมพ์เลขเอง = ชื่อเด้งตาม
+// ทั้งคู่กรองด้วยเลขท้ายเหมือนกัน (คนละหน้าตาของตัวกรองเดียวกัน)
+async function loadIsvKeyerFilter(){
+  let table = {};
+  try{
+    const r = await fetch("/settings");
+    table = (await r.json()).keyers || {};
+  }catch(e){ table = {}; }
+  const byName = {};              // ชื่อ → ["0","1"] (คนหนึ่งถือได้หลายเลข)
+  "0123456789".split("").forEach(dg => {
+    const n = (table[dg] || "").trim();
+    if (n) (byName[n] = byName[n] || []).push(dg);
+  });
+  $("#isvkeyer").innerHTML = '<option value="">— ทุกคน —</option>'
+    + Object.keys(byName).map(n => '<option value="' + escHtml(byName[n].join(",")) + '">'
+        + escHtml(n) + ' (' + byName[n].join(",") + ')</option>').join("")
+    + '<option value="__custom" hidden>— เลือกเลขเอง —</option>';
+  syncKeyerSelect();
+  // โหลด dropdown เสร็จทีหลัง render → วาดใหม่ให้สรุปยอดขึ้นชื่อคน
+  // (เฉพาะตอนมีรายการแล้ว ไม่งั้นจะขึ้น "ไม่พบงาน" ทั้งที่ยังไม่ได้กดดึงข้อมูล)
+  if (isvCache.length) renderIsvCases();
+}
+function syncKeyerSelect(){
+  const sel = $("#isvkeyer");
+  if (!sel || !sel.options.length) return;
+  const cur = [...tailDigits()].sort().join(",");
+  const hit = [...sel.options].find(o => o.value !== "__custom"
+      && o.value.split(",").filter(Boolean).sort().join(",") === cur);
+  sel.value = hit ? hit.value : "__custom";
+}
 function updateIsvSummary(shown){
   if (!isvCache.length){ $("#isvsummary").textContent = ""; return; }
   const sent = isvCache.filter(x => x.emcs_sent).length;
   let t = 'จบงาน ' + isvCache.length + ' เรื่อง · นำเข้าแล้ว ' + sent
         + ' · รอนำเข้า ' + (isvCache.length - sent);
   const d = [...tailDigits()].sort();
-  if (d.length) t += ' · เลขท้าย ' + d.join(",") + ' → แสดง ' + shown + ' เรื่อง';
+  if (d.length){
+    // เลขที่กรองตรงกับคนคีย์คนไหน ก็บอกชื่อไปเลย (ป้ายใน dropdown มีเลขอยู่แล้ว)
+    const sel = $("#isvkeyer");
+    const who = (sel && sel.value && sel.value !== "__custom")
+              ? sel.options[sel.selectedIndex].text : "";
+    t += ' · ' + (who || ('เลขท้าย ' + d.join(","))) + ' → แสดง ' + shown + ' เรื่อง';
+  }
   $("#isvsummary").textContent = t;
 }
 
@@ -2198,10 +2245,18 @@ function updateIsvCount(){
 $("#isvhidesent").addEventListener("change", () => renderIsvCases());
 // จำเลขท้ายที่กรองไว้ให้ด้วย — คนคีย์คนเดิมใช้เลขเดิมทุกวัน ไม่ต้องพิมพ์ซ้ำ
 try{ $("#isvtail").value = localStorage.getItem("isvtail") || ""; }catch(e){}
-$("#isvtail").addEventListener("input", () => { saveTail(); renderIsvCases(); });
-$("#isvtailclear").addEventListener("click", () => {
-  $("#isvtail").value = ""; saveTail(); renderIsvCases();
+$("#isvtail").addEventListener("input", () => {
+  saveTail(); syncKeyerSelect(); renderIsvCases();
 });
+$("#isvtailclear").addEventListener("click", () => {
+  $("#isvtail").value = ""; saveTail(); syncKeyerSelect(); renderIsvCases();
+});
+$("#isvkeyer").addEventListener("change", e => {
+  if (e.target.value === "__custom") return;   // ป้ายบอกสถานะ ไม่ใช่ตัวเลือกจริง
+  $("#isvtail").value = e.target.value;        // "" = ทุกคน
+  saveTail(); renderIsvCases();
+});
+loadIsvKeyerFilter();
 $("#isvall").addEventListener("change", e => {
   isvBox.querySelectorAll(".isvsel").forEach(c => { c.checked = e.target.checked; });
   updateIsvCount();
@@ -2439,6 +2494,7 @@ $("#savekeyers").addEventListener("click", async () => {
     const {ok, data} = await postJSON("/settings", {keyers: table});
     if (!ok){ keyersMsg.textContent = "❌ " + (data.error || "บันทึกไม่สำเร็จ"); keyersMsg.style.color = "var(--err)"; return; }
     keyersMsg.textContent = "✅ บันทึกแล้ว — มีผลกับงานถัดไปทันที"; keyersMsg.style.color = "var(--ok)";
+    loadIsvKeyerFilter();   // dropdown "ผู้ตรวจ" ในแท็บ ISURVEY ใช้ตารางนี้
   }catch(e){ keyersMsg.textContent = "❌ ติดต่อเซิร์ฟเวอร์ไม่ได้: " + e; keyersMsg.style.color = "var(--err)"; }
 });
 
