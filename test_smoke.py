@@ -2485,9 +2485,10 @@ check("ตัวกรอง: ไม่เหลือซากของ dropdow
 # หลังบันทึกราคา บอทกลับหน้า Inbox เพื่อปลดล็อกเรื่อง → พอคนสั่งส่งทีหลัง ปุ่มไม่อยู่
 # บนหน้า (เจอจริง S68426080893) → ต้องเปิดเรื่องกลับเข้าหน้าค่าใช้จ่ายเองก่อน
 def _run_submit(found_first, esurvey="S684", reopen_ok=True, status_esurvey="S684",
-                status_seq=None):
+                status_seq=None, modal_text=""):
     """คืน (ok, msg, เปิดเรื่องกลับกี่ครั้ง)
-    status_seq = สถานะที่ report_status คืนทีละรอบ (จำลองหน้ารายการมาช้า/อ่านไม่ได้)"""
+    status_seq = สถานะที่ report_status คืนทีละรอบ (จำลองหน้ารายการมาช้า/อ่านไม่ได้)
+    modal_text = ข้อความที่ EMCS ขึ้นหลังกดส่ง ('' = ไม่ขึ้นอะไร → ใช้ทางสำรอง)"""
     state = {"reopen": 0, "found": list(found_first),
              "st": list(status_seq or [])}
 
@@ -2512,9 +2513,15 @@ def _run_submit(found_first, esurvey="S684", reopen_ok=True, status_esurvey="S68
         st = state["st"].pop(0) if state["st"] else "ประกันตรวจสอบรายงาน"
         return {"status": st, "esurvey": status_esurvey}
     emcs.report_status = _status
-    emcs.time = _types.SimpleNamespace(sleep=lambda s: None)
+    _clock = {"t": 0.0}
+
+    def _now():
+        _clock["t"] += 1.0        # เดินหน้าเรื่อย ๆ ให้ deadline loop จบเร็วในเทส
+        return _clock["t"]
+    emcs.time = _types.SimpleNamespace(sleep=lambda s: None, time=_now)
     try:
-        drv = _types.SimpleNamespace(find_elements=lambda *a, **k: [])
+        drv = _types.SimpleNamespace(find_elements=lambda *a, **k: [],
+                                     execute_script=lambda *a, **k: modal_text)
         ok, msg = emcs.submit_report(drv, object(), "2026013058422", esurvey=esurvey)
     finally:
         (emcs._find_submit_button, emcs._open_report_billing, emcs.log,
@@ -2557,6 +2564,26 @@ check("submit: ยังเป็น draft อยู่ → บอกตรง �
 _rs = __import__("inspect").getsource(emcs.report_status)
 check("report_status: รอจนอ่านสถานะได้ (มี deadline loop) ไม่ใช่ sleep ครั้งเดียว",
       "deadline" in _rs and "while time.time() < deadline" in _rs)
+
+# ---- ใช้คำตอบของ EMCS ตรงหน้าแทนการกลับไปตรวจซ้ำ (user 2026-08-06) ----
+_st_calls = {"n": 0}
+_ok, _msg, _n = _run_submit([True], modal_text="สำเร็จ! ส่งงานใหม่ เรียบร้อยแล้ว")
+check("ส่งงาน: EMCS ตอบ 'สำเร็จ' → จบเลย ไม่ต้องเปิดหน้ารายการตรวจซ้ำ",
+      _ok is True and "EMCS ตอบ" in _msg, _msg[:70])
+_ok, _msg, _n = _run_submit([True], modal_text="ไม่สำเร็จ! กรุณาระบุข้อมูลให้ครบ")
+check("ส่งงาน: EMCS ตอบ 'ไม่สำเร็จ' → False ทันที ไม่แจ้ง ISURVEY",
+      _ok is False and "ส่งไม่สำเร็จ" in _msg, _msg[:70])
+# "ไม่สำเร็จ" มีคำว่า "สำเร็จ" อยู่ข้างใน — ต้องเช็คคำลบก่อนเสมอ
+check("ส่งงาน: คำว่า 'ไม่สำเร็จ' ต้องไม่ถูกอ่านเป็น 'สำเร็จ'",
+      emcs._SUBMIT_FAIL_WORDS[0] == "ไม่สำเร็จ"
+      and "ไม่สำเร็จ" in emcs._SUBMIT_FAIL_WORDS
+      and "สำเร็จ" in emcs._SUBMIT_OK_WORDS)
+_ok, _msg, _n = _run_submit([True], modal_text="", status_seq=["ประกันตรวจสอบรายงาน"])
+check("ส่งงาน: EMCS เงียบ → ค่อยใช้ทางสำรอง (ไปดูสถานะหน้ารายการ)",
+      _ok is True and "สถานะ →" in _msg, _msg[:70])
+_sub = __import__("inspect").getsource(emcs.submit_report)
+check("ส่งงาน: อ่านคำตอบก่อน แล้วค่อยถึงทางสำรอง (ไม่ใช่ตรวจซ้ำทุกครั้ง)",
+      _sub.index("_read_submit_result(driver)") < _sub.index("goto_mainpage(driver, cfg, \"\")\n            info = report_status"))
 
 # ---- ต้นเหตุจริงของ "ไม่เจอปุ่มส่งงาน": ออกจากเรื่องก่อนคนจะได้สั่งส่ง ----
 # ปุ่ม 'ส่งงานใหม่' อยู่ในเรื่อง แต่บอทกด 'กลับหน้า Inbox/Outbox' ทันทีหลังบันทึกราคา

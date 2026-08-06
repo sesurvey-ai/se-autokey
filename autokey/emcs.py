@@ -3652,6 +3652,56 @@ def _find_submit_button(driver):
     return None, ""
 
 
+# ข้อความที่ EMCS ตอบหลังกดส่งงาน — ใช้เป็นหลักฐานแทนการกลับไปค้นหน้ารายการ
+# ⚠️ เช็คคำ "ไม่สำเร็จ" ก่อน "สำเร็จ" เสมอ (คำหลังเป็นสตริงย่อยของคำแรก)
+_SUBMIT_FAIL_WORDS = ("ไม่สำเร็จ", "ไม่สามารถ", "ผิดพลาด", "error", "กรุณา", "ต้องระบุ")
+_SUBMIT_OK_WORDS = ("สำเร็จ", "เรียบร้อย", "success")
+
+_JS_RESULT_MODAL = r"""
+const sels = [".swal-modal", ".swal2-popup", ".sweet-alert", ".swal-text",
+              "#swal2-html-container", ".modal.show", ".modal[style*='block']"];
+for (const s of sels) {
+  for (const el of document.querySelectorAll(s)) {
+    const vis = el.offsetParent !== null || getComputedStyle(el).display !== "none";
+    const t = ((el.innerText || "").trim());
+    if (vis && t) return t.replace(/\s+/g, " ").slice(0, 300);
+  }
+}
+return "";
+"""
+
+
+def _read_submit_result(driver, timeout: float = 15) -> tuple:
+    """อ่านคำตอบของ EMCS ตรงหน้าหลังกดส่งงาน → (ok: bool|None, text: str)
+
+    ok=True/False = EMCS บอกมาตรง ๆ / None = ไม่เจอข้อความ (ผู้เรียกค่อยไปตรวจทางอื่น)
+    ทำแบบนี้แทนการกลับไปค้นหน้ารายการ เพราะหลังกดส่ง session มักหลุดต้อง login ใหม่
+    แล้วหน้ารายการมาช้า → เคยฟันธงผิดว่า "ส่งไม่สำเร็จ" (เคลม 2026013160796)
+    """
+    text = ""
+    deadline = time.time() + timeout
+    while time.time() < deadline and not text:
+        try:                                   # JS alert (บางจังหวะ EMCS ใช้ alert)
+            text = accept_alert(driver, timeout=1) or ""
+        except Exception:
+            pass
+        if not text:
+            try:
+                text = driver.execute_script(_JS_RESULT_MODAL) or ""
+            except Exception:
+                text = ""
+        if not text:
+            time.sleep(0.5)
+    if not text:
+        return None, ""
+    low = text.lower()
+    if any(w in low for w in _SUBMIT_FAIL_WORDS):
+        return False, text
+    if any(w in low for w in _SUBMIT_OK_WORDS):
+        return True, text
+    return None, text
+
+
 def submit_report(driver, cfg, claim, esurvey: str = ""):
     """commit งาน: กดปุ่มส่งงานที่มีบนหน้าค่าใช้จ่าย (โหมดแก้ของ draft — live session
     ที่เพิ่งกรอกเสร็จ) — รองรับทั้ง 'ส่งงานใหม่' (งานใหม่) และ 'ส่งผลงานต่อเนื่อง'
@@ -3703,12 +3753,13 @@ def submit_report(driver, cfg, claim, esurvey: str = ""):
         btn.click()
     except Exception as e:
         return False, f"กดปุ่มส่งงานไม่ได้: {type(e).__name__}"
-    time.sleep(2)
-    try:
-        accept_alert(driver, timeout=5)        # เผื่อมี JS alert (ปกติไม่มี)
-    except Exception:
-        pass
-    # หลังกดส่งสำเร็จจะมี SweetAlert modal "สำเร็จ! ส่งงานใหม่...เรียบร้อยแล้ว" → กด OK ปิด
+    # ---- อ่านคำตอบของ EMCS ตรงหน้านั้นเลย (ไม่กลับไปค้นหน้ารายการซ้ำ) ----
+    # หลังกดส่งสำเร็จ EMCS ขึ้น SweetAlert "สำเร็จ! ส่งงานใหม่...เรียบร้อยแล้ว"
+    # = หลักฐานตรงจาก EMCS เอง เร็วกว่าและไม่พังตอน session หลุด (user 2026-08-06)
+    ok_now, said = _read_submit_result(driver)
+    if said:
+        log(f"   [EMCS ตอบ] {said[:200]}")
+    # ปิด modal ให้เรียบร้อยก่อน (กด OK)
     for sel in (".swal-button--confirm", ".swal-button", ".swal2-confirm", ".confirm"):
         try:
             for e in driver.find_elements(By.CSS_SELECTOR, sel):
@@ -3727,12 +3778,19 @@ def submit_report(driver, cfg, claim, esurvey: str = ""):
                 time.sleep(1)
         except Exception:
             pass
-    time.sleep(2)
+    time.sleep(1)
 
-    # verify: กลับหน้ารายการ → ค้นสถานะใหม่ ต้องไม่ใช่ draft แล้ว
-    # ลองได้ 3 รอบ — หลังกดส่ง session มักหลุด (ต้อง login ใหม่) แล้วหน้ารายการ
-    # มาช้า อ่านรอบเดียวได้ค่าว่างแล้วสรุปว่า "ส่งไม่สำเร็จ" ทั้งที่ส่งไปแล้ว
-    # (เจอจริงเคลม 2026013160796 — user ยืนยันว่างานถึงประกันเรียบร้อย)
+    # EMCS ตอบมาชัดแล้ว = จบตรงนี้ ไม่ต้องเปิด EMCS ตรวจซ้ำ (user 2026-08-06)
+    if ok_now is True:
+        return True, f"ส่งงานสำเร็จ — EMCS ตอบ: {said[:120]}"
+    if ok_now is False:
+        return False, f"EMCS ตอบว่าส่งไม่สำเร็จ: {said[:160]}"
+
+    # ---- ทางสำรอง: EMCS ไม่ขึ้นข้อความอะไรเลย (ไม่ควรเกิด) ----
+    # ถึงค่อยกลับไปดูสถานะในหน้ารายการ ลองได้ 3 รอบ — หลังกดส่ง session มักหลุด
+    # (ต้อง login ใหม่) แล้วหน้ารายการมาช้า อ่านรอบเดียวได้ค่าว่างแล้วสรุปว่า
+    # "ส่งไม่สำเร็จ" ทั้งที่ส่งไปแล้ว (เจอจริงเคลม 2026013160796)
+    log("   ℹ️ ไม่เห็นข้อความตอบกลับจาก EMCS — ใช้ทางสำรอง: ไปดูสถานะในหน้ารายการ")
     st, err = "", ""
     for attempt in (1, 2, 3):
         try:
