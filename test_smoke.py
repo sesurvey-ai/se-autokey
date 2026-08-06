@@ -1793,6 +1793,61 @@ _scrsrc = __import__("pathlib").Path("autokey/isurvey.py").read_text(encoding="u
 check("เวลา: ฝั่ง scrape อ่านช่องจ่ายงานของ tab-1 ด้วย",
       'tab1_dispatch_date-inputEl' in _scrsrc and 'tab1_dispatch_time-inputEl' in _scrsrc)
 
+# ---- เส้น se-survey: ทับเวลาด้วยของจริงจาก ISURVEY tab-1 ----
+# ไทม์ไลน์ในแอปเป็น "เวลาที่คนมานั่งคีย์" (เคส 21BR10AVD-6908-000089: แอปบอก
+# ถึงที่เกิดเหตุ 06/08 10:02 / ISURVEY บอก 03/08 08:10 และ 'สำรวจเสร็จ' ว่างเปล่า)
+import autokey.isurvey_api as _isvmod  # noqa: E402
+
+
+def _fake_isurvey(disp, boom=False):
+    class _API:
+        def __init__(self, cfg): pass
+
+        def login(self):
+            if boom:
+                raise RuntimeError("ISURVEY ล่ม")
+
+        def find_case(self, claim): return {"caseID": "1"}
+
+        def get_tab(self, cid, tab): return {"Dispatch": disp}
+    return _API
+
+
+def _run_override(disp, boom=False, **kw):
+    d = claim_data.ClaimData()
+    d.claim_value = "21BR10AVD-6908-000089"
+    for k, v in kw.items():
+        setattr(d, k, v)
+    _o = (_isvmod.ISurveyAPI, _main.log)
+    _isvmod.ISurveyAPI = _fake_isurvey(disp, boom)
+    _main.log = lambda *a, **k: None
+    try:
+        return _main._override_times_from_isurvey(object(), d), d
+    finally:
+        (_isvmod.ISurveyAPI, _main.log) = _o
+
+
+_DISP = {"dispatch_date": "2026-08-03", "dispatch_time": "08:03",
+         "arrive_date": "2026-08-03", "arrive_time": "08:10",
+         "finish_date": "2026-08-03", "finish_time": "08:11"}
+_ok, _d = _run_override(_DISP, arrive_date="06/08/2026", arrive_time="10:02")
+check("เวลา se-survey: ทับด้วยของจริงจาก ISURVEY (แอปเก็บเวลาที่คีย์)",
+      _ok and (_d.arrive_date, _d.arrive_time) == ("03/08/2026", "08:10")
+      and (_d.finish_date, _d.finish_time) == ("03/08/2026", "08:11")
+      and (_d.dispatch_date, _d.dispatch_time) == ("03/08/2026", "08:03"),
+      f"{_d.arrive_date} {_d.arrive_time} / {_d.finish_date} {_d.finish_time}")
+_ok, _d = _run_override(_DISP, boom=True, arrive_date="06/08/2026", arrive_time="10:02")
+check("เวลา se-survey: ISURVEY ล่ม/ไม่เจอ → ไม่ทับ ใช้ค่าจาก XML ต่อ (fail-open)",
+      _ok is False and (_d.arrive_date, _d.arrive_time) == ("06/08/2026", "10:02"))
+_ok, _d = _run_override({"arrive_date": "2026-08-03", "arrive_time": "08:10"},
+                        finish_date="09/08/2026", finish_time="12:00")
+check("เวลา se-survey: ISURVEY ไม่มีบางช่วง → คงค่าเดิมของช่วงนั้นไว้",
+      (_d.arrive_date, _d.arrive_time) == ("03/08/2026", "08:10")
+      and (_d.finish_date, _d.finish_time) == ("09/08/2026", "12:00"))
+_ok, _d = _run_override(_DISP)
+check("เวลา se-survey: แปลงวันที่ ค.ศ. YYYY-MM-DD → DD/MM/YYYY ให้ตรงรูปแบบ ClaimData",
+      _d.arrive_date == "03/08/2026")
+
 # รูป "ยืนยันถึงที่เกิดเหตุ" = หลักฐานภายในของ se-survey ห้ามส่งเข้า EMCS (กติกา user 2026-07-26)
 check("arrival: arrival.jpg = รูปยืนยันถึงที่เกิดเหตุ → ข้าม",
       _main._is_arrival_photo('arrival.jpg') and _main._is_arrival_photo('ARRIVAL.JPG')

@@ -1255,6 +1255,59 @@ def run_emcs_images(cfg, args):
         driver.quit()
 
 
+def _override_times_from_isurvey(cfg, data) -> bool:
+    """ทับชุดเวลาทำงานด้วยของจริงจาก ISURVEY tab-1 Summary (ถ้าเคลมนี้มีใน ISURVEY)
+
+    ทำไม: เคสที่เข้ามาทาง se-survey บางใบ (โดยเฉพาะที่นำเข้าด้วย XML ระบบเก่า)
+    ไทม์ไลน์ในแอปเป็น "เวลาที่คนมานั่งคีย์" ไม่ใช่เวลาทำงานจริง — ของจริงเคลม
+    21BR10AVD-6908-000089: แอปส่ง ถึงที่เกิดเหตุ 06/08 10:02 แต่ ISURVEY บอก
+    03/08 08:10 (และ 'สำรวจเสร็จ' ในแอปว่างเปล่าจน EMCS ตีกลับ)
+    → user สรุป 2026-08-06: ยึดชุดเวลาจาก ISURVEY tab-1 เป็นหลัก
+
+    ISURVEY ล่ม/ไม่เจอเคลม = ไม่ทับ ใช้ค่าจาก XML ต่อ (fail-open ไม่บล็อกงาน)
+    คืน True ถ้าทับให้จริง
+    """
+    claim = (getattr(data, "claim_value", "") or "").strip()
+    if not claim:
+        return False
+    try:
+        from autokey.isurvey_api import ISurveyAPI
+        api = ISurveyAPI(cfg)
+        api.login()
+        case = api.find_case(claim)
+        disp = (api.get_tab(case["caseID"], 1).get("Dispatch") or {})
+    except Exception as e:
+        log(f"   ℹ️ ไม่ได้เทียบเวลากับ ISURVEY ({type(e).__name__}) — ใช้เวลาจาก XML ตามเดิม")
+        return False
+
+    def _d(v):    # ISURVEY ส่ง YYYY-MM-DD → ClaimData ใช้ DD/MM/YYYY
+        v = str(v or "").strip()
+        if len(v) == 10 and v[4] == "-":
+            return f"{v[8:10]}/{v[5:7]}/{v[0:4]}"
+        return v
+
+    pairs = (("dispatch", "dispatch_date", "dispatch_time", "บ.ประกันแจ้งสำรวจภัย"),
+             ("arrive", "arrive_date", "arrive_time", "ถึงที่เกิดเหตุ"),
+             ("finish", "finish_date", "finish_time", "สำรวจเสร็จ"))
+    changed = []
+    for key, fd, ft, label in pairs:
+        nd, nt = _d(disp.get(f"{key}_date")), str(disp.get(f"{key}_time") or "").strip()
+        if not (nd and nt):
+            continue
+        od, ot = getattr(data, fd, ""), getattr(data, ft, "")
+        setattr(data, fd, nd)
+        setattr(data, ft, nt)
+        if (od, ot) != (nd, nt):
+            changed.append(f"{label} {od or '(ว่าง)'} {ot} → {nd} {nt}")
+    if changed:
+        log("   ✓ ใช้เวลาทำงานจาก ISURVEY tab-1 (แอปเก็บเวลาที่คีย์ ไม่ใช่เวลาทำงานจริง):")
+        for c in changed:
+            log(f"      • {c}")
+    else:
+        log("   ✓ เวลาทำงานตรงกับ ISURVEY อยู่แล้ว")
+    return bool(changed)
+
+
 def run_sesurvey_import(cfg, args):
     """โหมดงานจาก se-survey: ดึง SURV_REPORT XML ของเคสจาก api.sesurvey.cloud
     (แอปสำรวจของเราเอง — ข้อมูลครบกว่า XML ของ ISURVEY) → ตรวจ/parse → นำเข้า EMCS
@@ -1395,6 +1448,8 @@ def run_sesurvey_import(cfg, args):
             f"รถเสียหาย {severity!r}, ชิ้นส่วน {len(data.damage)})")
     except Exception as e:
         log(f"⚠️ ดึง report มาเติม ClaimData ไม่ได้ ({e}) — fill_* อาจหยุดรอกรอกมือบางช่อง")
+
+    _override_times_from_isurvey(cfg, data)
 
     per_run_dl = cfg.download_dir / "_dl" / str(os.getpid())
     driver = make_driver(detach=True, download_dir=per_run_dl)
