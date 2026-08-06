@@ -2476,6 +2476,23 @@ check("เลขท้าย: สรุปยอดบอกว่าเลข�
       "function keyerOfDigits(d)" in _page and "loadKeyerNames()" in _page)
 check("เลขท้าย: placeholder จางกว่าข้อความจริง",
       "#isvtail::placeholder{color:var(--muted);opacity:.45}" in _page)
+# ---- ตัวช่วยใช้งานประจำวัน ----
+check("หัวหน้าตรวจ: จำคนที่เลือกไว้ (แต่ไม่บังคับถ้าเขาไม่มีงานในชุดนั้น)",
+      'localStorage.setItem("isvwho"' in _page
+      and 'localStorage.getItem("isvwho")' in _page
+      and "if (saved && cnt[saved]) cur = saved;" in _page)
+check("ช่วงวันที่: มีปุ่มลัด วันนี้/3 วัน/7 วัน + ไฮไลต์ปุ่มที่ตรงกับช่วงปัจจุบัน",
+      _page.count('class="daybtn" data-days=') == 3
+      and "function daysAgo(n)" in _page and "function markDayBtn()" in _page)
+check("สรุปยอด: แยกยอดรวมกับตัวกรองคนละบรรทัด (คอลัมน์แคบ บรรทัดเดียวยาวเกิน)",
+      "h += '<div style=\"margin-top:2px\">🔎 '" in _page
+      and "box.innerHTML = h;" in _page)
+check("สมุดงาน: กรองช่วงวันที่ได้ + บอกจำนวนที่แสดง",
+      'id="jobsfrom"' in _page and 'id="jobsto"' in _page
+      and 'id="jobscount"' in _page and 'id="jobsclear"' in _page
+      and 'String(j.ts || "").slice(0, 10)' in _page)
+check("สมุดงาน: กรองวันที่ → ดึงมาให้เยอะขึ้น (default 300 แถวอาจไม่ครอบคลุม)",
+      '(from || to ? 2000 : 300)' in _page)
 check("ตัวกรอง: ไม่เหลือซากของ dropdown คนคีย์ตัวเก่า",
       "isvkeyer" not in _page and "syncKeyerSelect" not in _page
       and "__custom" not in _page)

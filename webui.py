@@ -1012,6 +1012,11 @@ PAGE = r"""<!doctype html>
   .fltlab{color:var(--muted);font-size:13px;flex:none;width:64px}
   /* placeholder เป็นแค่คำใบ้ — จางกว่าข้อความจริงชัดๆ ไม่งั้นดูเหมือนกรอกไว้แล้ว */
   #isvtail::placeholder{color:var(--muted);opacity:.45}
+  /* ปุ่มลัดช่วงวันที่ — เล็ก ๆ ไม่แย่งสายตาปุ่มหลัก */
+  .daybtn{background:#f1f5f9;color:#475569;border:1px solid var(--line);
+    border-radius:999px;padding:4px 12px;font-size:12.5px;font-weight:600}
+  .daybtn:hover{background:#e2e8f0}
+  .daybtn.on{background:var(--brand);color:#fff;border-color:var(--brand)}
   .checks{display:flex;flex-wrap:wrap;gap:18px;margin-top:14px}
   .checks label{display:flex;align-items:center;gap:8px;font-size:14px;
     color:#334155;cursor:pointer;user-select:none}
@@ -1277,6 +1282,12 @@ PAGE = r"""<!doctype html>
         <button class="run" id="loadisvbtn"
                 style="flex:none;padding:7px 12px;font-size:13px;white-space:nowrap">↻ ดึงข้อมูล</button>
       </div>
+      <!-- ปุ่มลัดช่วงวันที่ — งานประจำวันดูวันนี้/ย้อนไม่กี่วัน ไม่ต้องเลื่อนปฏิทินเอง -->
+      <div style="display:flex;gap:6px;margin:-4px 0 10px">
+        <button type="button" class="daybtn" data-days="0">วันนี้</button>
+        <button type="button" class="daybtn" data-days="2">3 วัน</button>
+        <button type="button" class="daybtn" data-days="6">7 วัน</button>
+      </div>
       <!-- กรองด้วยเลขท้ายเลขเคลม — คนคีย์แบ่งงานกันตามเลขท้ายอยู่แล้ว
            (แถวนี้โผล่เมื่อดึงข้อมูลมาแล้วเท่านั้น · ว่าง = แสดงทุกเลข)
            อยู่นอก #isvtoolbar ตั้งใจ — กรองแล้วไม่เหลือแถว toolbar จะซ่อน
@@ -1364,6 +1375,16 @@ PAGE = r"""<!doctype html>
        <button id="jobsreload" class="ghost" style="margin-left:auto">↻ โหลดใหม่</button>
       </div>
       <input id="jobsq" placeholder="ค้นเลขเคลม / เลขเซอร์เวย์ / e-Survey / ชื่อคนคีย์">
+      <!-- กรองช่วงวันที่ (กรองจากเวลาที่บันทึกในสมุด) — ว่าง = ทุกวัน -->
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <input type="date" id="jobsfrom" style="padding:6px 8px">
+        <span style="color:var(--muted)">–</span>
+        <input type="date" id="jobsto" style="padding:6px 8px">
+        <button type="button" class="daybtn jobday" data-days="0">วันนี้</button>
+        <button type="button" class="daybtn jobday" data-days="6">7 วัน</button>
+        <button type="button" class="daybtn" id="jobsclear">ทุกวัน</button>
+        <span id="jobscount" style="color:var(--muted);font-size:12.5px;margin-left:auto"></span>
+      </div>
       <div id="jobsbox" class="caselist" style="margin-top:10px">
         <div style="color:var(--muted);font-size:13px;padding:8px 0">กำลังโหลด…</div>
       </div>
@@ -2166,7 +2187,7 @@ function nameKey(s){
 function rebuildWhoOptions(rows){
   const sel = $("#isvwho");
   if (!sel) return;
-  const cur = sel.value;
+  let cur = sel.value;          // let — ข้างล่างอาจแทนด้วยค่าที่จำไว้
   const cnt = {};
   rows.forEach(r => {
     const n = (r.check_by || "").trim();
@@ -2179,21 +2200,36 @@ function rebuildWhoOptions(rows){
   sel.innerHTML = '<option value="">— ทุกคน —</option>'
     + names.map(n => '<option value="' + escHtml(n) + '">'
         + escHtml(n) + ' (' + (cnt[n] || 0) + ')</option>').join("");
+  // ยังไม่เคยเลือกในรอบนี้ → หยิบคนที่จำไว้ให้ (เฉพาะตอนเขามีงานในชุดนี้จริง)
+  // คนคีย์คนเดิมดูของหัวหน้าคนเดิมทุกวัน ไม่ต้องเลือกซ้ำ
+  if (!cur){
+    let saved = "";
+    try{ saved = localStorage.getItem("isvwho") || ""; }catch(e){}
+    if (saved && cnt[saved]) cur = saved;
+  }
   sel.value = cur;
 }
 function updateIsvSummary(shown, who){
-  if (!isvCache.length){ $("#isvsummary").textContent = ""; return; }
+  const box = $("#isvsummary");
+  if (!isvCache.length){ box.textContent = ""; return; }
   const sent = isvCache.filter(x => x.emcs_sent).length;
-  let t = 'จบงาน ' + isvCache.length + ' เรื่อง · นำเข้าแล้ว ' + sent
+  // บรรทัดที่ 1 = ยอดรวม / บรรทัดที่ 2 = ตัวกรองที่เปิดอยู่
+  // (เดิมต่อกันบรรทัดเดียวจนยาวเกินคอลัมน์ อ่านไม่ทัน)
+  let t = 'จบงาน ' + isvCache.length + ' · นำเข้าแล้ว ' + sent
         + ' · รอนำเข้า ' + (isvCache.length - sent);
   const d = [...tailDigits()].sort();
+  const parts = [];
   if (d.length){
     const k = keyerOfDigits(d);      // เลขท้ายชุดนี้เป็นของคนคีย์คนไหน
-    t += ' · เลขท้าย ' + d.join(",") + (k ? ' (' + k + ')' : '');
+    parts.push('เลขท้าย ' + d.join(",") + (k ? ' (' + k + ')' : ''));
   }
-  if (who) t += ' · ' + who;
-  if (d.length || who) t += ' → แสดง ' + shown + ' เรื่อง';
-  $("#isvsummary").textContent = t;
+  if (who) parts.push(who);
+  let h = escHtml(t);
+  if (parts.length){
+    h += '<div style="margin-top:2px">🔎 ' + escHtml(parts.join(" · "))
+       + ' → <b>' + shown + ' เรื่อง</b></div>';
+  }
+  box.innerHTML = h;
 }
 
 function renderIsvCases(){
@@ -2271,7 +2307,35 @@ $("#isvtail").addEventListener("input", () => { saveTail(); renderIsvCases(); })
 $("#isvtailclear").addEventListener("click", () => {
   $("#isvtail").value = ""; saveTail(); renderIsvCases();
 });
-$("#isvwho").addEventListener("change", () => renderIsvCases());
+$("#isvwho").addEventListener("change", e => {
+  try{ localStorage.setItem("isvwho", e.target.value); }catch(err){}
+  renderIsvCases();
+});
+// ปุ่มลัดช่วงวันที่ — ตั้งช่องวันที่ให้แล้วดึงข้อมูลเลย
+function daysAgo(n){
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0")
+         + "-" + String(d.getDate()).padStart(2, "0");
+}
+document.querySelectorAll(".daybtn").forEach(b => {
+  b.addEventListener("click", () => {
+    $("#isvfrom").value = daysAgo(parseInt(b.dataset.days, 10));
+    $("#isvto").value = todayStr();
+    markDayBtn();
+    loadIsvBtn.click();
+  });
+});
+function markDayBtn(){
+  const from = $("#isvfrom").value, to = $("#isvto").value;
+  document.querySelectorAll(".daybtn").forEach(b => {
+    b.classList.toggle("on", to === todayStr()
+                            && from === daysAgo(parseInt(b.dataset.days, 10)));
+  });
+}
+$("#isvfrom").addEventListener("change", markDayBtn);
+$("#isvto").addEventListener("change", markDayBtn);
+markDayBtn();
 loadKeyerNames();
 $("#isvall").addEventListener("change", e => {
   isvBox.querySelectorAll(".isvsel").forEach(c => { c.checked = e.target.checked; });
@@ -2455,12 +2519,24 @@ const EV_LABEL = {sent: "ส่งแล้ว", draft: "draft", send_failed: "�
 async function loadJobs(){
   jobsBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">กำลังโหลด…</div>';
   try{
-    const r = await fetch("/jobs?q=" + encodeURIComponent(jobsQ.value.trim()));
+    const from = $("#jobsfrom").value, to = $("#jobsto").value;
+    // มีกรองวันที่ = ดึงมาเยอะหน่อย (default 300 แถวอาจไม่ครอบคลุมช่วงที่ขอ)
+    const r = await fetch("/jobs?limit=" + (from || to ? 2000 : 300)
+                          + "&q=" + encodeURIComponent(jobsQ.value.trim()));
     const d = await r.json();
-    const rows = d.jobs || [];
+    const all = d.jobs || [];
+    // ts เป็น "YYYY-MM-DD HH:MM" → เทียบสตริง 10 ตัวแรกได้ตรง ๆ
+    const rows = all.filter(j => {
+      const day = String(j.ts || "").slice(0, 10);
+      return (!from || day >= from) && (!to || day <= to);
+    });
+    $("#jobscount").textContent = rows.length
+      ? ("แสดง " + rows.length + (rows.length < all.length ? " / " + all.length : "") + " รายการ")
+      : "";
     if (!rows.length){
       jobsBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">'
-        + (jobsQ.value.trim() ? "ไม่พบงานที่ตรงกับที่ค้น" : "ยังไม่มีงานในสมุด") + '</div>';
+        + (from || to ? "ไม่มีงานในช่วงวันที่นี้"
+           : jobsQ.value.trim() ? "ไม่พบงานที่ตรงกับที่ค้น" : "ยังไม่มีงานในสมุด") + '</div>';
       return;
     }
     jobsBox.innerHTML = '<table class="jobtbl"><thead><tr>'
@@ -2484,6 +2560,18 @@ async function loadJobs(){
 $("#jobsreload").addEventListener("click", loadJobs);
 let jobsTimer = null;
 jobsQ.addEventListener("input", () => { clearTimeout(jobsTimer); jobsTimer = setTimeout(loadJobs, 300); });
+document.querySelectorAll(".jobday").forEach(b => {
+  b.addEventListener("click", () => {
+    $("#jobsfrom").value = daysAgo(parseInt(b.dataset.days, 10));
+    $("#jobsto").value = todayStr();
+    loadJobs();
+  });
+});
+$("#jobsclear").addEventListener("click", () => {
+  $("#jobsfrom").value = ""; $("#jobsto").value = ""; loadJobs();
+});
+$("#jobsfrom").addEventListener("change", loadJobs);
+$("#jobsto").addEventListener("change", loadJobs);
 
 // ---------------- ⚙ ตั้งค่า: คนคีย์ตามเลขท้ายเลขเคลม ----------------
 const keyersBox = $("#keyersbox"), keyersMsg = $("#keyersmsg");
