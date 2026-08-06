@@ -1226,7 +1226,7 @@ PAGE = r"""<!doctype html>
   </header>
 
   <div class="tabs">
-    <button class="tab active" data-pane="isurvey">🖊 กรอกเคลม ISURVEY</button>
+    <button class="tab active" data-pane="isurvey">🖊 นำเข้า ISURVEY</button>
     <button class="tab" data-pane="sesurvey">📥 นำเข้า SE Survey</button>
     <button class="tab" data-pane="jobs">📚 สมุดงาน</button>
     <button class="tab" data-pane="settings">⚙ ตั้งค่า</button>
