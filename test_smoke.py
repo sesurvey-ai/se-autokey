@@ -1773,26 +1773,6 @@ check("เวลาแจ้ง: ไม่มีเวลาลูกค้า�
       (_d_one.call_date, _d_one.call_time) == ('', '')
       and _d_one.noti_time == '14:27')
 
-# ---- ชุดเวลาทำงานเอาจาก tab-1 Summary เท่านั้น (user ยืนยัน 2026-08-06) ----
-# หน้าการ์ด (tab-8 notified_*) ไม่ตรงกับของจริง — เคลม 2026013160796: การ์ด 14:37
-# แต่จ่ายงานจริง 14:41
-_fa = _insp.getsource(emcs.fill_accident)
-check("เวลา: 'บ.ประกันแจ้งสำรวจภัย' ใช้จ่ายงานเวลา (tab-1) ไม่ใช่เวลาบนหน้าการ์ด",
-      "ins_date = to_buddhist_date(data.dispatch_date) or noti_date" in _fa
-      and 'set_text(driver, "wuCale_Ins_Calling_Surv_Date_txtCalendar", ins_date)' in _fa)
-check("เวลา: ไม่มีจ่ายงาน (เส้น se-survey/XML) → ถอยไปใช้ noti_* เหมือนเดิม",
-      "if not (ih or im):" in _fa and "ih, im = nh, nm" in _fa)
-check("เวลา: ถึงที่เกิดเหตุ/เสร็จงาน ยังมาจาก tab-1 เหมือนเดิม",
-      'set_text(driver, "wuCale_Acc_Reach_txtCalendar", to_buddhist_date(data.arrive_date))' in _fa
-      and 'set_text(driver, "wuCale_Acc_Finish_txtCalendar", to_buddhist_date(data.finish_date))' in _fa)
-_isvsrc = __import__("pathlib").Path("autokey/isurvey_api.py").read_text(encoding="utf-8")
-check("เวลา: ฝั่ง API อ่าน dispatch_date/time จาก tab-1 Dispatch",
-      'd.dispatch_date = _ddmmyyyy(disp.get("dispatch_date"))' in _isvsrc
-      and 'd.dispatch_time = disp.get("dispatch_time", "")' in _isvsrc)
-_scrsrc = __import__("pathlib").Path("autokey/isurvey.py").read_text(encoding="utf-8")
-check("เวลา: ฝั่ง scrape อ่านช่องจ่ายงานของ tab-1 ด้วย",
-      'tab1_dispatch_date-inputEl' in _scrsrc and 'tab1_dispatch_time-inputEl' in _scrsrc)
-
 # รูป "ยืนยันถึงที่เกิดเหตุ" = หลักฐานภายในของ se-survey ห้ามส่งเข้า EMCS (กติกา user 2026-07-26)
 check("arrival: arrival.jpg = รูปยืนยันถึงที่เกิดเหตุ → ข้าม",
       _main._is_arrival_photo('arrival.jpg') and _main._is_arrival_photo('ARRIVAL.JPG')

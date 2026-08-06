@@ -279,10 +279,6 @@ class ClaimData:
     # ISURVEY ไม่มีข้อมูลนี้ → ว่าง แล้ว fill_accident จะ fallback ไปใช้ noti_* เหมือนเดิม
     call_date: str = ""
     call_time: str = ""
-    # "จ่ายงานเวลา" จาก tab-1 Summary (Dispatch) = วันที่ บ.ประกันแจ้งสำรวจภัย ของ EMCS
-    # user ยืนยัน 2026-08-06: ให้ใช้ชุดเวลาจาก tab-1 เท่านั้น หน้าการ์ด (tab-8) ไม่ตรง
-    dispatch_date: str = ""
-    dispatch_time: str = ""
 
     # ---- อื่นๆ ----
     xml_file: str = ""             # path ไฟล์ SURV_REPORT XML ที่ดาวน์โหลดไว้
