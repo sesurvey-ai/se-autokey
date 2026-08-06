@@ -84,15 +84,26 @@ _fvsrc = __import__("inspect").getsource(emcs.fill_verdict)
 check("ผลคดี: fill_verdict ไม่ใช้ fuzzy แล้ว (เทียบตรงตัวอย่างเดียว)",
       "process.extractOne" not in _fvsrc and "fuzz.WRatio" not in _fvsrc
       and "CAUSE_RADIO.get(_res)" in _fvsrc)
-# เตือนบนการ์ด ไม่หยุดกลางทาง (user 2026-08-06) — บอทกรอกจนจบแล้วให้คนตรวจทีเดียว
-check("ผลคดี: ค่าที่ไม่รู้จัก → เตือนบนการ์ด ไม่หยุดรอกลางทาง",
-      "_review_note(data" in _fvsrc and "wait_for_manual_fill" not in _fvsrc)
-check("ผลคดี: 2 กรณีที่ต้องให้หัวหน้าตรวจ (ถูกและผิด / ไม่มีคู่กรณี)",
-      emcs.CARD_REVIEW_VERDICTS == {"รถประกันเป็นฝ่ายถูกและผิด", "ไม่มีคู่กรณี"}
-      and "CARD_REVIEW_VERDICTS" in _fvsrc)
+# user สรุปรอบสอง 2026-08-06: 3 กรณีนี้ให้ "หยุดรอ" ให้หัวหน้าตัดสิน ไม่ใช่แค่เตือน
+check("ผลคดี: ค่าที่ไม่รู้จัก/ไม่มีคู่ → หยุดรอให้หัวหน้าเลือกเอง",
+      "wait_for_manual_fill" in _fvsrc and "ไม่มีคู่ที่ตรงกันใน EMCS" in _fvsrc)
+check("ผลคดี: 'รถประกันเป็นฝ่ายถูกและผิด' บอทห้ามเลือกเอง → หยุดรอ",
+      emcs.NO_AUTO_RADIO == {"rdoAcc_Cause04"}
+      and emcs.CAUSE_RADIO["รถประกันเป็นฝ่ายถูกและผิด"] == "rdoAcc_Cause04"
+      and "rid in NO_AUTO_RADIO" in _fvsrc
+      and "บอทไม่เลือกให้ หยุดรอหัวหน้าตัดสิน" in _fvsrc)
+check("ผลคดี: คู่กรณีผิด + ข้อมูลบังคับยังว่าง → หยุดรอให้ติ๊กการเรียกร้อง",
+      "if _opp and missing:" in _fvsrc
+      and 'f"chkOpo_Result_{i}" for i in range(5)' in _fvsrc)
+check("ผลคดี: ผลคดีอื่นที่พิสูจน์แล้ว → เลือกให้เลย ไม่หยุด",
+      emcs.CAUSE_RADIO["รถประกันเป็นฝ่ายผิด"] == "rdoAcc_Cause00"
+      and emcs.CAUSE_RADIO["ประมาทร่วม"] == "rdoAcc_Cause02"
+      and emcs.CAUSE_RADIO["รอคำตัดสิน"] == "rdoAcc_Cause03")
 # 'คู่กรณีคันที่' + การเรียกร้อง = บังคับเฉพาะผลคดี rdoAcc_Cause01 เท่านั้น
 check("ผลคดี: ส่งธงบอก _fill_opponent_fault ว่าเป็นเคสคู่กรณีผิดหรือไม่",
-      'is_opponent_fault=(rid == "rdoAcc_Cause01")' in _fvsrc)
+      "_opp = (rid == OPPONENT_FAULT_RADIO)" in _fvsrc
+      and "is_opponent_fault=_opp" in _fvsrc
+      and emcs.OPPONENT_FAULT_RADIO == "rdoAcc_Cause01")
 _ofsrc = __import__("inspect").getsource(emcs._fill_opponent_fault)
 check("คู่กรณีคันที่: ไม่แตะเลยถ้าผลคดีไม่ใช่ 'รถคู่กรณีเป็นฝ่ายผิด'",
       "if is_opponent_fault:" in _ofsrc)
@@ -1396,21 +1407,31 @@ _tx_other, _bx_other = _run_opo_fault(_opp_fault=False, acc_fault_opponent_no='2
                                       opo_results='คัดประจำวัน')
 check("คู่กรณีคันที่: ผลคดีอื่น → ไม่กรอก txtAcc_Cause_No (แต่ยังติ๊กการเรียกร้องได้)",
       'txtAcc_Cause_No' not in _tx_other and _bx_other == [0], str(_tx_other))
-# เตือนบนการ์ด: เคสคู่กรณีผิดที่ข้อมูลไม่ครบ ต้องเก็บโน้ตไว้ให้หัวหน้าเห็นตอนรอส่ง
-_d_note = claim_data.ClaimData()
-_o_log = emcs.log
-emcs.log = lambda *a, **k: None
-try:
-    emcs._fill_opponent_fault(
-        _types.SimpleNamespace(find_element=lambda by, eid: _FakeCb()),
-        _d_note, is_opponent_fault=True)
-finally:
-    emcs.log = _o_log
-check("เตือนการ์ด: คู่กรณีผิด + ไม่รู้คันที่/ไม่มีติ๊ก → เก็บโน้ตครบ 2 ข้อ",
-      len(_d_note.review_notes) == 2
-      and any("คู่กรณีคันที่" in n for n in _d_note.review_notes)
-      and any("การเรียกร้อง" in n for n in _d_note.review_notes),
-      str(_d_note.review_notes))
+# คู่กรณีผิด + ข้อมูลบังคับยังว่าง → ต้องรายงานกลับว่าขาดอะไร (ผู้เรียกเอาไปหยุดรอ)
+def _missing_of(**kw):
+    d = claim_data.ClaimData()
+    for k, v in kw.items():
+        setattr(d, k, v)
+    _o = (emcs.log, emcs.set_text)
+    emcs.log = lambda *a, **k: None
+    emcs.set_text = lambda *a, **k: None
+    try:
+        return emcs._fill_opponent_fault(
+            _types.SimpleNamespace(find_element=lambda by, eid: _FakeCb()),
+            d, is_opponent_fault=True)
+    finally:
+        (emcs.log, emcs.set_text) = _o
+
+
+check("คู่กรณีผิด: ไม่รู้คันที่ + ไม่มีติ๊ก → คืนช่องที่ขาดครบ 2 ข้อ",
+      _missing_of() == ["คู่กรณีคันที่", "การเรียกร้องค่าเสียหายจากคู่กรณี"],
+      str(_missing_of()))
+check("คู่กรณีผิด: ข้อมูลครบ → ไม่ต้องหยุดรอ (ไม่มีช่องขาด)",
+      _missing_of(acc_fault_opponent_no='1', opo_results='คัดประจำวัน') == [],
+      str(_missing_of(acc_fault_opponent_no='1', opo_results='คัดประจำวัน')))
+check("คู่กรณีผิด: ติ๊กไม่เข้าสักข้อ (ชื่อไม่รู้จัก) → ยังนับว่าขาด",
+      "การเรียกร้องค่าเสียหายจากคู่กรณี"
+      in _missing_of(acc_fault_opponent_no='1', opo_results='อะไรก็ไม่รู้'))
 _main_src = __import__("pathlib").Path("main.py").read_text(encoding="utf-8")
 check("เตือนการ์ด: main.py เอา review_notes ไปต่อท้าย reason ของการ์ดสั่งส่ง",
       'getattr(data, "review_notes", [])' in _main_src)

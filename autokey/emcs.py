@@ -96,9 +96,11 @@ CAUSE_RADIO = {
     "ฝ่ายถูกและผิด": "rdoAcc_Cause04",
 }
 
-# ผลคดีที่ให้ขึ้นเตือนบนการ์ด "รอหัวหน้าตรวจ" ก่อนกดส่ง (user สรุป 2026-08-06)
-# ไม่ใช่ข้อผิดพลาด — แค่ 2 กรณีที่ตีความได้หลายทาง อยากให้คนยืนยันด้วยตา
-CARD_REVIEW_VERDICTS = {"รถประกันเป็นฝ่ายถูกและผิด", "ไม่มีคู่กรณี"}
+# radio ที่ "บอทห้ามเลือกเอง" — ต้องให้หัวหน้าตัดสิน (user สรุป 2026-08-06)
+# rdoAcc_Cause04 = 'รถประกันเป็นฝ่ายถูกและผิด' (ทั้งถูกทั้งผิดพร้อมกัน = ต้องคนอ่านสำนวน)
+NO_AUTO_RADIO = {"rdoAcc_Cause04"}
+# radio ที่เลือกให้ได้ แต่ EMCS บังคับข้อมูลต่อท้ายที่บอทกรอกแทนไม่ได้
+OPPONENT_FAULT_RADIO = "rdoAcc_Cause01"   # 'รถคู่กรณีเป็นฝ่ายผิด คู่กรณีคันที่ __'
 
 
 def _review_note(data, msg: str):
@@ -1785,22 +1787,43 @@ def fill_verdict(driver, data: ClaimData):
 
     _res = " ".join(str(data.acc_result).split())
     rid = CAUSE_RADIO.get(_res)
+    _RADIOS = sorted(set(CAUSE_RADIO.values()))
     if rid is None:
-        # เช่น 'ไม่มีคู่กรณี' — EMCS ไม่มีช่องที่ตรงกัน ปล่อยว่างไว้ ไม่หยุดกลางทาง
-        # (user 2026-08-06: ให้เตือนบนการ์ดรอหัวหน้าตรวจ ดีกว่าให้บอทค้างรอคน)
-        log(f"   ⚠️ ผลคดี '{_res}' ไม่มีคู่ที่ตรงกันใน EMCS — เว้นไว้ให้หัวหน้าเลือกเอง")
-        _review_note(data, f"ผลคดี '{_res}' ไม่มีตัวเลือกตรงกันบน EMCS — "
-                           "ยังไม่ได้เลือกให้ เลือกเองก่อนกดส่ง")
+        # เช่น 'ไม่มีคู่กรณี' หรือค่าที่ไม่รู้จัก — EMCS ไม่มีช่องที่ตรงกัน
+        log(f"   ⚠️ ผลคดี '{_res}' ไม่มีคู่ที่ตรงกันใน EMCS — หยุดรอให้หัวหน้าเลือกเอง")
+        wait_for_manual_fill("ผลคดี (ฝ่ายประมาท)",
+                             f"ผลคดีของ ISURVEY คือ '{_res}' "
+                             "ซึ่งไม่มีตัวเลือกตรงกันบน EMCS — เลือกช่องที่ตรงสำนวนเอง",
+                             focus_ids=_RADIOS, driver=driver)
+    elif rid in NO_AUTO_RADIO:
+        # user 2026-08-06: 'รถประกันเป็นฝ่ายถูกและผิด' บอทห้ามเลือกเอง
+        log(f"   ⏸️ ผลคดี '{_res}' — บอทไม่เลือกให้ หยุดรอหัวหน้าตัดสิน")
+        wait_for_manual_fill("ผลคดี (ฝ่ายประมาท)",
+                             f"ผลคดี '{_res}' ต้องให้หัวหน้าตัดสินเอง "
+                             "บอทไม่เลือกช่องนี้ให้ — เลือกบนหน้า EMCS แล้วกดดำเนินการต่อ",
+                             focus_ids=_RADIOS, driver=driver)
     else:
         log(f"   ✓ ผลคดี: '{_res}'")
         driver.find_element(By.ID, rid).click()
-        if _res in CARD_REVIEW_VERDICTS:
-            _review_note(data, f"ผลคดี '{_res}' — ตรวจให้แน่ใจว่าตรงกับสำนวนก่อนกดส่ง")
     # "การเรียกร้องค่าเสียหายจากคู่กรณี" (chkOpo_Result + ยอดเงิน 2 ช่อง) ไม่ได้ผูกกับผลคดี
     # ยืนยันจากงานจริงที่พนักงานกรอก (เคลมไอโออิ 2026013058298): ผลคดี = rdoAcc_Cause03
     # 'รอสรุปผลคดี' แต่ยังติ๊ก chkOpo_Result_0 ไว้ → เดิมบอทกรอกเฉพาะตอน rdoAcc_Cause01
     # ทำให้เซอร์เวย์ติ๊ก+พิมพ์ยอดเงินไปฟรีทุกเคสที่ผลคดีเป็นอย่างอื่น
-    _fill_opponent_fault(driver, data, is_opponent_fault=(rid == "rdoAcc_Cause01"))
+    _opp = (rid == OPPONENT_FAULT_RADIO)
+    missing = _fill_opponent_fault(driver, data, is_opponent_fault=_opp)
+    # ผลคดี = คู่กรณีผิด เป็นช่องเดียวที่ EMCS บังคับ 'คู่กรณีคันที่' + ติ๊กการเรียกร้อง
+    # และเป็นข้อมูลที่บอทติ๊กแทนเซอร์เวย์ไม่ได้ → หยุดรอตรงนี้เลย (user 2026-08-06)
+    if _opp and missing:
+        log("   ⏸️ รอหัวหน้าเลือก 'การเรียกร้องค่าเสียหายจากคู่กรณี'"
+            + (" + กรอก 'คู่กรณีคันที่'" if "คู่กรณีคันที่" in " ".join(missing) else ""))
+        wait_for_manual_fill(
+            " + ".join(missing),
+            "ผลคดี = 'รถคู่กรณีเป็นฝ่ายผิด' → EMCS บังคับให้ระบุคู่กรณีคันที่ และติ๊ก "
+            "'การเรียกร้องค่าเสียหายจากคู่กรณี' อย่างน้อย 1 ข้อ "
+            "(คัดประจำวัน / รับหลักฐานจากคู่กรณี / บันทึกยอมรับผิด / บัตรติดต่อ / รับเงินจำนวน)",
+            focus_ids=(["txtAcc_Cause_No"] if "คู่กรณีคันที่" in " ".join(missing) else [])
+                      + [f"chkOpo_Result_{i}" for i in range(5)],
+            driver=driver)
     _fill_followup(driver, data)
 
 
@@ -1864,8 +1887,11 @@ def _fill_opponent_fault(driver, data: ClaimData, is_opponent_fault: bool = Fals
     is_opponent_fault=False (ผลคดีอื่น) → ไม่แตะ 'คู่กรณีคันที่' เลย (user 2026-08-06:
     ช่องนั้นเป็นของผลคดีนี้ช่องเดียว) แต่ยังติ๊กการเรียกร้องตามข้อมูลที่มีได้
 
+    คืน list ชื่อช่องที่ EMCS บังคับแต่ยังว่างอยู่ (ผู้เรียกเอาไปหยุดรอคนกรอก)
+
     ⚠️ ต้อง .click() จริง (ห้าม set .checked ผ่าน JS) เพราะ onclick ของ EMCS เป็นตัว
     ปลดล็อกช่อง txtOpo_Pay/txtOpo_Recovery_Amount ถ้าไม่ยิง set_text จะไม่เข้า"""
+    missing = []
     # 1) คู่กรณีคันที่ — เฉพาะผลคดี 'รถคู่กรณีเป็นฝ่ายผิด' เท่านั้น
     if is_opponent_fault:
         # ใช้ค่าจากรายงานถ้ามี; ไม่มีแต่มีคู่กรณีคันเดียว = คันที่ 1 แน่นอน
@@ -1878,21 +1904,16 @@ def _fill_opponent_fault(driver, data: ClaimData, is_opponent_fault: bool = Fals
         else:
             log(f"   ⚠️ ไม่รู้ว่าคู่กรณีคันไหนผิด (มี {len(data.third_parties or [])} คัน) — "
                 "กรอก 'คู่กรณีคันที่' เองบนหน้าจอ (EMCS บังคับ)")
-            _review_note(data, "ผลคดี = รถคู่กรณีเป็นฝ่ายผิด → กรอก 'คู่กรณีคันที่' "
-                               f"เอง (มีคู่กรณี {len(data.third_parties or [])} คัน "
-                               "บอทไม่รู้ว่าคันไหนผิด) — EMCS บังคับ")
+            missing.append("คู่กรณีคันที่")
 
     # 2) การเรียกร้องค่าเสียหายจากคู่กรณี
     picked = [s.strip() for s in str(data.opo_results or "").split(",") if s.strip()]
     if not picked:
         log("   ⚠️ ไม่มีข้อมูล 'การเรียกร้องค่าเสียหายจากคู่กรณี' — ติ๊กเองบนหน้าจอ "
             "(EMCS บังคับอย่างน้อย 1 ข้อ; บอทไม่ติ๊กมั่วแทนเซอร์เวย์)")
-        if is_opponent_fault:
-            _review_note(data, "ผลคดี = รถคู่กรณีเป็นฝ่ายผิด → ติ๊ก "
-                               "'การเรียกร้องค่าเสียหายจากคู่กรณี' อย่างน้อย 1 ข้อ "
-                               "(คัดประจำวัน / รับหลักฐาน / บันทึกยอมรับผิด / บัตรติดต่อ / "
-                               "รับเงิน) — EMCS บังคับ ไม่ติ๊กกดส่งไม่ผ่าน")
-        return
+        missing.append("การเรียกร้องค่าเสียหายจากคู่กรณี")
+        return missing
+    ticked = 0
     for t in picked:
         idx = OPO_RESULT_IDX.get(t)
         if idx is None:
@@ -1905,6 +1926,7 @@ def _fill_opponent_fault(driver, data: ClaimData, is_opponent_fault: bool = Fals
             if not cb.is_selected():
                 cb.click()
             log(f"   ☑ {t}")
+            ticked += 1
         except Exception as e:
             log(f"   ⚠️ ติ๊ก '{t}' ไม่ได้ ({type(e).__name__}) — ติ๊กเองบนหน้าจอ")
             continue
@@ -1912,6 +1934,10 @@ def _fill_opponent_fault(driver, data: ClaimData, is_opponent_fault: bool = Fals
             set_text(driver, "txtOpo_Pay", data.opo_pay)
             set_text(driver, "txtOpo_Recovery_Amount", data.opo_recovery)
             log(f"   ✓ รับเงิน {data.opo_pay} จากเรียกร้องทั้งหมด {data.opo_recovery}")
+    # มีข้อมูลมาแต่ติ๊กไม่เข้าสักข้อ = ยังไม่ผ่านด่าน EMCS อยู่ดี
+    if not ticked:
+        missing.append("การเรียกร้องค่าเสียหายจากคู่กรณี")
+    return missing
 
 
 def _opo_amounts_ok(data: ClaimData) -> bool:
