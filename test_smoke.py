@@ -2373,30 +2373,34 @@ check("กรองเลขท้าย: ช่องกรองอยู่�
 check("กรองเลขท้าย: ไม่เจอ → บอกว่าไม่มีเลขนั้น ไม่ใช่ 'นำเข้าไปแล้ว'",
       "ไม่มีเคลมลงท้ายด้วย" in _page)
 check("กรองเลขท้าย: สรุปยอดนับผลกรองด้วย (คำนวณที่เดียวใน renderIsvCases)",
-      "function updateIsvSummary(shown)" in _page
+      "function updateIsvSummary(shown, who)" in _page
       and _page.count("'จบงาน ' + isvCache.length") == 1)
 check("กรองเลขท้าย: จำค่าไว้ให้ ไม่ต้องพิมพ์ใหม่ทุกวัน",
       'localStorage.setItem("isvtail"' in _page
       and 'localStorage.getItem("isvtail")' in _page)
-# dropdown "ผู้ตรวจ" = ตารางคนคีย์ — เลือกชื่อ/เลือกเลข อย่างใดอย่างหนึ่งก็ได้
-check("ผู้ตรวจ: มี dropdown ที่ดึงชื่อจากตารางคนคีย์ (/settings)",
-      'id="isvkeyer"' in _page and "async function loadIsvKeyerFilter()" in _page
-      and 'fetch("/settings")' in _page)
-check("ผู้ตรวจ: คนหนึ่งถือได้หลายเลขท้าย (รวมเป็นตัวเลือกเดียว)",
-      "(byName[n] = byName[n] || []).push(dg)" in _page
-      and 'byName[n].join(",")' in _page)
-check("ผู้ตรวจ: เลือกชื่อ → เติมเลขท้ายให้เอง",
-      '$("#isvtail").value = e.target.value;' in _page)
-check("ผู้ตรวจ: พิมพ์เลขเอง → ชื่อใน dropdown เด้งตาม",
-      "function syncKeyerSelect()" in _page
-      and "saveTail(); syncKeyerSelect(); renderIsvCases();" in _page)
-check("ผู้ตรวจ: เลขที่ไม่ตรงกับใคร → ป้าย 'เลือกเลขเอง' (ไม่ใช่ค้างชื่อคนอื่น)",
-      'value="__custom" hidden' in _page
-      and 'if (e.target.value === "__custom") return;' in _page)
-check("ผู้ตรวจ: แก้ตารางคนคีย์แล้ว dropdown อัปเดตตาม ไม่ต้องรีเฟรช",
-      _page.count("loadIsvKeyerFilter()") >= 3)
-check("ผู้ตรวจ: placeholder ช่องเลขท้ายจางกว่าข้อความจริง",
+# dropdown "ผู้ตรวจสอบ" = พนักงานสำรวจของงานที่ดึงมา (ISURVEY ส่งมาเป็น "รหัส ชื่อ")
+check("ผู้ตรวจสอบ: มี dropdown แยกจากช่องเลขท้าย (ใช้อันเดียวหรือคู่กันก็ได้)",
+      'id="isvwho"' in _page and "function rebuildWhoOptions(rows)" in _page)
+check("ผู้ตรวจสอบ: ชื่อมาจากงานที่ดึงมา ไม่ใช่ตารางคนคีย์",
+      'r.surveyor_name || ""' in _page
+      and "const rows = who ? base.filter(" in _page)
+check("ผู้ตรวจสอบ: ตัวเลือกคิดจากงานที่เหลือหลังกรองเลขท้ายแล้ว",
+      _page.index("rebuildWhoOptions(base)") > _page.index("&& matchTail(r.claim_no, digits));"))
+check("ผู้ตรวจสอบ: บอกจำนวนงานของแต่ละคนในวงเล็บ",
+      "cnt[n] = (cnt[n] || 0) + 1" in _page and "' (' + (cnt[n] || 0) + ')</option>'" in _page)
+check("ผู้ตรวจสอบ: เรียงตามชื่อ ไม่ใช่รหัสพนักงาน",
+      "function nameKey(s)" in _page and 'localeCompare(nameKey(b), "th")' in _page)
+check("ผู้ตรวจสอบ: เลือกคนที่ไม่มีงานในชุดนี้ → คงตัวเลือกไว้ให้เห็นว่า (0)",
+      "if (cur && !cnt[cur]) names.push(cur);" in _page and "sel.value = cur;" in _page)
+check("ผู้ตรวจสอบ: ไม่เจอ → บอกว่าไม่มีงานของคนนั้น ไม่ใช่ 'นำเข้าไปแล้ว'",
+      "'ไม่มีงานของ '" in _page)
+check("เลขท้าย: สรุปยอดบอกว่าเลขนั้นเป็นของคนคีย์คนไหน",
+      "function keyerOfDigits(d)" in _page and "loadKeyerNames()" in _page)
+check("เลขท้าย: placeholder จางกว่าข้อความจริง",
       "#isvtail::placeholder{color:var(--muted);opacity:.45}" in _page)
+check("ตัวกรอง: ไม่เหลือซากของ dropdown คนคีย์ตัวเก่า",
+      "isvkeyer" not in _page and "syncKeyerSelect" not in _page
+      and "__custom" not in _page)
 
 
 # ---- 22h. สั่งส่งงาน: ห้ามสมมติว่ายังอยู่หน้าค่าใช้จ่าย ----

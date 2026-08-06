@@ -1003,7 +1003,7 @@ PAGE = r"""<!doctype html>
     box-shadow:0 0 0 3px rgba(99,102,241,.15)}
   .grid{display:grid;grid-template-columns:1fr 160px;gap:12px;margin-top:12px}
   /* ตัวกรองรายการงาน — ป้ายกว้างเท่ากันสองบรรทัด ช่องกรอกจะได้ตรงกัน */
-  .fltlab{color:var(--muted);font-size:13px;flex:none;width:52px}
+  .fltlab{color:var(--muted);font-size:13px;flex:none;width:64px}
   /* placeholder เป็นแค่คำใบ้ — จางกว่าข้อความจริงชัดๆ ไม่งั้นดูเหมือนกรอกไว้แล้ว */
   #isvtail::placeholder{color:var(--muted);opacity:.45}
   .checks{display:flex;flex-wrap:wrap;gap:18px;margin-top:14px}
@@ -1277,8 +1277,8 @@ PAGE = r"""<!doctype html>
            ถ้าช่องกรองอยู่ในนั้นด้วยจะล้างค่าไม่ได้ ต้องกดดึงข้อมูลใหม่ -->
       <div id="isvtailrow" hidden style="margin-bottom:8px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <span class="fltlab">ผู้ตรวจ</span>
-          <select id="isvkeyer" style="flex:1;min-width:0;padding:6px 8px"></select>
+          <span class="fltlab">ผู้ตรวจสอบ</span>
+          <select id="isvwho" style="flex:1;min-width:0;padding:6px 8px"></select>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           <span class="fltlab">เลขท้าย</span>
@@ -2135,63 +2135,77 @@ function matchTail(claim, digits){
 function saveTail(){
   try{ localStorage.setItem("isvtail", $("#isvtail").value); }catch(e){}
 }
-// dropdown "ผู้ตรวจ" = ตารางคนคีย์ (เลขท้าย → ชื่อ) จากหน้าตั้งค่า
-// เลือกชื่อ = เติมเลขท้ายของคนนั้นให้ · พิมพ์เลขเอง = ชื่อเด้งตาม
-// ทั้งคู่กรองด้วยเลขท้ายเหมือนกัน (คนละหน้าตาของตัวกรองเดียวกัน)
-async function loadIsvKeyerFilter(){
-  let table = {};
+// ตารางคนคีย์ (เลขท้าย → ชื่อ) — ใช้แค่บอกใบ้ในสรุปยอดว่าเลขท้ายที่กรองเป็นของใคร
+let keyerMap = {};
+async function loadKeyerNames(){
   try{
     const r = await fetch("/settings");
-    table = (await r.json()).keyers || {};
-  }catch(e){ table = {}; }
-  const byName = {};              // ชื่อ → ["0","1"] (คนหนึ่งถือได้หลายเลข)
-  "0123456789".split("").forEach(dg => {
-    const n = (table[dg] || "").trim();
-    if (n) (byName[n] = byName[n] || []).push(dg);
-  });
-  $("#isvkeyer").innerHTML = '<option value="">— ทุกคน —</option>'
-    + Object.keys(byName).map(n => '<option value="' + escHtml(byName[n].join(",")) + '">'
-        + escHtml(n) + ' (' + byName[n].join(",") + ')</option>').join("")
-    + '<option value="__custom" hidden>— เลือกเลขเอง —</option>';
-  syncKeyerSelect();
-  // โหลด dropdown เสร็จทีหลัง render → วาดใหม่ให้สรุปยอดขึ้นชื่อคน
-  // (เฉพาะตอนมีรายการแล้ว ไม่งั้นจะขึ้น "ไม่พบงาน" ทั้งที่ยังไม่ได้กดดึงข้อมูล)
+    keyerMap = (await r.json()).keyers || {};
+  }catch(e){ keyerMap = {}; }
   if (isvCache.length) renderIsvCases();
 }
-function syncKeyerSelect(){
-  const sel = $("#isvkeyer");
-  if (!sel || !sel.options.length) return;
-  const cur = [...tailDigits()].sort().join(",");
-  const hit = [...sel.options].find(o => o.value !== "__custom"
-      && o.value.split(",").filter(Boolean).sort().join(",") === cur);
-  sel.value = hit ? hit.value : "__custom";
+function keyerOfDigits(d){
+  const names = [...new Set(d.map(x => (keyerMap[x] || "").trim()).filter(Boolean))];
+  return names.length === 1 ? names[0] : "";   // คนละคนกัน = ไม่ต้องบอกชื่อ
 }
-function updateIsvSummary(shown){
+
+// dropdown "ผู้ตรวจสอบ" = พนักงานสำรวจของงานที่ดึงมา (ISURVEY ส่งมาเป็น "รหัส ชื่อ")
+// ตัวเลือกคิดจากงานที่เหลือหลังกรองเลขท้ายแล้ว → เลือกเลขท้าย 0,1 ก็เห็นเฉพาะ
+// คนที่มีงานในเลขนั้น (ตัวเลขในวงเล็บ = จำนวนงานของคนนั้น)
+function nameKey(s){
+  return String(s).replace(/^SEC?[0-9]+\s*/, "")
+                  .replace(/^(นาย|นาง|นางสาว)\s*/, "").trim();
+}
+function rebuildWhoOptions(rows){
+  const sel = $("#isvwho");
+  if (!sel) return;
+  const cur = sel.value;
+  const cnt = {};
+  rows.forEach(r => {
+    const n = (r.surveyor_name || "").trim();
+    if (n) cnt[n] = (cnt[n] || 0) + 1;
+  });
+  const names = Object.keys(cnt).sort((a, b) => nameKey(a).localeCompare(nameKey(b), "th"));
+  // เลือกคนไว้แล้วเขาไม่มีงานในชุดนี้ → คงตัวเลือกไว้ให้เห็นว่า (0)
+  // ไม่งั้น select เด้งกลับเป็น "ทุกคน" เงียบ ๆ แล้วคนใช้นึกว่าตัวกรองหาย
+  if (cur && !cnt[cur]) names.push(cur);
+  sel.innerHTML = '<option value="">— ทุกคน —</option>'
+    + names.map(n => '<option value="' + escHtml(n) + '">'
+        + escHtml(n) + ' (' + (cnt[n] || 0) + ')</option>').join("");
+  sel.value = cur;
+}
+function updateIsvSummary(shown, who){
   if (!isvCache.length){ $("#isvsummary").textContent = ""; return; }
   const sent = isvCache.filter(x => x.emcs_sent).length;
   let t = 'จบงาน ' + isvCache.length + ' เรื่อง · นำเข้าแล้ว ' + sent
         + ' · รอนำเข้า ' + (isvCache.length - sent);
   const d = [...tailDigits()].sort();
   if (d.length){
-    // เลขที่กรองตรงกับคนคีย์คนไหน ก็บอกชื่อไปเลย (ป้ายใน dropdown มีเลขอยู่แล้ว)
-    const sel = $("#isvkeyer");
-    const who = (sel && sel.value && sel.value !== "__custom")
-              ? sel.options[sel.selectedIndex].text : "";
-    t += ' · ' + (who || ('เลขท้าย ' + d.join(","))) + ' → แสดง ' + shown + ' เรื่อง';
+    const k = keyerOfDigits(d);      // เลขท้ายชุดนี้เป็นของคนคีย์คนไหน
+    t += ' · เลขท้าย ' + d.join(",") + (k ? ' (' + k + ')' : '');
   }
+  if (who) t += ' · ' + who;
+  if (d.length || who) t += ' → แสดง ' + shown + ' เรื่อง';
   $("#isvsummary").textContent = t;
 }
 
 function renderIsvCases(){
   const hideSent = $("#isvhidesent").checked;
   const digits = tailDigits();
-  const rows = isvCache.filter(r => !(hideSent && r.emcs_sent)
+  // กรองเลขท้ายก่อน แล้วค่อยสร้างตัวเลือก "ผู้ตรวจสอบ" จากงานที่เหลือ
+  const base = isvCache.filter(r => !(hideSent && r.emcs_sent)
                                  && matchTail(r.claim_no, digits));
+  rebuildWhoOptions(base);
+  const who = $("#isvwho").value;
+  const rows = who ? base.filter(r => (r.surveyor_name || "").trim() === who) : base;
   $("#isvtailrow").hidden = !isvCache.length;
-  updateIsvSummary(rows.length);
+  updateIsvSummary(rows.length, who);
   if (!rows.length){
     isvBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">'
       + (!isvCache.length ? 'ไม่พบงานสถานะ “จบงาน” ในช่วงวันที่นี้'
+         : who ? 'ไม่มีงานของ ' + escHtml(who)
+                 + (digits.size ? ' ในเลขท้าย ' + [...digits].sort().join(",") : '')
+                 + ' (เลือก “— ทุกคน —” เพื่อดูทั้งหมด)'
          : digits.size ? 'ไม่มีเคลมลงท้ายด้วย ' + [...digits].sort().join(",") + ' ในช่วงนี้ (กดปุ่ม “ล้าง” เพื่อดูทั้งหมด)'
                        : 'ทุกเรื่องในช่วงนี้นำเข้า EMCS ไปแล้ว (เอาติ๊ก “ซ่อนที่นำเข้าแล้ว” ออกเพื่อดู)') + '</div>';
     $("#isvtoolbar").hidden = true;
@@ -2245,18 +2259,12 @@ function updateIsvCount(){
 $("#isvhidesent").addEventListener("change", () => renderIsvCases());
 // จำเลขท้ายที่กรองไว้ให้ด้วย — คนคีย์คนเดิมใช้เลขเดิมทุกวัน ไม่ต้องพิมพ์ซ้ำ
 try{ $("#isvtail").value = localStorage.getItem("isvtail") || ""; }catch(e){}
-$("#isvtail").addEventListener("input", () => {
-  saveTail(); syncKeyerSelect(); renderIsvCases();
-});
+$("#isvtail").addEventListener("input", () => { saveTail(); renderIsvCases(); });
 $("#isvtailclear").addEventListener("click", () => {
-  $("#isvtail").value = ""; saveTail(); syncKeyerSelect(); renderIsvCases();
+  $("#isvtail").value = ""; saveTail(); renderIsvCases();
 });
-$("#isvkeyer").addEventListener("change", e => {
-  if (e.target.value === "__custom") return;   // ป้ายบอกสถานะ ไม่ใช่ตัวเลือกจริง
-  $("#isvtail").value = e.target.value;        // "" = ทุกคน
-  saveTail(); renderIsvCases();
-});
-loadIsvKeyerFilter();
+$("#isvwho").addEventListener("change", () => renderIsvCases());
+loadKeyerNames();
 $("#isvall").addEventListener("change", e => {
   isvBox.querySelectorAll(".isvsel").forEach(c => { c.checked = e.target.checked; });
   updateIsvCount();
@@ -2494,7 +2502,7 @@ $("#savekeyers").addEventListener("click", async () => {
     const {ok, data} = await postJSON("/settings", {keyers: table});
     if (!ok){ keyersMsg.textContent = "❌ " + (data.error || "บันทึกไม่สำเร็จ"); keyersMsg.style.color = "var(--err)"; return; }
     keyersMsg.textContent = "✅ บันทึกแล้ว — มีผลกับงานถัดไปทันที"; keyersMsg.style.color = "var(--ok)";
-    loadIsvKeyerFilter();   // dropdown "ผู้ตรวจ" ในแท็บ ISURVEY ใช้ตารางนี้
+    loadKeyerNames();   // สรุปยอดในแท็บ ISURVEY อ้างชื่อคนคีย์จากตารางนี้
   }catch(e){ keyersMsg.textContent = "❌ ติดต่อเซิร์ฟเวอร์ไม่ได้: " + e; keyersMsg.style.color = "var(--err)"; }
 });
 
