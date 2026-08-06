@@ -81,6 +81,15 @@ CAUSE_RADIO = {
     "รถประกันเป็นฝ่ายถูกและผิด": "rdoAcc_Cause04",
     "ยกเลิกการเคลม": "rdoAcc_Cause05",
     "ไปถึงแล้วไม่พบ": "rdoAcc_Cause06",
+    # ป้ายฝั่ง ISURVEY ที่สะกดไม่เหมือน EMCS แต่เป็นเรื่องเดียวกัน (master
+    # masterClaimVerdict ดัมพ์จริง 2026-08-06: 8 ตัว / EMCS มี 7 radio)
+    # 01 รอคำตัดสิน = 'รอสรุปผลคดี' ของ EMCS — ต่างกันแค่คำ ไม่ใช่ต่างความหมาย
+    "รอคำตัดสิน": "rdoAcc_Cause03",
+    # ⛔ อีก 2 ตัวของ ISURVEY จงใจไม่ใส่ รอ user สรุปว่าให้ลงช่องไหน:
+    #    02 'รถประกันเป็นฝ่ายถูก' (EMCS ไม่มีช่องนี้ตรง ๆ — น่าจะ = คู่กรณีผิด
+    #       แต่ต้องระบุ 'คู่กรณีคันที่' + ติ๊กการเรียกร้องตามมา)
+    #    05 'ไม่มีคู่กรณี'        (EMCS ไม่มีเลย)
+    #    ระหว่างนี้บอทจะหยุดถามคนเลือกเอง ดีกว่าติ๊กผิดข้าง
     # ค่าสั้นที่แอปมือถือเก็บจริง (survey_form_screen.dart _faultDropdown เก็บ key ไม่ใช่ label)
     # ต้อง map ตรงตัว ห้ามพึ่ง fuzzy: 'ฝ่ายผิด' ได้ WRatio 90 เท่ากันทั้ง 'รถประกันเป็นฝ่ายผิด'
     # และ 'รถคู่กรณีเป็นฝ่ายผิด' → extractOne ตัดสินด้วยลำดับ dict = เสี่ยงพลิกฝ่ายทั้งสำนวน
@@ -1730,7 +1739,15 @@ def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห�
 
 
 def fill_verdict(driver, data: ClaimData):
-    """เลือกผลคดี (radio) จากข้อความผลคดีของ ISURVEY ด้วย fuzzy matching"""
+    """เลือกผลคดี (radio) จากผลคดีของ ISURVEY — เทียบตรงตัวเท่านั้น ห้าม fuzzy
+
+    ⚠️ ห้ามเอา fuzzy กลับมาที่ช่องนี้เด็ดขาด ติ๊กผิด = สลับฝ่ายผิดทั้งสำนวน
+    ของจริงที่เจอ 2026-08-06 (user ทัก): ลิสต์สองระบบไม่ตรงกัน ISURVEY มี 8 ตัว
+    EMCS มี 7 ตัว และ fuzzy เดาผิดแบบ "มั่นใจ" จนตัวกันคะแนนเท่าไม่ทำงาน —
+      'รถประกันเป็นฝ่ายถูก' → ติ๊ก 'รถประกันเป็นฝ่ายถูกและผิด' (score 86) กลับข้าง
+      'ไม่มีคู่กรณี'        → ติ๊ก 'รถคู่กรณีเป็นฝ่ายผิด'      (score 64) ทั้งที่ไม่มีคู่กรณี
+    ค่าที่ไม่มีในตาราง = หยุดถามคน ไม่เดา (ตาราง CAUSE_RADIO คือข้อตกลงเดียว)
+    """
     log("EMCS: เลือกผลคดี")
     wait_visible(driver, By.ID, "rdoAcc_Cause00")
 
@@ -1738,26 +1755,18 @@ def fill_verdict(driver, data: ClaimData):
         log("   ⚠️ ไม่มีข้อมูลผลคดีจาก ISURVEY — ข้าม (เลือกเองบนหน้าเว็บ)")
         return
 
-    # ผลคดีเลือกผิด = สลับฝ่ายผิดทั้งสำนวน → ห้ามพึ่ง fuzzy ล้วน
-    # ('ฝ่ายผิด' ได้ 90 เท่ากันทั้ง 'รถประกันเป็นฝ่ายผิด' และ 'รถคู่กรณีเป็นฝ่ายผิด'
-    #  extractOne จึงตัดสินด้วยลำดับใน dict = เสี่ยงพลิกฝ่าย)
     _res = " ".join(str(data.acc_result).split())
-    if _res in CAUSE_RADIO:
-        label, score = _res, 100
-    else:
-        best = process.extractOne(_res, list(CAUSE_RADIO.keys()), scorer=fuzz.WRatio)
-        label, score = best[0], best[1]
-        _tie = [k for k in CAUSE_RADIO
-                if fuzz.WRatio(_res, k) >= score - 1 and CAUSE_RADIO[k] != CAUSE_RADIO[label]]
-        if _tie:
-            log(f"   ⚠️ ผลคดี '{_res}' คลุมเครือ (คะแนนเท่ากับ {_tie}) — ไม่เดา ข้ามให้คนเลือกเอง")
-            wait_for_manual_fill("ผลคดี (ฝ่ายประมาท)",
-                                 f"ข้อความ '{_res}' ตรงได้หลายตัวเลือก เลือกเองบนหน้า EMCS",
-                                 focus_ids=sorted(set(CAUSE_RADIO.values())),
-                                 driver=driver)
-            return
-    log(f"   ✓ ผลคดี: '{_res}' → '{label}' (score {score:.0f})")
-    driver.find_element(By.ID, CAUSE_RADIO[label]).click()
+    rid = CAUSE_RADIO.get(_res)
+    if rid is None:
+        log(f"   ⚠️ ผลคดี '{_res}' ไม่มีคู่ที่ตรงกันใน EMCS — ไม่เดา ให้คนเลือกเอง")
+        wait_for_manual_fill("ผลคดี (ฝ่ายประมาท)",
+                             f"ผลคดีของ ISURVEY คือ '{_res}' "
+                             "ซึ่งไม่มีตัวเลือกตรงกันบน EMCS — เลือกให้ตรงเจตนาเอง",
+                             focus_ids=sorted(set(CAUSE_RADIO.values())),
+                             driver=driver)
+        return
+    log(f"   ✓ ผลคดี: '{_res}'")
+    driver.find_element(By.ID, rid).click()
     # "การเรียกร้องค่าเสียหายจากคู่กรณี" (chkOpo_Result + ยอดเงิน 2 ช่อง) ไม่ได้ผูกกับผลคดี
     # ยืนยันจากงานจริงที่พนักงานกรอก (เคลมไอโออิ 2026013058298): ผลคดี = rdoAcc_Cause03
     # 'รอสรุปผลคดี' แต่ยังติ๊ก chkOpo_Result_0 ไว้ → เดิมบอทกรอกเฉพาะตอน rdoAcc_Cause01

@@ -55,21 +55,36 @@ check("ClaimData save/load round-trip", d == d2)
 check("summary แสดงผลได้", "2026013105763" in d.summary())
 p.unlink()
 
-# ---- 5. fuzzy mapping ผลคดี (เทสบั๊กที่แก้) ----
+# ---- 5. mapping ผลคดี — เทียบตรงตัวเท่านั้น (ห้าม fuzzy) ----
+# ISURVEY มี 8 ตัวเลือก / EMCS มี 7 radio ไม่ตรงกัน (ดัมพ์ masterClaimVerdict 2026-08-06)
 from rapidfuzz import process, fuzz  # noqa: E402
 
 cases = {
     "รถประกันเป็นฝ่ายผิด": "rdoAcc_Cause00",
     "รถคู่กรณีเป็นฝ่ายผิด": "rdoAcc_Cause01",          # เคสบั๊กเดิม: ไม่เคยถูกคลิก
-    "รถคู่กรณีเป็นฝ่ายผิด คู่กรณีคันที่ 1": "rdoAcc_Cause01",
     "ประมาทร่วม": "rdoAcc_Cause02",
     "รอสรุปผลคดี": "rdoAcc_Cause03",
+    "รอคำตัดสิน": "rdoAcc_Cause03",                   # ชื่อฝั่ง ISURVEY ของช่องเดียวกัน
+    "รถประกันเป็นฝ่ายถูกและผิด": "rdoAcc_Cause04",
     "ยกเลิกการเคลม": "rdoAcc_Cause05",
+    "ไปถึงแล้วไม่พบ": "rdoAcc_Cause06",
 }
 for text, expect in cases.items():
-    best = process.extractOne(text, list(emcs.CAUSE_RADIO.keys()), scorer=fuzz.WRatio)
-    got = emcs.CAUSE_RADIO[best[0]]
-    check(f"ผลคดี '{text}' → {expect}", got == expect, f"match='{best[0]}'")
+    check(f"ผลคดี '{text}' → {expect}",
+          emcs.CAUSE_RADIO.get(text) == expect, str(emcs.CAUSE_RADIO.get(text)))
+
+# 2 ตัวที่ EMCS ไม่มีคู่ — ต้องไม่มีในตาราง (บอทจะหยุดถามคน) ห้ามให้ fuzzy เดา
+# ของจริงที่ fuzzy เคยเดาผิดแบบมั่นใจ: 'รถประกันเป็นฝ่ายถูก'→ถูกและผิด (86)
+# / 'ไม่มีคู่กรณี'→คู่กรณีผิด (64) — พลิกความรับผิดทั้งสำนวน
+for _no in ("รถประกันเป็นฝ่ายถูก", "ไม่มีคู่กรณี"):
+    check(f"ผลคดี '{_no}': ไม่มีในตาราง → หยุดถามคน ไม่เดา",
+          emcs.CAUSE_RADIO.get(_no) is None, str(emcs.CAUSE_RADIO.get(_no)))
+_fvsrc = __import__("inspect").getsource(emcs.fill_verdict)
+check("ผลคดี: fill_verdict ไม่ใช้ fuzzy แล้ว (เทียบตรงตัวอย่างเดียว)",
+      "process.extractOne" not in _fvsrc and "fuzz.WRatio" not in _fvsrc
+      and "CAUSE_RADIO.get(_res)" in _fvsrc)
+check("ผลคดี: ค่าที่ไม่รู้จัก → เรียก wait_for_manual_fill ให้คนเลือก",
+      "wait_for_manual_fill" in _fvsrc and "ไม่มีคู่ที่ตรงกันใน EMCS" in _fvsrc)
 
 # ---- 6. damage grid layout (id ของ 8 ช่อง) ----
 expected_prefixes = [
@@ -1344,14 +1359,13 @@ def _run_opo_fault(**kw):
     return texts, [i for i, b in boxes.items() if b.sel]
 
 
-# ค่า 'ฝ่ายประมาท' ทั้ง 7 ตัวของแอป ต้อง fuzzy ไปลง radio ที่ถูกต้อง (โดยเฉพาะ
+# ค่า 'ฝ่ายประมาท' ทั้ง 7 ตัวของแอป ต้องอยู่ในตารางแบบตรงตัว (โดยเฉพาะ
 # 'คู่กรณีผิด' ต้องไม่ไปลง 'รถประกันเป็นฝ่ายผิด' ซึ่งหน้าตาใกล้กันมาก)
 for _v, _rid in (('ฝ่ายผิด', 'rdoAcc_Cause00'), ('คู่กรณีผิด', 'rdoAcc_Cause01'),
                  ('ประมาทร่วม', 'rdoAcc_Cause02'), ('รอสรุปผลคดี', 'rdoAcc_Cause03'),
                  ('ฝ่ายถูกและผิด', 'rdoAcc_Cause04'), ('ยกเลิกการเคลม', 'rdoAcc_Cause05'),
                  ('ไปถึงแล้วไม่พบ', 'rdoAcc_Cause06')):
-    _hit = _pc.extractOne(_v, list(emcs.CAUSE_RADIO.keys()), scorer=_fz.WRatio)
-    check(f"ผลคดี: '{_v}' → {_rid}", emcs.CAUSE_RADIO[_hit[0]] == _rid)
+    check(f"ผลคดี: '{_v}' → {_rid}", emcs.CAUSE_RADIO.get(_v) == _rid)
 
 _tx, _bx = _run_opo_fault(acc_fault_opponent_no='2', opo_results='คัดประจำวัน,บัตรติดต่อ')
 check("คู่กรณีผิด: กรอก 'คู่กรณีคันที่' ตามข้อมูล + ติ๊กตรง index",
