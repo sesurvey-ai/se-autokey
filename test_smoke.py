@@ -68,23 +68,34 @@ cases = {
     "รถประกันเป็นฝ่ายถูกและผิด": "rdoAcc_Cause04",
     "ยกเลิกการเคลม": "rdoAcc_Cause05",
     "ไปถึงแล้วไม่พบ": "rdoAcc_Cause06",
+    # user สรุป 2026-08-06: ฝ่ายถูก = คู่กรณีผิด (EMCS ไม่มีช่อง 'ฝ่ายถูก' เดี่ยว ๆ)
+    "รถประกันเป็นฝ่ายถูก": "rdoAcc_Cause01",
 }
 for text, expect in cases.items():
     check(f"ผลคดี '{text}' → {expect}",
           emcs.CAUSE_RADIO.get(text) == expect, str(emcs.CAUSE_RADIO.get(text)))
 
-# 2 ตัวที่ EMCS ไม่มีคู่ — ต้องไม่มีในตาราง (บอทจะหยุดถามคน) ห้ามให้ fuzzy เดา
-# ของจริงที่ fuzzy เคยเดาผิดแบบมั่นใจ: 'รถประกันเป็นฝ่ายถูก'→ถูกและผิด (86)
-# / 'ไม่มีคู่กรณี'→คู่กรณีผิด (64) — พลิกความรับผิดทั้งสำนวน
-for _no in ("รถประกันเป็นฝ่ายถูก", "ไม่มีคู่กรณี"):
-    check(f"ผลคดี '{_no}': ไม่มีในตาราง → หยุดถามคน ไม่เดา",
-          emcs.CAUSE_RADIO.get(_no) is None, str(emcs.CAUSE_RADIO.get(_no)))
+# 'ไม่มีคู่กรณี' — EMCS ไม่มีช่องที่ตรงกันเลย ต้องไม่มีในตาราง (ห้าม fuzzy เดา:
+# ของเดิมเดาไปลง 'รถคู่กรณีเป็นฝ่ายผิด' คะแนน 64 ทั้งที่เคสนี้ไม่มีคู่กรณี)
+check("ผลคดี 'ไม่มีคู่กรณี': ไม่มีในตาราง → เว้นว่าง + เตือนบนการ์ด",
+      emcs.CAUSE_RADIO.get("ไม่มีคู่กรณี") is None,
+      str(emcs.CAUSE_RADIO.get("ไม่มีคู่กรณี")))
 _fvsrc = __import__("inspect").getsource(emcs.fill_verdict)
 check("ผลคดี: fill_verdict ไม่ใช้ fuzzy แล้ว (เทียบตรงตัวอย่างเดียว)",
       "process.extractOne" not in _fvsrc and "fuzz.WRatio" not in _fvsrc
       and "CAUSE_RADIO.get(_res)" in _fvsrc)
-check("ผลคดี: ค่าที่ไม่รู้จัก → เรียก wait_for_manual_fill ให้คนเลือก",
-      "wait_for_manual_fill" in _fvsrc and "ไม่มีคู่ที่ตรงกันใน EMCS" in _fvsrc)
+# เตือนบนการ์ด ไม่หยุดกลางทาง (user 2026-08-06) — บอทกรอกจนจบแล้วให้คนตรวจทีเดียว
+check("ผลคดี: ค่าที่ไม่รู้จัก → เตือนบนการ์ด ไม่หยุดรอกลางทาง",
+      "_review_note(data" in _fvsrc and "wait_for_manual_fill" not in _fvsrc)
+check("ผลคดี: 2 กรณีที่ต้องให้หัวหน้าตรวจ (ถูกและผิด / ไม่มีคู่กรณี)",
+      emcs.CARD_REVIEW_VERDICTS == {"รถประกันเป็นฝ่ายถูกและผิด", "ไม่มีคู่กรณี"}
+      and "CARD_REVIEW_VERDICTS" in _fvsrc)
+# 'คู่กรณีคันที่' + การเรียกร้อง = บังคับเฉพาะผลคดี rdoAcc_Cause01 เท่านั้น
+check("ผลคดี: ส่งธงบอก _fill_opponent_fault ว่าเป็นเคสคู่กรณีผิดหรือไม่",
+      'is_opponent_fault=(rid == "rdoAcc_Cause01")' in _fvsrc)
+_ofsrc = __import__("inspect").getsource(emcs._fill_opponent_fault)
+check("คู่กรณีคันที่: ไม่แตะเลยถ้าผลคดีไม่ใช่ 'รถคู่กรณีเป็นฝ่ายผิด'",
+      "if is_opponent_fault:" in _ofsrc)
 
 # ---- 6. damage grid layout (id ของ 8 ช่อง) ----
 expected_prefixes = [
@@ -1341,8 +1352,9 @@ class _FakeCb:
         self.sel = not self.sel
 
 
-def _run_opo_fault(**kw):
-    """เรียก _fill_opponent_fault จริง — คืน (ข้อความที่พิมพ์ลงช่อง, checkbox ที่ถูกติ๊ก)"""
+def _run_opo_fault(_opp_fault=True, **kw):
+    """เรียก _fill_opponent_fault จริง — คืน (ข้อความที่พิมพ์ลงช่อง, checkbox ที่ถูกติ๊ก)
+    _opp_fault=ผลคดีเป็น 'รถคู่กรณีเป็นฝ่ายผิด' หรือไม่ (คุมว่าจะแตะ 'คู่กรณีคันที่')"""
     texts, boxes = {}, {i: _FakeCb() for i in range(5)}
     d = claim_data.ClaimData()
     for k, v in kw.items():
@@ -1353,7 +1365,7 @@ def _run_opo_fault(**kw):
     drv = _types.SimpleNamespace(
         find_element=lambda by, eid: boxes[int(eid.rsplit('_', 1)[1])])
     try:
-        emcs._fill_opponent_fault(drv, d)
+        emcs._fill_opponent_fault(drv, d, is_opponent_fault=_opp_fault)
     finally:
         (emcs.set_text, emcs.log) = _o
     return texts, [i for i, b in boxes.items() if b.sel]
@@ -1379,6 +1391,29 @@ check("คู่กรณีผิด: คู่กรณีหลายคั�
       'txtAcc_Cause_No' not in _tx and _bx == [0])
 _tx, _bx = _run_opo_fault(acc_fault_opponent_no='1', opo_results='')
 check("คู่กรณีผิด: ไม่มีข้อมูลติ๊ก → ไม่ติ๊กมั่วแทนเซอร์เวย์", _bx == [])
+# ผลคดีอื่น: 'คู่กรณีคันที่' เป็นช่องของผลคดีนี้ช่องเดียว ห้ามไปกรอกให้ (user 2026-08-06)
+_tx_other, _bx_other = _run_opo_fault(_opp_fault=False, acc_fault_opponent_no='2',
+                                      opo_results='คัดประจำวัน')
+check("คู่กรณีคันที่: ผลคดีอื่น → ไม่กรอก txtAcc_Cause_No (แต่ยังติ๊กการเรียกร้องได้)",
+      'txtAcc_Cause_No' not in _tx_other and _bx_other == [0], str(_tx_other))
+# เตือนบนการ์ด: เคสคู่กรณีผิดที่ข้อมูลไม่ครบ ต้องเก็บโน้ตไว้ให้หัวหน้าเห็นตอนรอส่ง
+_d_note = claim_data.ClaimData()
+_o_log = emcs.log
+emcs.log = lambda *a, **k: None
+try:
+    emcs._fill_opponent_fault(
+        _types.SimpleNamespace(find_element=lambda by, eid: _FakeCb()),
+        _d_note, is_opponent_fault=True)
+finally:
+    emcs.log = _o_log
+check("เตือนการ์ด: คู่กรณีผิด + ไม่รู้คันที่/ไม่มีติ๊ก → เก็บโน้ตครบ 2 ข้อ",
+      len(_d_note.review_notes) == 2
+      and any("คู่กรณีคันที่" in n for n in _d_note.review_notes)
+      and any("การเรียกร้อง" in n for n in _d_note.review_notes),
+      str(_d_note.review_notes))
+_main_src = __import__("pathlib").Path("main.py").read_text(encoding="utf-8")
+check("เตือนการ์ด: main.py เอา review_notes ไปต่อท้าย reason ของการ์ดสั่งส่ง",
+      'getattr(data, "review_notes", [])' in _main_src)
 # ป้ายฝั่งแอปกับ EMCS สะกดต่างกัน 2 ตัว — ติ๊กด้วย index จึงต้องเข้าได้ทั้งคู่
 _, _bx1 = _run_opo_fault(acc_fault_opponent_no='1', opo_results='รับหลักฐานจากคู่กรณีผิด')
 _, _bx2 = _run_opo_fault(acc_fault_opponent_no='1', opo_results='รับหลักฐานจากคู่กรณี')
@@ -1585,8 +1620,8 @@ check("ค่าใช้จ่าย: ไม่มี data.bill → ไม่�
 
 # "การเรียกร้องค่าเสียหายจากคู่กรณี" ไม่ผูกกับผลคดี — งานจริงติ๊กไว้ทั้งที่ผลคดี = รอสรุปผลคดี
 _fv = _insp.getsource(emcs.fill_verdict)
-check("เรียกร้องคู่กรณี: กรอกทุกผลคดี ไม่ใช่เฉพาะ rdoAcc_Cause01",
-      '_fill_opponent_fault(driver, data)' in _fv
+check("เรียกร้องคู่กรณี: เรียกทุกผลคดี ไม่ใช่เฉพาะ rdoAcc_Cause01",
+      '_fill_opponent_fault(driver, data, is_opponent_fault=' in _fv
       and 'if CAUSE_RADIO[label] == "rdoAcc_Cause01":' not in _fv)
 
 # ความเสียหายคู่กรณี: อ่านจำนวนช่องจริงจาก DOM (ฟอร์ม import มี 20 ไม่ใช่ 8)
@@ -2428,9 +2463,12 @@ check("ตัวกรอง: ไม่เหลือซากของ dropdow
 # ---- 22h. สั่งส่งงาน: ห้ามสมมติว่ายังอยู่หน้าค่าใช้จ่าย ----
 # หลังบันทึกราคา บอทกลับหน้า Inbox เพื่อปลดล็อกเรื่อง → พอคนสั่งส่งทีหลัง ปุ่มไม่อยู่
 # บนหน้า (เจอจริง S68426080893) → ต้องเปิดเรื่องกลับเข้าหน้าค่าใช้จ่ายเองก่อน
-def _run_submit(found_first, esurvey="S684", reopen_ok=True, status_esurvey="S684"):
-    """คืน (ok, msg, เปิดเรื่องกลับกี่ครั้ง)"""
-    state = {"reopen": 0, "found": list(found_first)}
+def _run_submit(found_first, esurvey="S684", reopen_ok=True, status_esurvey="S684",
+                status_seq=None):
+    """คืน (ok, msg, เปิดเรื่องกลับกี่ครั้ง)
+    status_seq = สถานะที่ report_status คืนทีละรอบ (จำลองหน้ารายการมาช้า/อ่านไม่ได้)"""
+    state = {"reopen": 0, "found": list(found_first),
+             "st": list(status_seq or [])}
 
     def _find(d):
         v = state["found"].pop(0) if state["found"] else None
@@ -2449,8 +2487,10 @@ def _run_submit(found_first, esurvey="S684", reopen_ok=True, status_esurvey="S68
     emcs.log = lambda *a, **k: None
     emcs.accept_alert = lambda *a, **k: ""
     emcs.goto_mainpage = lambda *a, **k: ""
-    emcs.report_status = lambda d, c: {"status": "ประกันตรวจสอบรายงาน",
-                                       "esurvey": status_esurvey}
+    def _status(d, c, *a, **k):
+        st = state["st"].pop(0) if state["st"] else "ประกันตรวจสอบรายงาน"
+        return {"status": st, "esurvey": status_esurvey}
+    emcs.report_status = _status
     emcs.time = _types.SimpleNamespace(sleep=lambda s: None)
     try:
         drv = _types.SimpleNamespace(find_elements=lambda *a, **k: [])
@@ -2480,6 +2520,22 @@ check("submit: ไม่รู้เลข e-Survey → ค้นจาก EMCS 
 _ok, _msg, _n = _run_submit([False], esurvey="", status_esurvey="")
 check("submit: ค้นเลข e-Survey ไม่เจอ → บอกให้เปิดเองบนหน้าจอ ไม่เดา",
       _ok is False and _n == 0 and "หาเลข e-Survey" in _msg)
+# หลังกดส่ง session หลุด ต้อง login ใหม่ หน้ารายการมาช้า → อ่านสถานะรอบแรกไม่ได้
+# ของเดิมสรุปทันทีว่า "ส่งงานไม่สำเร็จ" ทั้งที่ส่งสำเร็จ (เคลม 2026013160796 จริง)
+_ok, _msg, _n = _run_submit([True], status_seq=["", "", "ประกันตรวจสอบรายงาน"])
+check("submit: อ่านสถานะไม่ได้ 2 รอบแรก → ลองใหม่จนอ่านได้ แล้วสรุปว่าสำเร็จ",
+      _ok is True and "ส่งงานสำเร็จ" in _msg, _msg[:60])
+_ok, _msg, _n = _run_submit([True], status_seq=["", "", ""])
+check("submit: อ่านสถานะไม่ได้ครบ 3 รอบ → บอกว่า 'ตรวจไม่ได้' ไม่ใช่ 'ส่งไม่สำเร็จ'",
+      _ok is False and "ตรวจสถานะบน EMCS ไม่ได้" in _msg
+      and "อาจส่งสำเร็จแล้ว" in _msg, _msg[:80])
+_ok, _msg, _n = _run_submit([True], status_seq=["รายงานสร้างใหม่"])
+check("submit: ยังเป็น draft อยู่ → บอกตรง ๆ ว่าอาจไม่สำเร็จ",
+      _ok is False and "ยังเป็น 'รายงานสร้างใหม่'" in _msg, _msg[:60])
+# report_status ต้องรอจนแถวโผล่จริง ห้ามกลับไป sleep คงที่แล้วอ่านทีเดียว
+_rs = __import__("inspect").getsource(emcs.report_status)
+check("report_status: รอจนอ่านสถานะได้ (มี deadline loop) ไม่ใช่ sleep ครั้งเดียว",
+      "deadline" in _rs and "while time.time() < deadline" in _rs)
 
 # ---- ต้นเหตุจริงของ "ไม่เจอปุ่มส่งงาน": ออกจากเรื่องก่อนคนจะได้สั่งส่ง ----
 # ปุ่ม 'ส่งงานใหม่' อยู่ในเรื่อง แต่บอทกด 'กลับหน้า Inbox/Outbox' ทันทีหลังบันทึกราคา

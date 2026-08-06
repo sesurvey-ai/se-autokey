@@ -1525,6 +1525,10 @@ def _offer_submit(driver, cfg, data, esurvey: str = ""):
     reason = ("" if block == "" else
               f"⚠️ เคลมสด: {block} — ตรวจคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน + ราคา "
               "ให้ครบถูกต้องบน EMCS ก่อนกดส่ง (ส่งแล้วแก้ไม่ได้)")
+    # ข้อที่บอทกรอกไม่ได้/ไม่กล้ากรอกแทน สะสมมาระหว่างกรอก → บอกรวดเดียวตรงนี้
+    # (เตือนบนการ์ด ไม่หยุดกลางทาง — user 2026-08-06)
+    for _n in getattr(data, "review_notes", []) or []:
+        reason = (reason + "\n" if reason else "") + f"⚠️ {_n}"
     sel = wait_for_submit(data.claim_value, survey_no=data.invoice_value, reason=reason)
     if not sel:
         # ไม่ส่ง = จบแค่ draft → ต้องออกจากเรื่องเพื่อปลดล็อกให้คนอื่นเปิดต่อได้

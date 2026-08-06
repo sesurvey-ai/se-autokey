@@ -81,15 +81,12 @@ CAUSE_RADIO = {
     "รถประกันเป็นฝ่ายถูกและผิด": "rdoAcc_Cause04",
     "ยกเลิกการเคลม": "rdoAcc_Cause05",
     "ไปถึงแล้วไม่พบ": "rdoAcc_Cause06",
-    # ป้ายฝั่ง ISURVEY ที่สะกดไม่เหมือน EMCS แต่เป็นเรื่องเดียวกัน (master
-    # masterClaimVerdict ดัมพ์จริง 2026-08-06: 8 ตัว / EMCS มี 7 radio)
-    # 01 รอคำตัดสิน = 'รอสรุปผลคดี' ของ EMCS — ต่างกันแค่คำ ไม่ใช่ต่างความหมาย
-    "รอคำตัดสิน": "rdoAcc_Cause03",
-    # ⛔ อีก 2 ตัวของ ISURVEY จงใจไม่ใส่ รอ user สรุปว่าให้ลงช่องไหน:
-    #    02 'รถประกันเป็นฝ่ายถูก' (EMCS ไม่มีช่องนี้ตรง ๆ — น่าจะ = คู่กรณีผิด
-    #       แต่ต้องระบุ 'คู่กรณีคันที่' + ติ๊กการเรียกร้องตามมา)
-    #    05 'ไม่มีคู่กรณี'        (EMCS ไม่มีเลย)
-    #    ระหว่างนี้บอทจะหยุดถามคนเลือกเอง ดีกว่าติ๊กผิดข้าง
+    # ป้ายฝั่ง ISURVEY ที่สะกดไม่เหมือน EMCS แต่เป็นเรื่องเดียวกัน — user สรุปเอง
+    # 2026-08-06 (master masterClaimVerdict ดัมพ์จริง: ISURVEY 8 ตัว / EMCS 7 radio)
+    "รอคำตัดสิน": "rdoAcc_Cause03",       # = 'รอสรุปผลคดี'
+    "รถประกันเป็นฝ่ายถูก": "rdoAcc_Cause01",  # = 'รถคู่กรณีเป็นฝ่ายผิด คู่กรณีคันที่'
+    # ⛔ 'ไม่มีคู่กรณี' (05) จงใจไม่ใส่ — EMCS ไม่มีช่องที่ตรงกันเลย
+    #    บอทปล่อยว่าง + ขึ้นเตือนบนการ์ดให้หัวหน้าเลือกเองตอนตรวจ
     # ค่าสั้นที่แอปมือถือเก็บจริง (survey_form_screen.dart _faultDropdown เก็บ key ไม่ใช่ label)
     # ต้อง map ตรงตัว ห้ามพึ่ง fuzzy: 'ฝ่ายผิด' ได้ WRatio 90 เท่ากันทั้ง 'รถประกันเป็นฝ่ายผิด'
     # และ 'รถคู่กรณีเป็นฝ่ายผิด' → extractOne ตัดสินด้วยลำดับ dict = เสี่ยงพลิกฝ่ายทั้งสำนวน
@@ -98,6 +95,21 @@ CAUSE_RADIO = {
     "คู่กรณีผิด": "rdoAcc_Cause01",
     "ฝ่ายถูกและผิด": "rdoAcc_Cause04",
 }
+
+# ผลคดีที่ให้ขึ้นเตือนบนการ์ด "รอหัวหน้าตรวจ" ก่อนกดส่ง (user สรุป 2026-08-06)
+# ไม่ใช่ข้อผิดพลาด — แค่ 2 กรณีที่ตีความได้หลายทาง อยากให้คนยืนยันด้วยตา
+CARD_REVIEW_VERDICTS = {"รถประกันเป็นฝ่ายถูกและผิด", "ไม่มีคู่กรณี"}
+
+
+def _review_note(data, msg: str):
+    """สะสมข้อความ 'ให้หัวหน้าตรวจก่อนกดส่ง' → ไปโผล่บนการ์ดตอนรอสั่งส่งงาน
+    (เตือนอย่างเดียว ไม่หยุดกลางทาง — กันบอทค้างรอคนตั้งแต่ยังกรอกไม่จบ)"""
+    notes = getattr(data, "review_notes", None)
+    if notes is None:            # ClaimData เก่า/ออบเจกต์ทดสอบที่ไม่มีฟิลด์นี้
+        return
+    if msg not in notes:
+        notes.append(msg)
+
 
 # ความเสียหายกรอกได้สูงสุด 8 รายการ (คอลัมน์ A 4 + คอลัมน์ B 4 ตาม layout หน้าเว็บ)
 MAX_DAMAGE_ITEMS = 8
@@ -948,17 +960,33 @@ return result;
 """
 
 
-def report_status(driver, claim: str):
-    """ค้นเรื่องของเคลมในหน้า EMCS → คืน {esurvey, status, survey_no} (None ถ้าไม่เจอ)"""
+def report_status(driver, claim: str, wait: float = 20):
+    """ค้นเรื่องของเคลมในหน้า EMCS → คืน {esurvey, status, survey_no} (None ถ้าไม่เจอ)
+
+    ⚠️ ห้ามกลับไปใช้ sleep คงที่แล้วอ่านทีเดียว — เจอจริง 2026-08-06 (เคลม
+    2026013160796): หลังกดส่งงาน session หลุด ต้อง login ใหม่ ตารางผลค้นเลยมาช้า
+    กว่า 3 วิ อ่านได้ค่าว่าง → บอทสรุปว่า "ส่งงานไม่สำเร็จ" ทั้งที่ส่งสำเร็จแล้ว
+    """
     if not (claim or "").strip():
         return None
+    claim = claim.strip()
     wait_visible(driver, By.ID, "txtRef_Claim_No", 20)
     box = driver.find_element(By.ID, "txtRef_Claim_No")
     box.clear()
-    box.send_keys(claim.strip())
+    box.send_keys(claim)
     driver.find_element(By.ID, "btnSearch").click()
-    time.sleep(3)
-    return driver.execute_script(_JS_REPORT_STATUS, claim.strip())
+    # รอจนแถวโผล่จริง (postback ช้ากว่าปกติได้ตอนเพิ่ง login ใหม่)
+    deadline = time.time() + max(3.0, float(wait))
+    info = None
+    while time.time() < deadline:
+        time.sleep(1)
+        try:
+            info = driver.execute_script(_JS_REPORT_STATUS, claim)
+        except Exception:
+            info = None
+        if info and (info.get("status") or "").strip():
+            return info
+    return info
 
 
 def is_report_submitted(driver, claim: str):
@@ -1758,20 +1786,21 @@ def fill_verdict(driver, data: ClaimData):
     _res = " ".join(str(data.acc_result).split())
     rid = CAUSE_RADIO.get(_res)
     if rid is None:
-        log(f"   ⚠️ ผลคดี '{_res}' ไม่มีคู่ที่ตรงกันใน EMCS — ไม่เดา ให้คนเลือกเอง")
-        wait_for_manual_fill("ผลคดี (ฝ่ายประมาท)",
-                             f"ผลคดีของ ISURVEY คือ '{_res}' "
-                             "ซึ่งไม่มีตัวเลือกตรงกันบน EMCS — เลือกให้ตรงเจตนาเอง",
-                             focus_ids=sorted(set(CAUSE_RADIO.values())),
-                             driver=driver)
-        return
-    log(f"   ✓ ผลคดี: '{_res}'")
-    driver.find_element(By.ID, rid).click()
+        # เช่น 'ไม่มีคู่กรณี' — EMCS ไม่มีช่องที่ตรงกัน ปล่อยว่างไว้ ไม่หยุดกลางทาง
+        # (user 2026-08-06: ให้เตือนบนการ์ดรอหัวหน้าตรวจ ดีกว่าให้บอทค้างรอคน)
+        log(f"   ⚠️ ผลคดี '{_res}' ไม่มีคู่ที่ตรงกันใน EMCS — เว้นไว้ให้หัวหน้าเลือกเอง")
+        _review_note(data, f"ผลคดี '{_res}' ไม่มีตัวเลือกตรงกันบน EMCS — "
+                           "ยังไม่ได้เลือกให้ เลือกเองก่อนกดส่ง")
+    else:
+        log(f"   ✓ ผลคดี: '{_res}'")
+        driver.find_element(By.ID, rid).click()
+        if _res in CARD_REVIEW_VERDICTS:
+            _review_note(data, f"ผลคดี '{_res}' — ตรวจให้แน่ใจว่าตรงกับสำนวนก่อนกดส่ง")
     # "การเรียกร้องค่าเสียหายจากคู่กรณี" (chkOpo_Result + ยอดเงิน 2 ช่อง) ไม่ได้ผูกกับผลคดี
     # ยืนยันจากงานจริงที่พนักงานกรอก (เคลมไอโออิ 2026013058298): ผลคดี = rdoAcc_Cause03
     # 'รอสรุปผลคดี' แต่ยังติ๊ก chkOpo_Result_0 ไว้ → เดิมบอทกรอกเฉพาะตอน rdoAcc_Cause01
     # ทำให้เซอร์เวย์ติ๊ก+พิมพ์ยอดเงินไปฟรีทุกเคสที่ผลคดีเป็นอย่างอื่น
-    _fill_opponent_fault(driver, data)
+    _fill_opponent_fault(driver, data, is_opponent_fault=(rid == "rdoAcc_Cause01"))
     _fill_followup(driver, data)
 
 
@@ -1827,29 +1856,42 @@ OPO_RESULT_IDX = {
 }
 
 
-def _fill_opponent_fault(driver, data: ClaimData):
+def _fill_opponent_fault(driver, data: ClaimData, is_opponent_fault: bool = False):
     """ผลคดี = 'รถคู่กรณีเป็นฝ่ายผิด' → EMCS บังคับ (vlidSurvey) 2 อย่างพร้อมกัน:
     'คู่กรณีคันที่' (txtAcc_Cause_No) + ติ๊ก 'การเรียกร้องค่าเสียหายจากคู่กรณี'
     อย่างน้อย 1 ใน 5 (chkOpo_Result_0..4) — ไม่ครบ = กดบันทึกไม่ผ่าน คนต้องมาเติมเอง
 
+    is_opponent_fault=False (ผลคดีอื่น) → ไม่แตะ 'คู่กรณีคันที่' เลย (user 2026-08-06:
+    ช่องนั้นเป็นของผลคดีนี้ช่องเดียว) แต่ยังติ๊กการเรียกร้องตามข้อมูลที่มีได้
+
     ⚠️ ต้อง .click() จริง (ห้าม set .checked ผ่าน JS) เพราะ onclick ของ EMCS เป็นตัว
     ปลดล็อกช่อง txtOpo_Pay/txtOpo_Recovery_Amount ถ้าไม่ยิง set_text จะไม่เข้า"""
-    # 1) คู่กรณีคันที่ — ใช้ค่าจากรายงานถ้ามี; ไม่มีแต่มีคู่กรณีคันเดียว = คันที่ 1 แน่นอน
-    no = str(getattr(data, "acc_fault_opponent_no", "") or "").strip()
-    if not no and len(data.third_parties or []) == 1:
-        no = "1"
-    if no:
-        set_text(driver, "txtAcc_Cause_No", no)
-        log(f"   ✓ คู่กรณีคันที่ = {no}")
-    else:
-        log(f"   ⚠️ ไม่รู้ว่าคู่กรณีคันไหนผิด (มี {len(data.third_parties or [])} คัน) — "
-            "กรอก 'คู่กรณีคันที่' เองบนหน้าจอ (EMCS บังคับ)")
+    # 1) คู่กรณีคันที่ — เฉพาะผลคดี 'รถคู่กรณีเป็นฝ่ายผิด' เท่านั้น
+    if is_opponent_fault:
+        # ใช้ค่าจากรายงานถ้ามี; ไม่มีแต่มีคู่กรณีคันเดียว = คันที่ 1 แน่นอน
+        no = str(getattr(data, "acc_fault_opponent_no", "") or "").strip()
+        if not no and len(data.third_parties or []) == 1:
+            no = "1"
+        if no:
+            set_text(driver, "txtAcc_Cause_No", no)
+            log(f"   ✓ คู่กรณีคันที่ = {no}")
+        else:
+            log(f"   ⚠️ ไม่รู้ว่าคู่กรณีคันไหนผิด (มี {len(data.third_parties or [])} คัน) — "
+                "กรอก 'คู่กรณีคันที่' เองบนหน้าจอ (EMCS บังคับ)")
+            _review_note(data, "ผลคดี = รถคู่กรณีเป็นฝ่ายผิด → กรอก 'คู่กรณีคันที่' "
+                               f"เอง (มีคู่กรณี {len(data.third_parties or [])} คัน "
+                               "บอทไม่รู้ว่าคันไหนผิด) — EMCS บังคับ")
 
     # 2) การเรียกร้องค่าเสียหายจากคู่กรณี
     picked = [s.strip() for s in str(data.opo_results or "").split(",") if s.strip()]
     if not picked:
         log("   ⚠️ ไม่มีข้อมูล 'การเรียกร้องค่าเสียหายจากคู่กรณี' — ติ๊กเองบนหน้าจอ "
             "(EMCS บังคับอย่างน้อย 1 ข้อ; บอทไม่ติ๊กมั่วแทนเซอร์เวย์)")
+        if is_opponent_fault:
+            _review_note(data, "ผลคดี = รถคู่กรณีเป็นฝ่ายผิด → ติ๊ก "
+                               "'การเรียกร้องค่าเสียหายจากคู่กรณี' อย่างน้อย 1 ข้อ "
+                               "(คัดประจำวัน / รับหลักฐาน / บันทึกยอมรับผิด / บัตรติดต่อ / "
+                               "รับเงิน) — EMCS บังคับ ไม่ติ๊กกดส่งไม่ผ่าน")
         return
     for t in picked:
         idx = OPO_RESULT_IDX.get(t)
@@ -3662,17 +3704,32 @@ def submit_report(driver, cfg, claim, esurvey: str = ""):
     time.sleep(2)
 
     # verify: กลับหน้ารายการ → ค้นสถานะใหม่ ต้องไม่ใช่ draft แล้ว
-    try:
-        goto_mainpage(driver, cfg, "")
-        info = report_status(driver, claim)
-    except Exception as e:
-        return False, (f"กดส่งแล้วแต่ตรวจสถานะไม่ได้ ({type(e).__name__}) — "
-                       "ตรวจบน EMCS เอง")
-    st = (info or {}).get("status", "").strip()
+    # ลองได้ 3 รอบ — หลังกดส่ง session มักหลุด (ต้อง login ใหม่) แล้วหน้ารายการ
+    # มาช้า อ่านรอบเดียวได้ค่าว่างแล้วสรุปว่า "ส่งไม่สำเร็จ" ทั้งที่ส่งไปแล้ว
+    # (เจอจริงเคลม 2026013160796 — user ยืนยันว่างานถึงประกันเรียบร้อย)
+    st, err = "", ""
+    for attempt in (1, 2, 3):
+        try:
+            goto_mainpage(driver, cfg, "")
+            info = report_status(driver, claim)
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+            log(f"   ⚠️ ตรวจสถานะรอบ {attempt} ไม่สำเร็จ ({err})")
+            time.sleep(2)
+            continue
+        st = ((info or {}).get("status") or "").strip()
+        if st:
+            break
+        log(f"   ⚠️ ตรวจสถานะรอบ {attempt}: ยังอ่านไม่ได้ (หน้ารายการอาจยังไม่ขึ้น)")
+        time.sleep(3)
     if st and st not in DRAFT_STATUSES:
         return True, f"ส่งงานสำเร็จ (สถานะ → {st})"
-    return False, (f"กดส่งแล้วแต่สถานะยังเป็น '{st or 'อ่านไม่ได้'}' — "
-                   "อาจไม่สำเร็จ ตรวจเอง")
+    if st:
+        return False, (f"กดส่งแล้วแต่สถานะยังเป็น '{st}' — อาจไม่สำเร็จ ตรวจเอง")
+    # อ่านสถานะไม่ได้ ≠ ส่งไม่สำเร็จ — บอกตรง ๆ ว่าตรวจไม่ได้ ห้ามแจ้ง ISURVEY เอง
+    return False, ("กดส่งงานไปแล้ว แต่ตรวจสถานะบน EMCS ไม่ได้ (ลอง 3 รอบ"
+                   + (f", ล่าสุด {err}" if err else "") + ") — "
+                   "งานอาจส่งสำเร็จแล้ว เปิด EMCS ดูเอง ถ้าส่งแล้วให้แจ้ง ISURVEY ด้วย")
 
 
 # --------------------------------------------------------------- งานต่อเนื่อง

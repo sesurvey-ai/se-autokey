@@ -189,6 +189,9 @@ class ClaimData:
     opo_results: str = ""          # การเรียกร้องค่าเสียหายจากคู่กรณี (คั่นด้วย , )
     opo_pay: str = ""              # รับเงินจำนวน (txtOpo_Pay)
     opo_recovery: str = ""         # จากจำนวนเงินเรียกร้องทั้งหมด (txtOpo_Recovery_Amount)
+    # ข้อความ "ให้หัวหน้าตรวจก่อนกดส่ง" ที่สะสมระหว่างกรอก → ไปโผล่บนการ์ดตอนรอสั่งส่ง
+    # (เตือนอย่างเดียว ไม่หยุดกลางทาง — บอทกรอกจนจบแล้วค่อยให้คนตรวจทีเดียว)
+    review_notes: list = field(default_factory=list)
 
     # ---- Tab 3: Insurance info ----
     insure_plate: str = ""         # ทะเบียนรถ
