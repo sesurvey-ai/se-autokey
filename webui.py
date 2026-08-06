@@ -300,6 +300,9 @@ def check_isurvey_case(claim: str, invoice: str = ""):
     return {
         "claim": data.claim_value, "invoice": data.invoice_value,
         "plate": data.insure_plate, "car": f"{data.car_brand} {data.insure_model}".strip(),
+        # ประเภทเคลม (เคลมสด/เคลมแห้ง/ติดตาม/เจรจาสินไหม) — ตัวคุมว่าบอทจะติ๊ก
+        # radio ตัวไหนบน EMCS จึงสำคัญกว่ารุ่นรถตอนตรวจก่อนนำเข้า
+        "claim_type": data.claim_type_name(),
         "insured": data.insure_name, "driver": f"{data.driver_name} {data.driver_surname}".strip(),
         "acc_result": data.acc_result,
         "counts": {"opponents": len(data.third_parties or []),
@@ -2398,7 +2401,9 @@ async function checkIsvCase(btn){
     const netTxt = d.bill_zero
       ? '<b style="color:#d97706">สุทธิ ' + escHtml(d.bill_net || "0.00") + ' ⚠️</b>'
       : 'สุทธิ ' + escHtml(d.bill_net || "-");
-    let h = '<div style="margin-bottom:6px">' + escHtml(d.car || "") + ' · ' + escHtml(d.plate || "")
+    // บรรทัดแรก: ประเภทเคลม · ทะเบียน · ผลคดี
+    // (ไม่โชว์ยี่ห้อ/รุ่นรถแล้ว — ยาวจนดันบรรทัด และไม่ใช่สิ่งที่ต้องตัดสินใจตอนตรวจ)
+    let h = '<div style="margin-bottom:6px">' + escHtml(d.claim_type || "") + ' · ' + escHtml(d.plate || "")
           + ' · ' + escHtml(d.acc_result || "") + '</div>'
           + '<div style="color:var(--muted);margin-bottom:8px">คู่กรณี ' + c.opponents
           + ' · ผู้บาดเจ็บ ' + c.injuries + ' · ทรัพย์สิน ' + c.assets
