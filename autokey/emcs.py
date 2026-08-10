@@ -2407,7 +2407,9 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
     - **กดแล้วเงียบ ไม่มี alert เลย** ก็เกิดได้ (ดู _diagnose_save_click) — ต้องไม่ตีความ
       ว่าสำเร็จ และต้องไม่ปล่อย TimeoutException ดิบ ๆ ออกไป"""
     auto_heal_left = 2    # จำนวนรอบที่ยอมให้ซ่อม dropdown อัตโนมัติ
-    click_fail_left = 2   # จำนวนรอบที่ยอมลองกดใหม่เมื่อคลิกไม่ติด
+    # จำนวนรอบที่ยอมลองกดใหม่เมื่อคลิกไม่ติด — 3 เพราะการทดสอบจริงครั้งแรก (เคส #126
+    # 10 ส.ค. 69) ผ่านที่รอบ 3 พอดี = ใช้โควตาเดิม (2) จนหมดเกลี้ยง เหลือ 0 ที่กันพลาด
+    click_fail_left = 3
     bad_id = ""           # id ช่องแรกที่ EMCS ตีตก (objControlName) — ไว้ตีกรอบแดง
     for attempt in range(1, 8):
         log(f"EMCS: กดบันทึกหน้าหลัก ({button_id}, รอบ {attempt})")
