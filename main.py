@@ -1440,15 +1440,17 @@ def run_report_isurvey(cfg, args):
         emcs.login(driver, cfg)
         for claim, invoice in targets:
             banner(f"แจ้ง ISURVEY: เคลม {claim}")
-            info = emcs.report_status(driver, claim)
+            # ส่งเลขใบแจ้งหนี้ไปด้วย = ตัวแยกเรื่อง (1 เคลมมีได้หลายเรื่อง/หลายครั้งที่)
+            info = emcs.report_status(driver, claim, survey_no=invoice)
             st = (info or {}).get("status", "").strip()
             if not info:
-                log("⏭️ ข้าม — ไม่พบเรื่องของเคลมนี้ใน EMCS")
-                results.append((claim, "⏭️", "ไม่พบเรื่องใน EMCS"))
+                log("⏭️ ข้าม — ไม่พบเรื่องของเคลมนี้ใน EMCS (หรือแยกเรื่องไม่ออก)")
+                results.append((claim, "⏭️", "ไม่พบเรื่อง/แยกเรื่องไม่ออก"))
                 continue
-            if (not st) or st in emcs.DRAFT_STATUSES:
-                log(f"⏭️ ข้าม — ยังไม่ได้กดส่งงานใหม่ใน EMCS (สถานะ: {st or 'อ่านไม่ได้'})")
-                results.append((claim, "⏭️", f"ยังไม่ส่งงาน ({st or 'อ่านสถานะไม่ได้'})"))
+            # whitelist เท่านั้น — สถานะที่ไม่รู้จักถือว่า "ยังไม่ยืนยัน" ไม่ใช่ "ส่งแล้ว"
+            if st not in emcs.SUBMITTED_STATUSES:
+                log(f"⏭️ ข้าม — ยังไม่ยืนยันว่าส่งงานแล้ว (สถานะ: {st or 'อ่านไม่ได้'})")
+                results.append((claim, "⏭️", f"ยังไม่ยืนยันว่าส่ง ({st or 'อ่านสถานะไม่ได้'})"))
                 continue
             log(f"✓ EMCS ส่งงานแล้ว (สถานะ: {st})")
             survey_no = info.get("survey_no") or invoice

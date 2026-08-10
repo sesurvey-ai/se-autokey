@@ -2071,7 +2071,13 @@ def _run_click_save(vf_ok, js_ok=True):
     emcs.WebDriverWait = _NeverReady
     emcs._read_validform = lambda d: {"ok": vf_ok, "err": "", "missing": [], "control": ""}
     emcs.log = lambda *a, **k: None
-    emcs.time = _types.SimpleNamespace(sleep=lambda s: None)   # ไม่ต้องรอจริงในเทส
+    # ไม่ต้องรอจริงในเทส — และต้องมี time() ด้วย เพราะ _wait_page_quiet ใช้ deadline
+    # (ให้เวลาเดินเร็ว ๆ เอง ไม่งั้นเทสจะ busy-loop จนครบ timeout จริง)
+    _clock = {"t": 0.0}
+    def _tick():
+        _clock["t"] += 5.0
+        return _clock["t"]
+    emcs.time = _types.SimpleNamespace(sleep=lambda s: None, time=_tick)
     try:
         ok = emcs._click_save_button(
             _types.SimpleNamespace(execute_script=_exec), "btnUpdate")
@@ -2588,8 +2594,8 @@ check("submit: อ่านสถานะไม่ได้ครบ 3 รอ�
       _ok is False and "ตรวจสถานะบน EMCS ไม่ได้" in _msg
       and "อาจส่งสำเร็จแล้ว" in _msg, _msg[:80])
 _ok, _msg, _n = _run_submit([True], status_seq=["รายงานสร้างใหม่"])
-check("submit: ยังเป็น draft อยู่ → บอกตรง ๆ ว่าอาจไม่สำเร็จ",
-      _ok is False and "ยังเป็น 'รายงานสร้างใหม่'" in _msg, _msg[:60])
+check("submit: ยังเป็น draft อยู่ → บอกตรง ๆ ว่ายังไม่ยืนยันว่าสำเร็จ",
+      _ok is False and "'รายงานสร้างใหม่'" in _msg, _msg[:60])
 # report_status ต้องรอจนแถวโผล่จริง ห้ามกลับไป sleep คงที่แล้วอ่านทีเดียว
 _rs = __import__("inspect").getsource(emcs.report_status)
 check("report_status: รอจนอ่านสถานะได้ (มี deadline loop) ไม่ใช่ sleep ครั้งเดียว",
@@ -2613,7 +2619,7 @@ check("ส่งงาน: EMCS เงียบ → ค่อยใช้ทา�
       _ok is True and "สถานะ →" in _msg, _msg[:70])
 _sub = __import__("inspect").getsource(emcs.submit_report)
 check("ส่งงาน: อ่านคำตอบก่อน แล้วค่อยถึงทางสำรอง (ไม่ใช่ตรวจซ้ำทุกครั้ง)",
-      _sub.index("_read_submit_result(driver)") < _sub.index("goto_mainpage(driver, cfg, \"\")\n            info = report_status"))
+      _sub.index("_read_submit_result(driver)") < _sub.index("info = report_status(driver, claim)"))
 
 # ---- ต้นเหตุจริงของ "ไม่เจอปุ่มส่งงาน": ออกจากเรื่องก่อนคนจะได้สั่งส่ง ----
 # ปุ่ม 'ส่งงานใหม่' อยู่ในเรื่อง แต่บอทกด 'กลับหน้า Inbox/Outbox' ทันทีหลังบันทึกราคา

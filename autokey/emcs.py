@@ -937,10 +937,14 @@ def continuation_esurvey(existing, invoice: str):
 #   'รายงานสร้างใหม่'        = draft (ยังไม่กดส่งงานใหม่)
 #   'ประกันตรวจสอบรายงาน'   = ส่งงานแล้ว (รอประกันตรวจ)
 DRAFT_STATUSES = {"รายงานสร้างใหม่"}
+# สถานะที่ "แปลว่าส่งงานแล้วแน่นอน" — whitelist เท่านั้น
+# เดิมใช้กติกากลับด้าน ("ไม่ใช่ draft = ส่งแล้ว") ซึ่งกว้างเกินจริง: EMCS มีสถานะอื่นอีก
+# ที่ไม่ได้แปลว่าส่ง (เช่นถูกตีกลับ/ยกเลิก) แล้วเราจะรายงานผิดว่าส่งเรียบร้อย
+SUBMITTED_STATUSES = {"ประกันตรวจสอบรายงาน"}
 
 _JS_REPORT_STATUS = r"""
 const claim = arguments[0];
-let result = null;
+const rows = [];
 document.querySelectorAll("a").forEach(a => {
   const t = (a.innerText || "").trim();
   if (!/^S\d{9,13}$/.test(t)) return;
@@ -955,16 +959,23 @@ document.querySelectorAll("a").forEach(a => {
     if (hr) statusIdx = [...hr.querySelectorAll("td,th")]
       .map(c => (c.innerText||"").trim()).indexOf("สถานะ");
   }
-  const surv = cells.find(c => /SEABI[-\w]/i.test(c)) || "";
-  result = {esurvey: t, status: statusIdx >= 0 ? (cells[statusIdx] || "") : "",
-            survey_no: surv};
+  // เลขใบแจ้งหนี้/เลขเซอร์เวย์ — ISURVEY ใช้ SEABI-… ส่วนงานจาก se-survey ใช้ SETP-…
+  // (เดิมจับแค่ SEABI → งานของเราคืน survey_no ว่างเสมอ แยกเรื่องไม่ได้)
+  const surv = cells.find(c => /\b(SEABI|SETP)[-\w]/i.test(c)) || "";
+  rows.push({esurvey: t, status: statusIdx >= 0 ? (cells[statusIdx] || "") : "",
+             survey_no: surv});
 });
-return result;
+return rows;
 """
 
 
-def report_status(driver, claim: str, wait: float = 20):
+def report_status(driver, claim: str, wait: float = 20, survey_no: str = ""):
     """ค้นเรื่องของเคลมในหน้า EMCS → คืน {esurvey, status, survey_no} (None ถ้าไม่เจอ)
+
+    survey_no (เลขเซอร์เวย์/ใบแจ้งหนี้ SETP-… หรือ SEABI-…) = **ตัวแยกเรื่อง**
+    1 เลขเคลมมีได้หลายเรื่อง (งานครั้งที่ 1, 2, …) เดิมกรองด้วยเลขเคลมอย่างเดียวแล้ว
+    เก็บ "แถวสุดท้ายที่เจอ" → อ่านสถานะของเรื่องผิดใบได้ (user ยืนยัน 2026-08-11 ว่า
+    ตัวแยกคือเลขเซอร์เวย์). ไม่ส่ง survey_no มา + เจอหลายแถว = คืน None (ไม่เดา)
 
     ⚠️ ห้ามกลับไปใช้ sleep คงที่แล้วอ่านทีเดียว — เจอจริง 2026-08-06 (เคลม
     2026013160796): หลังกดส่งงาน session หลุด ต้อง login ใหม่ ตารางผลค้นเลยมาช้า
@@ -973,38 +984,66 @@ def report_status(driver, claim: str, wait: float = 20):
     if not (claim or "").strip():
         return None
     claim = claim.strip()
+    want = (survey_no or "").strip().upper()
     wait_visible(driver, By.ID, "txtRef_Claim_No", 20)
     box = driver.find_element(By.ID, "txtRef_Claim_No")
     box.clear()
     box.send_keys(claim)
     driver.find_element(By.ID, "btnSearch").click()
+
+    def pick(rows):
+        """เลือกแถวที่ตรงเรื่อง — คืน None ถ้าแยกไม่ออก (ดีกว่าเดาผิด)"""
+        if not rows:
+            return None
+        if want:
+            hit = [r for r in rows if want in (r.get("survey_no") or "").upper()]
+            if len(hit) == 1:
+                return hit[0]
+            if not hit:
+                log(f"   ⚠️ ไม่พบเรื่องที่เลขเซอร์เวย์ {want} ในเคลม {claim} "
+                    f"(เจอ {len(rows)} เรื่อง) — ไม่เดา")
+                return None
+            log(f"   ⚠️ เลขเซอร์เวย์ {want} ตรงหลายเรื่อง ({len(hit)}) — ไม่เดา")
+            return None
+        if len(rows) == 1:
+            return rows[0]
+        log(f"   ⚠️ เคลม {claim} มี {len(rows)} เรื่องใน EMCS แต่ไม่ได้บอกเลขเซอร์เวย์ "
+            "— แยกไม่ออก ไม่เดา")
+        return None
+
     # รอจนแถวโผล่จริง (postback ช้ากว่าปกติได้ตอนเพิ่ง login ใหม่)
     deadline = time.time() + max(3.0, float(wait))
     info = None
     while time.time() < deadline:
         time.sleep(1)
         try:
-            info = driver.execute_script(_JS_REPORT_STATUS, claim)
+            rows = driver.execute_script(_JS_REPORT_STATUS, claim) or []
         except Exception:
-            info = None
+            rows = []
+        info = pick(rows)
         if info and (info.get("status") or "").strip():
             return info
     return info
 
 
-def is_report_submitted(driver, claim: str):
-    """ตรวจว่าเคลมนี้ "กดส่งงานใหม่แล้วจริงไหม" — gate ก่อนแจ้ง ISURVEY
-    คืน (submitted: bool, reason: str). conservative: ต้องเจอเรื่อง + สถานะ
-    ไม่ใช่ draft ('รายงานสร้างใหม่') ถึงถือว่าส่งแล้ว"""
-    info = report_status(driver, claim)
+def is_report_submitted(driver, claim: str, survey_no: str = ""):
+    """ตรวจว่าเรื่องนี้ "กดส่งงานใหม่แล้วจริงไหม" — gate ก่อนแจ้ง ISURVEY
+
+    คืน (submitted: bool | None, reason: str) — **None = ไม่ทราบ** (อ่านไม่ได้/แยกเรื่อง
+    ไม่ออก) ผู้เรียกต้องไม่ตีความว่า "ยังไม่ส่ง" แล้วไปกดส่งซ้ำ
+    ใช้ whitelist SUBMITTED_STATUSES ไม่ใช่กติกากลับด้าน "ไม่ใช่ draft = ส่งแล้ว"
+    """
+    info = report_status(driver, claim, survey_no=survey_no)
     if not info:
-        return False, "ไม่พบเรื่องของเคลมนี้ใน EMCS"
+        return None, "ไม่พบเรื่องของเคลมนี้ใน EMCS (หรือแยกเรื่องไม่ออก)"
     st = (info.get("status") or "").strip()
     if not st:
-        return False, "อ่านสถานะเรื่องไม่ได้"
+        return None, "อ่านสถานะเรื่องไม่ได้"
+    if st in SUBMITTED_STATUSES:
+        return True, f"ส่งงานแล้ว (สถานะ: {st})"
     if st in DRAFT_STATUSES:
         return False, f"ยังไม่ได้กดส่งงานใหม่ (สถานะ: {st})"
-    return True, f"ส่งงานแล้ว (สถานะ: {st})"
+    return None, f"สถานะอื่น ไม่ยืนยันว่าส่งแล้ว: {st}"
 
 
 def goto_mainpage(driver, cfg, mainpage_url: str = "") -> str:
@@ -2195,7 +2234,7 @@ def _read_click_probe(driver) -> str:
     return "onclick ผ่านหมดแล้วแต่ postback ไม่ออก (ฝั่ง ASP.NET ไม่ยิงฟอร์ม)"
 
 
-def _wait_page_quiet(driver, quiet: float = 2.0, timeout: float = 30.0) -> bool:
+def _wait_page_quiet(driver, quiet: float = 2.0, timeout: float = 10.0) -> bool:
     """รอจนหน้า "ไม่ถูก render ใหม่" ติดกัน `quiet` วินาที — คืน False ถ้าไม่นิ่งจนหมดเวลา
 
     ทำไมต้องมีทั้งที่เช็ค readyState + isInAsyncPostBack ไปแล้ว: postback แบบเต็มหน้า
@@ -3839,7 +3878,12 @@ def submit_report(driver, cfg, claim, esurvey: str = ""):
     for attempt in (1, 2, 3):
         try:
             goto_mainpage(driver, cfg, "")
+            # esurvey ของเรื่องที่เพิ่งกดส่ง — ใช้แยกเรื่องเมื่อเคลมนี้มีหลายเรื่อง
             info = report_status(driver, claim)
+            if esurvey and info and (info.get("esurvey") or "") != esurvey:
+                log(f"   ⚠️ สถานะที่อ่านได้เป็นของเรื่อง {info.get('esurvey')} "
+                    f"ไม่ใช่ {esurvey} — ไม่นับ")
+                info = None
         except Exception as e:
             err = f"{type(e).__name__}: {e}"
             log(f"   ⚠️ ตรวจสถานะรอบ {attempt} ไม่สำเร็จ ({err})")
@@ -3850,10 +3894,11 @@ def submit_report(driver, cfg, claim, esurvey: str = ""):
             break
         log(f"   ⚠️ ตรวจสถานะรอบ {attempt}: ยังอ่านไม่ได้ (หน้ารายการอาจยังไม่ขึ้น)")
         time.sleep(3)
-    if st and st not in DRAFT_STATUSES:
+    # whitelist เท่านั้น — สถานะแปลก ๆ ไม่ถือว่าส่งสำเร็จ (เดิมใช้ "ไม่ใช่ draft = สำเร็จ")
+    if st in SUBMITTED_STATUSES:
         return True, f"ส่งงานสำเร็จ (สถานะ → {st})"
     if st:
-        return False, (f"กดส่งแล้วแต่สถานะยังเป็น '{st}' — อาจไม่สำเร็จ ตรวจเอง")
+        return False, (f"กดส่งแล้วแต่สถานะเป็น '{st}' — ยังไม่ยืนยันว่าสำเร็จ ตรวจเอง")
     # อ่านสถานะไม่ได้ ≠ ส่งไม่สำเร็จ — บอกตรง ๆ ว่าตรวจไม่ได้ ห้ามแจ้ง ISURVEY เอง
     return False, ("กดส่งงานไปแล้ว แต่ตรวจสถานะบน EMCS ไม่ได้ (ลอง 3 รอบ"
                    + (f", ล่าสุด {err}" if err else "") + ") — "
