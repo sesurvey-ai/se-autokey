@@ -2195,6 +2195,39 @@ def _read_click_probe(driver) -> str:
     return "onclick ผ่านหมดแล้วแต่ postback ไม่ออก (ฝั่ง ASP.NET ไม่ยิงฟอร์ม)"
 
 
+def _wait_page_quiet(driver, quiet: float = 2.0, timeout: float = 30.0) -> bool:
+    """รอจนหน้า "ไม่ถูก render ใหม่" ติดกัน `quiet` วินาที — คืน False ถ้าไม่นิ่งจนหมดเวลา
+
+    ทำไมต้องมีทั้งที่เช็ค readyState + isInAsyncPostBack ไปแล้ว: postback แบบเต็มหน้า
+    ของ ASP.NET (ที่ ddl จังหวัด/อำเภอ/ประเภทรถ ยิงตอน onchange) **ยังไม่เริ่มเดินทาง**
+    ตอนที่เราถาม readyState ได้ — ถามตอนนั้นได้ 'complete' ของหน้าเดิม แล้วอีกแป๊บ
+    response ค่อยมาถึงแล้วเปลี่ยนหน้าทั้งใบ
+
+    ผลคือ: กดบันทึกไปแล้ว (ปุ่มขึ้น 'Please wait...' ยิง __doPostBack เรียบร้อย) แต่
+    response ของ postback ก่อนหน้ามาถึงทีหลัง render หน้าใหม่ทับ → **คำสั่งบันทึกหายไป
+    เฉย ๆ ไม่มี alert ไม่มี error** บอทรอ alert เก้อ 30 วิแล้วรายงานว่า 'EMCS เงียบ'
+    (พิสูจน์แล้วกับเคส #126 10 ส.ค. 69: เลือกจังหวัด 14:28:50 → อำเภอ 14:28:51 →
+    กดบันทึก 14:28:52 → ไม่มี alert; 30 วิให้หลังปุ่มกลับมาเป็น 'แก้ไข' กดได้ = หน้าถูก
+    render ใหม่ทับจริง)
+
+    วิธีตรวจ: ปัก marker ไว้บน window แล้วรอ — full postback โหลด document ใหม่
+    marker จะหายไปเอง (ต่างจาก async postback ที่ window อยู่ยง)"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            driver.execute_script("window.__akQuiet = 1;")
+        except Exception:
+            return False                     # หน้ากำลังเปลี่ยนอยู่พอดี — วนรอใหม่ไม่ได้
+        time.sleep(quiet)
+        try:
+            if driver.execute_script("return window.__akQuiet === 1;"):
+                return True
+        except Exception:
+            pass
+        log("   ⏳ หน้าเพิ่งถูกโหลดใหม่ (postback ของช่องก่อนหน้าเพิ่งมาถึง) — รอให้นิ่งก่อนกด")
+    return False
+
+
 def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
     """กดปุ่มบันทึก แล้ว **ยืนยันว่าคลิกติดจริง** — คืน True เมื่อติด
 
@@ -2217,6 +2250,7 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
                 "         .get_isInAsyncPostBack());"))
         except Exception:
             pass
+        _wait_page_quiet(driver)
         btn = wait_clickable(driver, By.ID, button_id)
         _arm_click_probe(driver, button_id)     # ไว้บอกทีหลังว่าคลิกไปตายตรงไหน
         btn.click()
@@ -2407,6 +2441,13 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
                     "validForm() ฝั่ง JS ปัดตก (ไม่ยิง postback)")
                 _why = _diagnose_save_click(driver, button_id)
                 bad_id = _read_validform(driver).get("control") or ""
+                # ข้อมูลผ่าน validForm แต่เงียบ = คำสั่งบันทึกหายกลางทาง (postback ของช่อง
+                # ก่อนหน้ามาถึงทีหลังแล้ว render ทับ) — กดใหม่บนหน้าที่นิ่งแล้วมักผ่านเลย
+                # ห้ามฟ้องล้มทันที: ของเดิมโยน RuntimeError ทั้งที่กดซ้ำครั้งเดียวก็จบ
+                if _read_validform(driver).get("ok") is not False and click_fail_left > 0:
+                    click_fail_left -= 1
+                    log("   ↻ ข้อมูลผ่าน validForm() — น่าจะเป็นคำสั่งบันทึกหายกลางทาง กดใหม่")
+                    continue
                 if _why:
                     log(f"   ↳ {_why}")
                     alert_text = _why
