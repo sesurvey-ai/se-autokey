@@ -26,6 +26,28 @@ FUZZY_WARN_SCORE = 60
 # (กันเคส 'เอ็มจี'/'นิสสัน' ไทย เจอ dropdown อังกฤษ ได้ 0 คะแนน แล้วไปลง '-- ระบุ --')
 FUZZY_MIN_SCORE = 40
 
+# ── โหมด "เขียนเฉพาะช่องที่ต่าง" ────────────────────────────────────────────
+# ปกติ set_text/fuzzy_select เขียนทับทุกช่องเสมอ ซึ่งถูกต้องตอน import ครั้งแรก
+# (หน้าว่าง + dropdown ลูกยังไม่โหลดจนกว่าตัวแม่จะ fire onchange)
+# แต่โหมด "เติมส่วนที่ขาด" เปิด draft ที่กรอกไปแล้วมาเติม — พิมพ์ทับทุกช่องซ้ำทั้งหน้า
+# ช้ามาก (send_keys ทีละตัวอักษร × ~60 ช่อง) และผิดชื่อโหมดที่บอกว่า "เติมส่วนที่ขาด"
+# เปิดธงนี้ = อ่านค่าบนหน้าก่อน ถ้าตรงอยู่แล้วข้าม (user รายงาน 2026-08-10)
+# ⚠️ เปิดเฉพาะตอนหน้าโหลดค่าครบแล้วเท่านั้น — เปิดตอน import ใหม่จะทำให้ dropdown
+#    ลูก (ยี่ห้อ←ประเภทรถ, อำเภอ←จังหวัด) ไม่ถูก populate เพราะข้ามการ fire onchange
+SKIP_UNCHANGED = False
+
+
+def set_skip_unchanged(on: bool):
+    """เปิด/ปิดโหมดเขียนเฉพาะช่องที่ต่าง (ดูหมายเหตุที่ SKIP_UNCHANGED)"""
+    global SKIP_UNCHANGED
+    SKIP_UNCHANGED = bool(on)
+
+
+def _same_text(a, b) -> bool:
+    """เทียบค่าช่องแบบไม่ถือสาช่องว่างซ้ำ/หัวท้าย (EMCS คืนค่าที่ trim มาแล้วบ้างไม่บ้าง)"""
+    return " ".join(str(a or "").split()) == " ".join(str(b or "").split())
+
+
 # ข้อความ placeholder ของ dropdown EMCS — ห้ามเลือกเด็ดขาด (= ไม่ได้เลือกอะไรเลย)
 _PLACEHOLDER_WORDS = {"ระบุ", "กรุณาเลือก", "เลือก", "โปรดระบุ", "โปรดเลือก", ""}
 
@@ -248,6 +270,9 @@ def set_textarea(driver, elem_id, value):
         # ไม่ใช่ textarea (เช่นช่องเดียวกันบนหน้า 1 เป็น input) → ยุบบรรทัดแล้วใช้เส้นปกติ
         set_text(driver, elem_id, " ".join(value.split()))
         return
+    if SKIP_UNCHANGED and _same_text(el.get_attribute("value"), value):
+        log(f"   = {elem_id} ตรงอยู่แล้ว — ข้าม")
+        return
     driver.execute_script(
         "var e=arguments[0];e.value=arguments[1];"
         "e.dispatchEvent(new Event('input',{bubbles:true}));"
@@ -278,6 +303,14 @@ def set_text(driver, elem_id, value):
             value = safe or "-"
     except Exception:
         pass
+    # โหมดเติมส่วนที่ขาด: ค่าบนหน้าตรงอยู่แล้ว = ไม่ต้องพิมพ์ทับ (ดู SKIP_UNCHANGED)
+    if SKIP_UNCHANGED:
+        try:
+            if _same_text(el.get_attribute("value"), value):
+                log(f"   = {elem_id} ตรงอยู่แล้ว — ข้าม")
+                return
+        except Exception:
+            pass
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
     except Exception:
@@ -933,6 +966,16 @@ def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
                 )
             sel = Select(driver.find_element(By.ID, select_id))
             options = [o.text for o in sel.options]
+            # โหมดเติมส่วนที่ขาด: ตัวที่เลือกอยู่ตรงกับที่จะเลือกแล้ว = ไม่ต้องเลือกซ้ำ
+            # (เลือกซ้ำ = ยิง onchange → postback ทั้งหน้า เสียเวลาที่สุดในบรรดาช่องทั้งหมด)
+            if SKIP_UNCHANGED:
+                try:
+                    cur = sel.first_selected_option.text
+                    if _same_text(cur, value):
+                        log(f"   = {name} ตรงอยู่แล้ว ('{cur}') — ข้าม")
+                        return cur, 100
+                except Exception:
+                    pass
             # ตัวแรกที่ value="0"/"" = placeholder ของ dropdown นี้ (ตรวจทั้งหน้า EMCS
             # 449 select แล้ว ไม่มีตัวเลือกจริงตัวไหนใช้ value 0) — เชื่อถือได้กว่าเดา
             # จากข้อความ เพราะข้อความต่างกันไปตามช่อง: '-- ระบุ --', '-- จังหวัด --',

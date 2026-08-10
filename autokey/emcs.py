@@ -29,6 +29,7 @@ from .browser import (
     iso_to_thai_date,
     log,
     mark_check,
+    set_skip_unchanged,
     set_text,
     set_textarea,
     split_hhmm,
@@ -4348,28 +4349,34 @@ def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",
     main_window = driver.current_window_handle
     resolved_loss = resolve_loss_type(data, loss_type)
 
-    # เติมหน้าหลัก (เหมือน fill_imported หลัง import)
-    fill_severity(driver, severity)
-    fill_car(driver, data)
-    _recascade_province(driver, "ddlDri_ProvinceID")
-    fill_driver(driver, data)
-    _recascade_province(driver, "ddlAcc_ProvinceID")
-    fill_accident(driver, data, loss_type=resolved_loss)
-    fill_verdict(driver, data)
-    _set_or_clear_claim_ref(driver, data.notify_value)
-    save_main_form(driver, data, button_id="btnUpdate", is_new=False)
+    # โหมดนี้เปิดของเดิมที่กรอกไปแล้ว → เขียนเฉพาะช่องที่ค่าต่างจริง
+    # (เดิมพิมพ์ทับทุกช่องซ้ำทั้งหน้า ช้าโดยไม่ได้อะไร — user รายงาน 2026-08-10)
+    set_skip_unchanged(True)
+    try:
+        # เติมหน้าหลัก (เหมือน fill_imported หลัง import)
+        fill_severity(driver, severity)
+        fill_car(driver, data)
+        _recascade_province(driver, "ddlDri_ProvinceID")
+        fill_driver(driver, data)
+        _recascade_province(driver, "ddlAcc_ProvinceID")
+        fill_accident(driver, data, loss_type=resolved_loss)
+        fill_verdict(driver, data)
+        _set_or_clear_claim_ref(driver, data.notify_value)
+        save_main_form(driver, data, button_id="btnUpdate", is_new=False)
 
-    # ส่วนที่ import ไม่เติม (คู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน/ความเสียหาย/รูป/ค่าใช้จ่าย)
-    fill_third_parties(driver, data)
-    fill_damage_list(driver, data, main_window)
-    fill_injuries(driver, data)
-    fill_assets(driver, data)
-    if images_folder is not None:
-        upload_images(driver, images_folder, image_type=image_type,
-                      n_opponents=len(data.third_parties or []),
-                      n_injuries=len(data.injuries or []),
-                      n_assets=len(data.assets or []))
-    fill_billing(driver, data, full_billing=full_billing, leave=False)
+        # ส่วนที่ import ไม่เติม (คู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน/ความเสียหาย/รูป/ค่าใช้จ่าย)
+        fill_third_parties(driver, data)
+        fill_damage_list(driver, data, main_window)
+        fill_injuries(driver, data)
+        fill_assets(driver, data)
+        if images_folder is not None:
+            upload_images(driver, images_folder, image_type=image_type,
+                          n_opponents=len(data.third_parties or []),
+                          n_injuries=len(data.injuries or []),
+                          n_assets=len(data.assets or []))
+        fill_billing(driver, data, full_billing=full_billing, leave=False)
+    finally:
+        set_skip_unchanged(False)   # ธงเป็น global — ห้ามค้างไปถึงงานถัดไปในโปรเซสเดียวกัน
     return target
 
 
