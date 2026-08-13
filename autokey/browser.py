@@ -244,6 +244,36 @@ def accept_alert(driver, timeout=30) -> str:
 
 # ---------------------------------------------------------------- อ่าน/กรอกค่า
 
+# ── เครื่องหมาย + หายตอน EMCS บันทึก ────────────────────────────────────────
+# ฟอร์มของ EMCS ส่งแบบ application/x-www-form-urlencoded ซึ่ง "+" แปลว่าเว้นวรรค
+# (บวกจริงต้องเป็น %2B) ฝั่งเซิร์ฟเวอร์ถอดรหัสค่าที่ถอดมาแล้วซ้ำอีกรอบ → "+" กลายเป็น
+# ช่องว่างเงียบ ๆ · ยืนยันจากหน้าจริง 13/08/69: พิมพ์ "ประเภท 2+" ลง txtAcc_Detail
+# แล้วกด "แก้ไข" เครื่องหมายบวกหายไป ส่วน : / ( ) . - รอดครบ (จึงไม่ใช่ตัวกรองอักขระ)
+#
+# แก้ที่ EMCS ไม่ได้ → แปลงเป็นคำก่อนพิมพ์ "เฉพาะช่องที่ระบุไว้" (user เลือกเอง 13/08/69)
+# ข้อมูลต้นทางใน se-survey ไม่ถูกแตะ — คนเปิดดูบนเว็บ/แอปยังเห็น "2+" เหมือนเดิม
+#
+# ⛔ ห้ามใส่ช่องชื่อคน (txtDri_Name / txtOpo_Name / txtAcc_Surv …) — พวกนั้นมี noTyping
+#    ของ EMCS กรองอักขระอยู่แล้ว และ set_text ด้านล่าง normalize ให้ตรงกติกานั้นต่างหาก
+PLUS_TO_WORD_FIELDS = {
+    "txtAcc_Detail",     # รายละเอียดการเกิดเหตุ (หน้าข้อมูลทั่วไป)
+    "txtAcc_result",     # ผลการดำเนินงาน (หน้าค่าใช้จ่าย)
+    "txtAcc_Comment",    # ความเห็นของผู้ตรวจสอบ (หน้าค่าใช้จ่าย)
+    "txtSurv_Comment",   # ความเห็นของเซอร์เวย์ (หน้าค่าใช้จ่าย)
+}
+PLUS_WORD = "พลัส"
+
+
+def _plus_safe(elem_id, value: str) -> str:
+    """แปลง + เป็นคำ เฉพาะช่องใน PLUS_TO_WORD_FIELDS (ช่องอื่นคืนค่าเดิม)"""
+    if elem_id not in PLUS_TO_WORD_FIELDS or "+" not in value:
+        return value
+    out = value.replace("+", PLUS_WORD)
+    log(f"   ~ {elem_id}: แปลง + เป็น '{PLUS_WORD}' {value.count('+')} จุด "
+        f"(EMCS กลืนเครื่องหมายบวกตอนบันทึก)")
+    return out
+
+
 def get_value(driver, elem_id) -> str:
     return driver.find_element(By.ID, elem_id).get_attribute("value")
 
@@ -260,7 +290,7 @@ def set_textarea(driver, elem_id, value):
     if value is None or str(value) == "":
         log(f"   - ข้าม {elem_id} (ค่าว่าง)")
         return
-    value = str(value)
+    value = _plus_safe(elem_id, str(value))
     try:
         el = driver.find_element(By.ID, elem_id)
     except Exception:
@@ -289,7 +319,7 @@ def set_text(driver, elem_id, value):
     if value is None or str(value) == "":
         log(f"   - ข้าม {elem_id} (ค่าว่าง)")
         return
-    value = str(value)
+    value = _plus_safe(elem_id, str(value))
     el = driver.find_element(By.ID, elem_id)
     # ช่องที่มี onkeypress="noTyping" ของ EMCS ยอมเฉพาะ [เว้นวรรค a-zA-Z0-9 ก-์ . -]
     # เส้นพิมพ์ (send_keys) จะโดนตัดอักขระอื่นทิ้ง "เงียบ ๆ" ส่วนเส้น JS fallback ยัดเข้าได้
