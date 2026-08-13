@@ -328,7 +328,11 @@ def read_tab1_summary(driver, data: ClaimData):
     data.arrive_time = get_value(driver, "tab1_arrive_time-inputEl")
     data.finish_date = get_value(driver, "tab1_finish_date-inputEl")
     data.finish_time = get_value(driver, "tab1_finish_time-inputEl")
-    data.accident_summary = get_value(driver, "accident_summary-inputEl")
+    # "บันทึกความเห็นหัวหน้างาน" (แท็บ 1) → EMCS **ความเห็นของผู้ตรวจสอบ** (txtAcc_Comment)
+    # กติกา user 13/08/69 — เดิมลง "ผลการดำเนินงาน" (txtAcc_result) ซึ่งผิดความหมาย
+    # ผลการดำเนินงานปล่อยว่างให้คนกรอกเอง (ISURVEY มีช่องความเห็นหัวหน้าช่องเดียว
+    # จะยัดลง 2 ช่องก็ได้ข้อความซ้ำกันในหน้าเดียว)
+    data.review_comment = get_value(driver, "accident_summary-inputEl")
 
 
 def read_tab2_accident(driver, data: ClaimData, download_dir=None):

@@ -9,7 +9,8 @@ FIELD_LABELS = {
     "policy_value": "เลขกรมธรรม์", "claim_type": "ประเภทเคลม", "surveyor_name": "พนักงานสำรวจ",
     "arrive_date": "วันถึงที่เกิดเหตุ", "arrive_time": "เวลาถึงที่เกิดเหตุ",
     "finish_date": "วันเสร็จงาน", "finish_time": "เวลาเสร็จงาน",
-    "accident_summary": "บันทึกความเห็นหัวหน้า",
+    "accident_summary": "ผลการดำเนินงาน",
+    "review_comment": "ความเห็นของผู้ตรวจสอบ",
     "acc_date": "วันที่เกิดเหตุ", "acc_time": "เวลาเกิดเหตุ", "acc_place": "สถานที่เกิดเหตุ",
     "acc_province": "จังหวัดเกิดเหตุ", "acc_amphur": "เขต/อำเภอเกิดเหตุ",
     "acc_type_desc": "สาเหตุการเกิดเหตุ", "acc_detail": "รายละเอียดการเกิดเหตุ",
@@ -170,8 +171,13 @@ class ClaimData:
     arrive_time: str = ""          # เวลาถึงที่เกิดเหตุ
     finish_date: str = ""          # วันเสร็จงาน
     finish_time: str = ""          # เวลาเสร็จงาน
-    accident_summary: str = ""     # บันทึกความเห็นหัวหน้า → EMCS 'ผลการดำเนินงาน' (txtAcc_result)
-    review_comment: str = ""       # ความเห็นผู้ตรวจสอบ (se-survey review_comment) → EMCS txtAcc_Comment
+    # ⚠️ 2 ช่องนี้เติมมาคนละทางแล้วแต่ต้นทาง — อย่าสลับปลายทางที่ emcs.py
+    #    se-survey: survey_result → accident_summary · review_comment → review_comment (ตรงชื่อ)
+    #    ISURVEY  : ไม่มี "ผลการดำเนินงาน" มีแต่ "บันทึกความเห็นหัวหน้างาน" (แท็บ 1)
+    #               ซึ่งลง review_comment ตั้งแต่ 13/08/69 → accident_summary จึงว่างเสมอ
+    #               ในเส้น ISURVEY และผลการดำเนินงานบน EMCS ปล่อยให้คนกรอกเอง
+    accident_summary: str = ""     # ผลการดำเนินงาน → EMCS txtAcc_result (มาจาก se-survey เท่านั้น)
+    review_comment: str = ""       # ความเห็นผู้ตรวจสอบ → EMCS txtAcc_Comment
     surveyor_comment: str = ""     # ความเห็นของเซอร์เวย์ (se-survey surveyor_comment) → EMCS txtSurv_Comment (หน้าค่าใช้จ่าย)
 
     # ---- Tab 2: Accident info ----

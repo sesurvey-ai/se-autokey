@@ -458,7 +458,10 @@ class ISurveyAPI:
         d.arrive_time = disp.get("arrive_time", "")
         d.finish_date = _ddmmyyyy(disp.get("finish_date"))
         d.finish_time = disp.get("finish_time", "")
-        d.accident_summary = t1.get("accident_summary", "")
+        # "บันทึกความเห็นหัวหน้างาน" (แท็บ 1) → EMCS **ความเห็นของผู้ตรวจสอบ** (txtAcc_Comment)
+        # กติกา user 13/08/69 — เดิมลง "ผลการดำเนินงาน" (txtAcc_result) ซึ่งผิดความหมาย
+        # ผลการดำเนินงานปล่อยว่างให้คนกรอกเอง · ต้องแก้คู่กับ isurvey.py (เส้นอ่านจากหน้าจอ)
+        d.review_comment = t1.get("accident_summary", "")
 
         # ---- Tab 2/8: Accident (ใช้ Notify — จังหวัด/อำเภอเป็นชื่อแล้ว) ----
         d.acc_date = _ddmmyyyy(notify.get("acc_date"))
