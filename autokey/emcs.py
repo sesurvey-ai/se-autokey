@@ -4370,6 +4370,18 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
     fill_accident(driver, data, loss_type=resolved_loss)  # อำเภอเกิดเหตุ + ลักษณะความเสียหาย
     fill_verdict(driver, data)
 
+    # 3 ช่องที่ importer ของ EMCS ไม่ได้เซ็ตให้ และ fill_policy ก็ไม่ถูกเรียกในเส้นนี้
+    # (fill_policy มี call site เดียว = fill_one ของสาย ISURVEY) → เส้น se-survey เคยหายทุกใบ
+    # ไม่ reuse fill_policy ทั้งก้อนตามคอมเมนต์ด้านบน (ห้ามแตะบล็อกกรมธรรม์/ประเภทเคลม)
+    for _fid, _val in (("txtAssured_Email", data.assured_email),
+                       ("txtDeductible", data.deductible),
+                       ("txtDri_Order", data.driver_ticket)):
+        try:
+            if str(_val or "").strip():
+                set_text(driver, _fid, _val)
+        except Exception as _e:
+            log(f"   ⚠️ เติม {_fid} ไม่สำเร็จ: {_e}")
+
     _set_or_clear_claim_ref(driver, data.notify_value)
 
     saved = save_main_form(driver, data, button_id="btnUpdate", is_new=False)

@@ -814,9 +814,12 @@ def _populate_claim_from_report(data, rep):
 
     data.accident_summary = _keep_lines(gv('survey_result'))   # → ผลการดำเนินงาน (txtAcc_result)
     data.review_comment = _keep_lines(gv('review_comment'))    # → ความเห็นของผู้ตรวจสอบ (txtAcc_Comment)
-    # → ความเห็นของเซอร์เวย์ (txtSurv_Comment) — fallback ไป notes ให้ตรงกับ xmlExport.service.ts
-    # (SURV_COMMENT = surveyor_comment || notes) ไม่งั้น 2 เส้นทางส่งไม่เท่ากัน
-    data.surveyor_comment = _keep_lines(gv('surveyor_comment')) or _keep_lines(gv('notes'))
+    # → ความเห็นของเซอร์เวย์ (txtSurv_Comment)
+    # ⛔ **ห้าม fallback ไป notes** (กติกา user 2026-08-12) — `notes` คือ "หมายเหตุเพิ่มเติม"
+    #    ที่ผู้สำรวจจดไว้ใช้ภายใน คนละเรื่องกับความเห็นทางการบนสำนวนของบริษัทประกัน
+    #    ฝั่ง XML ถอด fallback ออกแล้วที่ se-survey `e1c0ccf` — ตรงนี้เคยค้างไว้ ทำให้ 2 เส้นทาง
+    #    ส่งไม่เท่ากัน และเส้นบอทหลุดข้อความภายในเข้า EMCS เงียบ ๆ
+    data.surveyor_comment = _keep_lines(gv('surveyor_comment'))
     data.surveyor_name = gv('acc_surveyor') or gv('surveyor_name')
     data.surveyor_phone = gv('acc_surveyor_phone') or gv('surveyor_phone')
     data.mileage = gv('mileage')
