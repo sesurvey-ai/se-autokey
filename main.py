@@ -1288,6 +1288,16 @@ def run_sesurvey_import(cfg, args):
         meta = meta_r.json().get("data") or {}
     except Exception as e:
         raise SystemExit(f"เช็คสถานะเคส #{case_id} จาก se-survey ไม่ได้ ({e}) — หยุดก่อนเพื่อกัน import ซ้ำ")
+
+    # ── ด่านอนุมัติ: บอทแตะได้เฉพาะเคสที่หัวหน้ากดอนุมัติบนเว็บ se-survey แล้ว ──
+    # backend กั้นอยู่แล้ว (403 ที่ /report, /photos, /export-xml) แต่ raise_for_status
+    # จะเด้งเป็น "403 Client Error" ล้วน ๆ ซึ่งคนรันอ่านแล้วไม่รู้ว่าต้องทำอะไรต่อ
+    # เช็คตรงนี้เพื่อบอกเหตุผลเป็นภาษาคน — ครอบทุกโหมด (import/เติม/รูป/ผู้บาดเจ็บ)
+    if meta.get("approved") is False:
+        raise SystemExit(
+            f"เคส #{case_id} ยังไม่ได้อนุมัติ (สถานะ: {meta.get('status')}) — "
+            "ให้หัวหน้ากด \"อนุมัติ\" ที่หน้ารายละเอียดเคสบนเว็บ se-survey ก่อน แล้วค่อยสั่งบอทอีกครั้ง")
+
     # โหมดเติม draft เดิม (--sesurvey-fill-existing): เคสต้อง import แล้ว (มี esurvey) — เปิดเรื่องเดิม
     # มาเติมหน้าหลัก/รูป/ค่าใช้จ่าย ไม่ import ซ้ำ ไม่ mark ซ้ำ (draft มีอยู่แล้ว = ไม่สร้างเรื่องใหม่)
     if getattr(args, "sesurvey_fill_existing", False):
