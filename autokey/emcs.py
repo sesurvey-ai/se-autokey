@@ -4151,7 +4151,13 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
     # ตัวมันเองรู้กติกาแยกรายบริษัทอยู่แล้ว — เรียกได้เลย ไม่ต้องเช็คซ้ำตรงนี้
     _set_or_clear_claim_ref(driver, data.notify_value)
 
-    esurvey = save_main_form(driver, data)
+    try:
+        esurvey = save_main_form(driver, data)
+    except Exception:
+        # บันทึกไม่ผ่านคือกรณีที่ "อยากรู้ที่สุด" ว่าบนหน้ามีอะไรอยู่จริง — ค่ายังอยู่ให้อ่านได้
+        # เดิมตรวจเฉพาะตอนสำเร็จ = พลาดทุกครั้งที่พลาด ซึ่งเป็นครั้งที่ต้องการข้อมูลมากที่สุด
+        _verify_after_save(driver, data, "หน้าหลัก (บันทึกไม่ผ่าน)")
+        raise
     _verify_after_save(driver, data, "หน้าหลัก")
     verify_car_saved(driver, data,
                      lambda: save_main_form(driver, data, button_id="btnUpdate",
@@ -4480,7 +4486,11 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
 
     _set_or_clear_claim_ref(driver, data.notify_value)
 
-    saved = save_main_form(driver, data, button_id="btnUpdate", is_new=False)
+    try:
+        saved = save_main_form(driver, data, button_id="btnUpdate", is_new=False)
+    except Exception:
+        _verify_after_save(driver, data, "หน้าหลัก (บันทึกไม่ผ่าน)")
+        raise
     _verify_after_save(driver, data, "หน้าหลัก")
     verify_car_saved(driver, data,
                      lambda: save_main_form(driver, data, button_id="btnUpdate",
