@@ -336,6 +336,11 @@ def fetch_sesurvey_xml(case_id: str):
             return None, "token ไม่ถูกต้อง หรือ integration ยังไม่เปิดบน server"
         if e.code == 404:
             return None, "ไม่พบเคส หรือยังไม่มีรายงานสำรวจ"
+        if e.code == 403:
+            # se-survey ปล่อยข้อมูลเฉพาะเคสที่หัวหน้ากดอนุมัติแล้ว (ประตูอนุมัติ)
+            # ปกติเคสแบบนี้จะไม่โผล่ในลิสต์อยู่แล้ว — จะมาถึงตรงนี้ก็ต่อเมื่อพิมพ์เลขเคสเอง
+            return None, ("เคสนี้ยังไม่ได้อนุมัติ — ให้หัวหน้ากด \"อนุมัติ\" "
+                          "ที่หน้ารายละเอียดเคสบนเว็บ se-survey ก่อน")
         return None, f"server ตอบ {e.code}"
     except Exception as e:
         return None, f"เชื่อมต่อ se-survey ไม่ได้: {e}"
