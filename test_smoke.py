@@ -2881,5 +2881,26 @@ check("คู่กรณี: ไม่มีรหัส → ใช้ชื่
 check("XML: อ่าน DRI_RELATION ของคู่กรณีเข้า relation_id",
       '"relation_id": _text(car, "DRI_RELATION")' in _insp.getsource(surv_xml))
 
+
+# ---- 26. + หายตอน EMCS บันทึก -> แปลงเป็น "พลัส" เฉพาะช่องที่ระบุ ----
+# ฟอร์ม EMCS ส่งแบบ urlencoded (+ = เว้นวรรค) แล้วฝั่งเขา decode ซ้ำ -> + หายเงียบ
+# 15/08/69 เพิ่ม txtPolicy_Type เพราะ "ประเภท 2+" กลายเป็น "ประเภท 2" = ผิดความคุ้มครอง
+_PS = browser._plus_safe
+check("+ ในความเห็นผู้ตรวจสอบ -> พลัส",
+      _PS("txtAcc_Comment", "รถประกันประเภท 2+ ตรวจแล้ว") == "รถประกันประเภท 2พลัส ตรวจแล้ว")
+check("+ ในรายละเอียดการเกิดเหตุ -> พลัส",
+      _PS("txtAcc_Detail", "คู่กรณีประเภท 2+") == "คู่กรณีประเภท 2พลัส")
+check("+ ในประเภทกรมธรรม์ (หน้าหลัก) -> พลัส",
+      _PS("txtPolicy_Type", "ประเภท 2+") == "ประเภท 2พลัส")
+# บล็อกคู่กรณีอยู่ใน naming container ของ ASP.NET - id จริงมี prefix นำหน้า
+check("+ ในประเภทกรมธรรม์ของคู่กรณี (id มี prefix) -> พลัส",
+      _PS("wuOpoCar1_txtPolicy_Type", "ประเภท 2+") == "ประเภท 2พลัส")
+check("ช่องอื่นไม่ถูกแตะ (ชื่อคนมี noTyping ของ EMCS คุมอยู่แล้ว)",
+      _PS("txtDri_Name", "ก+ข") == "ก+ข")
+check("ไม่มี + = คืนค่าเดิม",
+      _PS("txtAcc_Comment", "ปกติ") == "ปกติ")
+check("แปลงทุกจุดในข้อความเดียว",
+      _PS("txtAcc_Comment", "2+ และ 3+") == "2พลัส และ 3พลัส")
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

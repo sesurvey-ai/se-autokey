@@ -260,13 +260,25 @@ PLUS_TO_WORD_FIELDS = {
     "txtAcc_result",     # ผลการดำเนินงาน (หน้าค่าใช้จ่าย)
     "txtAcc_Comment",    # ความเห็นของผู้ตรวจสอบ (หน้าค่าใช้จ่าย)
     "txtSurv_Comment",   # ความเห็นของเซอร์เวย์ (หน้าค่าใช้จ่าย)
+    # ประเภทกรมธรรม์ (หน้าหลัก + บล็อกคู่กรณี) — เพิ่ม 15/08/69 หลังเจอของจริง
+    # ⚠️ ช่องนี้ต่างจาก 4 ช่องบน: ที่นั่น + หายแล้วอ่านสะดุด แต่ที่นี่ "ประเภท 2+"
+    #    กลายเป็น "ประเภท 2" = **ผิดความคุ้มครอง** ไม่ใช่แค่อักขระหาย
+    "txtPolicy_Type",
 }
 PLUS_WORD = "พลัส"
 
 
 def _plus_safe(elem_id, value: str) -> str:
-    """แปลง + เป็นคำ เฉพาะช่องใน PLUS_TO_WORD_FIELDS (ช่องอื่นคืนค่าเดิม)"""
-    if elem_id not in PLUS_TO_WORD_FIELDS or "+" not in value:
+    """แปลง + เป็นคำ เฉพาะช่องใน PLUS_TO_WORD_FIELDS (ช่องอื่นคืนค่าเดิม)
+
+    เทียบแบบ "ลงท้ายด้วย _<ชื่อช่อง>" ด้วย เพราะบล็อกคู่กรณีของ EMCS อยู่ใน
+    naming container ของ ASP.NET → id จริงเป็น wuOpoCar1_txtPolicy_Type
+    (เทียบตรงตัวอย่างเดียวจะพลาดคู่กรณีทั้งหมด ซึ่งเป็นที่ที่ "2+" โผล่บ่อยที่สุด)
+    """
+    eid = str(elem_id or "")
+    if "+" not in value:
+        return value
+    if not any(eid == f or eid.endswith("_" + f) for f in PLUS_TO_WORD_FIELDS):
         return value
     out = value.replace("+", PLUS_WORD)
     log(f"   ~ {elem_id}: แปลง + เป็น '{PLUS_WORD}' {value.count('+')} จุด "
