@@ -1551,6 +1551,21 @@ def _offer_submit(driver, cfg, data, esurvey: str = ""):
         log("เก็บเป็น draft — ยังไม่ส่งงาน (browser เปิดค้าง ตรวจ/กดส่งเองได้)")
         emcs.leave_report(driver)
         return
+    # ⛔ เฟส 2 กั้นเฟส 3 — อ่านหน้า EMCS กลับมาแล้วค่าไม่ตรงกับที่กรอก = ห้ามกดส่ง
+    #    ไม่ว่าใครสั่ง · ส่งแล้วถอยไม่ได้ และของที่ส่งจะไม่ใช่ของที่คนรับรอง
+    #    ไม่ leave_report — ปล่อยหน้าค้างไว้ให้คนที่เพิ่งสั่งส่งแก้แล้วกดเองได้ทันที
+    bad = getattr(emcs, "last_verify_mismatches", None) or []
+    if bad:
+        log("⛔ ไม่กดส่งงานให้ — ค่าบนหน้า EMCS ไม่ตรงกับที่บอทกรอก:")
+        for b in bad[:8]:
+            log(f"     ✗ {b.get('id')}: กรอก {b.get('intended')!r} "
+                f"แต่บนหน้าเป็น {b.get('actual')!r}")
+        if len(bad) > 8:
+            log(f"     … อีก {len(bad) - 8} ช่อง")
+        log("   → ตรวจ/แก้ในหน้าต่าง EMCS แล้วกด 'ส่งงานใหม่' เองได้ (หน้ายังเปิดค้างไว้)")
+        joblog.record("send_blocked", data.claim_value, data.invoice_value,
+                      esurvey=esurvey, note=f"อ่านกลับไม่ตรง {len(bad)} ช่อง")
+        return
     ok, msg = emcs.submit_report(driver, cfg, data.claim_value, esurvey=esurvey)
     if not ok:
         log(f"❌ ส่งงานไม่สำเร็จ: {msg} — ตรวจบน EMCS เอง (ยังไม่แจ้ง ISURVEY)")

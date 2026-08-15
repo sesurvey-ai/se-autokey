@@ -2914,5 +2914,85 @@ check("prefix ตัวพิมพ์เล็กก็อ่านออก", 
 check("prefix ที่ไม่รู้จัก -> None ไม่เดา", _rjob("SEMS-6907000124") is None)
 check("เลขเซอร์เวย์ว่าง -> None", _rjob("") is None and _rjob(None) is None)
 
+
+# ---- 28. เฟส 2: อ่านค่าจากหน้า EMCS กลับมาเทียบกับที่บอทกรอก ----
+# EMCS กลืนข้อมูลเงียบมาแล้ว 3 ครั้ง ทุกครั้งเจอเพราะมีคนมองจอ
+# พอบอทกดส่งเอง (เฟส 3) คนคนนั้นหายไป — ตัวนี้ทำหน้าที่แทน
+
+# ผ่อนให้เฉพาะ "รูปแบบ" ที่ EMCS จัดใหม่เอง ไม่ผ่อนให้เนื้อหาที่หายไป
+check("ตัวเลข 750 vs 750.00 = ตรง", browser._cmp_value("750", "750.00"))
+check("ตัวเลข 1000 vs 1,000.00 = ตรง", browser._cmp_value("1000", "1,000.00"))
+check("วันที่ 01/08/2569 vs 01-08-2569 = ตรง", browser._cmp_value("01/08/2569", "01-08-2569"))
+check("ช่องว่างซ้ำ/หัวท้าย = ตรง", browser._cmp_value(" ก  ข ", "ก ข"))
+# ตัวที่ต้องจับให้ได้ — นี่คือเหตุผลทั้งหมดที่มีตัวนี้
+check("+ หายตอนบันทึก = ไม่ตรง (ต้องจับได้)",
+      not browser._cmp_value("ประเภท 2พลัส", "ประเภท 2"))
+check("ช่องถูกล้างจนว่าง = ไม่ตรง", not browser._cmp_value("ก", ""))
+check("ตัวเลขคนละจำนวน = ไม่ตรง", not browser._cmp_value("750", "760"))
+
+
+class _FakeDriver:
+    """หน้า EMCS จำลอง — คืนค่าตาม page ที่กำหนด (None = หาช่องไม่เจอ)"""
+    def __init__(self, page):
+        self.page = page
+
+    def execute_script(self, _script, ids):
+        return [[i, self.page.get(i)] for i in ids]
+
+
+browser.reset_filled()
+browser._record_filled("txtAcc_Detail", "ชน ประเภท 2พลัส")
+browser._record_filled("txtOpo_Pay", "750")
+browser._record_filled("ddlCMFG", "HONDA")
+_bad = browser.verify_filled(_FakeDriver({
+    "txtAcc_Detail": "ชน ประเภท 2",     # + หาย (EMCS กลืน)
+    "txtOpo_Pay": "750.00",             # แค่จัดรูปแบบใหม่ = ผ่าน
+    "ddlCMFG": "HONDA",
+}), "ทดสอบ")
+check("verify_filled: จับเฉพาะช่องที่เพี้ยนจริง 1 ช่อง", len(_bad) == 1, str(_bad))
+check("verify_filled: บอกได้ว่าช่องไหน",
+      _bad and _bad[0]["id"] == "txtAcc_Detail" and _bad[0]["reason"] == "ไม่ตรง")
+
+browser.reset_filled()
+browser._record_filled("txtGone", "x")
+_bad2 = browser.verify_filled(_FakeDriver({}), "ทดสอบ")
+check("verify_filled: หาช่องไม่เจอ = แยกเป็น 'อ่านไม่ได้' ไม่ปนกับ 'ไม่ตรง'",
+      len(_bad2) == 1 and _bad2[0]["reason"] == "อ่านไม่ได้")
+
+browser.reset_filled()
+check("verify_filled: ยังไม่ได้กรอกอะไร = ไม่มีอะไรให้ตรวจ",
+      browser.verify_filled(_FakeDriver({}), "ทดสอบ") == [])
+
+# ---- 29. เก็บ "คำฟ้อง" ของ EMCS ไว้เป็นกฎ (ให้ EMCS บอกกฎเอง) ----
+# อ่านโค้ดตรวจสอบของเขาไปได้แค่ระดับหนึ่ง (มีสาขาตามบริษัท + ธงภายในที่มองไม่เห็น)
+# ทางที่ครบกว่าคือเก็บทุกคำฟ้องไว้ แล้วเอามาทำเป็นช่องบังคับบนเว็บ se-survey
+import tempfile as _tf  # noqa: E402
+from pathlib import Path as _P  # noqa: E402
+
+_tmpdir = _P(_tf.mkdtemp())
+_keep_file = browser._RULES_FILE
+_keep_seen = set(browser._rules_seen)
+try:
+    browser._RULES_FILE = _tmpdir / "rules.jsonl"
+    browser._rules_seen.clear()
+    _ALERT = "กรุณาใส่ข้อมูลให้ครบตามสัญลักษณ์นี้ '*' คือ : 1. การเรียกร้อง"
+    browser.harvest_rule(_ALERT, {"claim": "C1"})
+    browser.harvest_rule("บันทึกข้อมูลเรียบร้อยแล้ว")   # ไม่ใช่คำฟ้อง -> ไม่เก็บ
+    browser.harvest_rule(_ALERT)                        # ซ้ำ -> ไม่เก็บอีก
+    _got = [x for x in browser._RULES_FILE.read_text(encoding="utf-8").splitlines() if x.strip()]
+    check("เก็บคำฟ้อง 1 บรรทัด (กรองข้อความปกติ + กันซ้ำ)", len(_got) == 1, str(_got))
+    check("เก็บบริบทของเคสไปด้วย", '"claim": "C1"' in _got[0])
+
+    # เขียนแฟ้มกฎไม่ได้ ห้ามทำให้งานหลักล้ม (แฟ้มกฎเป็นของแถม ไม่ใช่ของจำเป็น)
+    browser._RULES_FILE = _tmpdir / "rules.jsonl" / "ชนกับไฟล์" / "rules.jsonl"
+    browser._rules_seen.clear()
+    browser.harvest_rule("กรุณากรอกให้ครบ — ทดสอบกรณีเขียนไฟล์ไม่ได้")
+    check("เขียนแฟ้มกฎไม่ได้ = ไม่โยน exception", True)
+finally:
+    browser._RULES_FILE = _keep_file
+    browser._rules_seen.clear()
+    browser._rules_seen.update(_keep_seen)
+
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

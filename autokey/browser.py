@@ -233,6 +233,7 @@ def accept_alert(driver, timeout=30) -> str:
     text = (alert.text or "").strip()
     if text:
         log(f"   [alert] {text[:400]}")
+        harvest_rule(text)      # คำฟ้อง validation = กฎ 1 ข้อ เก็บไว้เอามาทำช่องบังคับบนเว็บ
     if _DESTRUCTIVE_ALERT.search(text):
         alert.dismiss()
         log("   ⛔ confirm นี้กดตกลงแล้วข้อมูลที่บันทึกไว้จะหาย — กด 'ยกเลิก' แทน "
@@ -286,6 +287,118 @@ def _plus_safe(elem_id, value: str) -> str:
     return out
 
 
+# ── เฟส 2: จำสิ่งที่บอท "ตั้งใจ" กรอก แล้วอ่านกลับมาเทียบหลังบันทึก ──────────
+#
+# ทำไมต้องมี: EMCS กลืนข้อมูลเงียบ ๆ มาแล้ว 3 ครั้ง (+ หายตอนบันทึก · ยี่ห้อรถว่าง
+# เพราะ dropdown โหลดไม่ทัน · "-- ระบุ --" บันทึกเป็นค่าจริง) ทั้ง 3 ครั้งเจอเพราะ
+# **มีคนมองจอ** — พอบอทกดส่งเอง (เฟส 3) คนคนนั้นหายไป ตัวนี้ทำหน้าที่แทน
+#
+# เก็บค่า "หลังผ่านการแปลงที่เราตั้งใจแล้ว" (+ → พลัส · ตัดอักขระที่ EMCS ไม่รับ)
+# เพราะนั่นคือสิ่งที่ควรอยู่บนหน้าจริง ไม่ใช่ค่าดิบก่อนแปลง
+_FILLED = {}
+
+
+def reset_filled():
+    """เริ่มนับใหม่ต่อ 1 หน้า — ต้องเรียกก่อนกรอกหน้าถัดไป ไม่งั้นจะไปตามหาช่อง
+    ของหน้าเก่าที่ไม่มีอยู่แล้ว แล้วรายงาน 'อ่านกลับไม่ได้' เต็มไปหมด"""
+    _FILLED.clear()
+
+
+def _record_filled(elem_id, value):
+    _FILLED[str(elem_id)] = str(value)
+
+
+def _cmp_value(intended: str, actual: str) -> bool:
+    """ตรงกันไหม — ผ่อนให้เฉพาะ "รูปแบบ" ที่ EMCS จัดใหม่เอง ไม่ผ่อนให้เนื้อหาที่หายไป"""
+    if _same_text(intended, actual):
+        return True
+    a, b = str(intended).strip(), str(actual).strip()
+    if not a or not b:
+        return False
+    try:                                    # ตัวเลข: 750 → 750.00 / 1,000.00
+        if float(a.replace(",", "")) == float(b.replace(",", "")):
+            return True
+    except ValueError:
+        pass
+    da, db = re.sub(r"\D", "", a), re.sub(r"\D", "", b)   # วันที่: สลับตัวคั่นเอง
+    return len(da) >= 6 and da == db
+
+
+def verify_filled(driver, label: str = "") -> list:
+    """อ่านค่าจริงจากหน้า EMCS กลับมาเทียบกับที่บอทกรอกไป
+
+    คืน list ของ {id, intended, actual, reason}
+      reason='ไม่ตรง'     = ค่าบนหน้าไม่เหมือนที่กรอก  ← ข้อมูลเพี้ยน ต้องมีคนดู
+      reason='อ่านไม่ได้'  = หาช่องไม่เจอแล้ว (เปลี่ยนหน้า/ถูกซ่อน) ← รายงานไว้เฉย ๆ
+
+    ⛔ ตัวนี้ "ตรวจแล้วรายงาน" ไม่ล้มงานทิ้ง — ตอนถูกเรียก draft เกิดบน EMCS ไปแล้ว
+       ล้มตรงนี้ไม่ได้ทำให้ draft หาย มีแต่ทำให้ไม่มีใครรู้ว่าเพี้ยนตรงไหน
+       คนที่ต้องใช้ผลนี้คือขั้น "กดส่งงาน" (เฟส 3) — ไม่ตรง = ห้ามกด
+    """
+    if not _FILLED:
+        return []
+    got = driver.execute_script(
+        "return arguments[0].map(function(id){"
+        "var e=document.getElementById(id);"
+        "if(!e) return [id, null];"
+        "if(e.tagName==='SELECT') return [id, ((e.options[e.selectedIndex]||{}).text)||''];"
+        "if(e.type==='checkbox'||e.type==='radio') return [id, e.checked?'1':''];"
+        "return [id, e.value];});",
+        list(_FILLED.keys())) or []
+    bad = []
+    for eid, actual in got:
+        want = _FILLED.get(eid, "")
+        if actual is None:
+            bad.append({"id": eid, "intended": want, "actual": None, "reason": "อ่านไม่ได้"})
+        elif not _cmp_value(want, actual):
+            bad.append({"id": eid, "intended": want, "actual": actual, "reason": "ไม่ตรง"})
+    head = f"ตรวจค่าที่กรอก{(' ' + label) if label else ''}: ตรง {len(_FILLED) - len(bad)}/{len(_FILLED)} ช่อง"
+    if not bad:
+        log(f"   ✓ {head}")
+        return []
+    log(f"   ⚠️ {head}")
+    for b in bad:
+        if b["reason"] == "ไม่ตรง":
+            log(f"      ✗ {b['id']}: กรอก {b['intended']!r} แต่บนหน้าเป็น {b['actual']!r}")
+        else:
+            log(f"      ? {b['id']}: อ่านกลับไม่ได้ (หาช่องไม่เจอแล้ว)")
+    return bad
+
+
+# ── ให้ EMCS เป็นคนบอกกฎเอง ─────────────────────────────────────────────────
+# อ่านโค้ดตรวจสอบของเขาไปได้แค่ระดับหนึ่ง — มีสาขาแยกตามบริษัท และอ่านธงภายใน
+# (hidMemType / hifFeatures / hidLOAD_DAMAGE_STD) ที่เรามองไม่เห็นจากข้างนอก
+# ทางที่ครบกว่าคือเก็บ "คำฟ้อง" ของเขาทุกครั้งที่บันทึกไม่ผ่าน แล้วเอามาทำเป็น
+# ช่องบังคับบนเว็บ se-survey — ฟ้อง 1 ครั้ง = ได้กฎ 1 ข้อ ไม่ต้องเดา
+_RULES_FILE = Path(__file__).resolve().parent.parent / "runs" / "emcs_rules.jsonl"
+_RULE_HINT = re.compile(r"กรุณา|ต้องระบุ|ไม่ครบ|ช่องที่ขึ้นสีแดง")
+_rules_seen = set()
+_rule_context = {}
+
+
+def set_rule_context(**kw):
+    """บอกว่ากำลังทำเคสไหน — กฎที่เก็บได้จะได้ย้อนกลับไปดูเคสต้นเรื่องได้
+    (คำฟ้องลอย ๆ ว่า 'กรอกไม่ครบ' โดยไม่รู้ว่าเคสไหน เอาไปทำอะไรต่อไม่ได้)"""
+    _rule_context.clear()
+    _rule_context.update({k: v for k, v in kw.items() if v})
+
+
+def harvest_rule(text: str, context: dict = None):
+    """เก็บคำฟ้อง validation ของ EMCS ลงแฟ้มสะสม (ไม่เก็บ alert ทั่วไป เช่นบันทึกสำเร็จ)"""
+    t = " ".join(str(text or "").split())
+    if not t or not _RULE_HINT.search(t) or t in _rules_seen:
+        return
+    _rules_seen.add(t)
+    try:
+        _RULES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(_RULES_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"text": t, **_rule_context, **(context or {})},
+                               ensure_ascii=False) + "\n")
+        log(f"   📓 เก็บกฎที่ EMCS ฟ้องไว้แล้ว ({_RULES_FILE.name})")
+    except Exception as e:      # เก็บกฎไม่ได้ ห้ามทำให้งานหลักล้ม
+        log(f"   (เก็บกฎไม่สำเร็จ: {type(e).__name__})")
+
+
 def get_value(driver, elem_id) -> str:
     return driver.find_element(By.ID, elem_id).get_attribute("value")
 
@@ -314,7 +427,9 @@ def set_textarea(driver, elem_id, value):
         return
     if SKIP_UNCHANGED and _same_text(el.get_attribute("value"), value):
         log(f"   = {elem_id} ตรงอยู่แล้ว — ข้าม")
+        _record_filled(elem_id, value)      # ข้ามเพราะตรงอยู่แล้ว = ยังต้องตรงตอนตรวจกลับ
         return
+    _record_filled(elem_id, value)
     driver.execute_script(
         "var e=arguments[0];e.value=arguments[1];"
         "e.dispatchEvent(new Event('input',{bubbles:true}));"
@@ -350,9 +465,12 @@ def set_text(driver, elem_id, value):
         try:
             if _same_text(el.get_attribute("value"), value):
                 log(f"   = {elem_id} ตรงอยู่แล้ว — ข้าม")
+                _record_filled(elem_id, value)   # ตรงอยู่แล้ว = ยังต้องตรงตอนตรวจกลับ
                 return
         except Exception:
             pass
+    # จำค่า "สุดท้ายหลังแปลงแล้ว" ไว้ตรวจกลับ (ผ่าน _plus_safe + noTyping มาแล้ว)
+    _record_filled(elem_id, value)
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
     except Exception:

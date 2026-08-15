@@ -39,6 +39,9 @@ from .browser import (
     wait_for_image_select,
     wait_for_injury_inputs,
     wait_for_manual_fill,
+    reset_filled,
+    set_rule_context,
+    verify_filled,
     wait_present,
     wait_visible,
 )
@@ -103,6 +106,32 @@ CAUSE_RADIO = {
 NO_AUTO_RADIO = {"rdoAcc_Cause04"}
 # radio ที่เลือกให้ได้ แต่ EMCS บังคับข้อมูลต่อท้ายที่บอทกรอกแทนไม่ได้
 OPPONENT_FAULT_RADIO = "rdoAcc_Cause01"   # 'รถคู่กรณีเป็นฝ่ายผิด คู่กรณีคันที่ __'
+
+
+# ── เฟส 2: ผลตรวจ "อ่านกลับ" ล่าสุด ─────────────────────────────────────────
+# เฟส 3 (บอทกดปุ่มส่งงานเอง) ต้องอ่านตัวนี้ก่อนกด — ไม่ว่างเมื่อไหร่ = ห้ามกด
+# เก็บเป็นตัวแปรระดับโมดูลเพราะขั้นกดส่งอยู่คนละไฟล์ (main.py) และคนละจังหวะกับตอนกรอก
+last_verify_mismatches = []
+
+
+def _verify_after_save(driver, data, page_label: str):
+    """อ่านค่าจากหน้า EMCS กลับมาเทียบกับที่บอทกรอก แล้วรายงาน (ไม่ล้มงาน)
+
+    เรียกทันทีหลังบันทึกสำเร็จ ขณะยังอยู่หน้าเดิม — ย้ายหน้าไปแล้วอ่านกลับไม่ได้
+    ไม่ raise เพราะตอนถึงบรรทัดนี้ draft เกิดบน EMCS ไปแล้ว ล้มไปก็ไม่ได้ทำให้ draft หาย
+    มีแต่ทำให้ไม่มีใครรู้ว่าเพี้ยนตรงไหน — หน้าที่ของมันคือ "บอกให้รู้" และกันเฟส 3
+    """
+    global last_verify_mismatches
+    try:
+        bad = verify_filled(driver, page_label)
+    except Exception as e:
+        log(f"   ⚠️ ตรวจค่าที่กรอกไม่สำเร็จ ({type(e).__name__}) — ถือว่ายังไม่ได้ตรวจ")
+        bad = [{"id": "-", "intended": "", "actual": None, "reason": "ตรวจไม่สำเร็จ"}]
+    last_verify_mismatches = [b for b in bad if b["reason"] != "อ่านไม่ได้"]
+    for b in last_verify_mismatches:
+        _review_note(data, f"{page_label}: {b['id']} กรอก {b['intended']!r} "
+                           f"แต่บนหน้าเป็น {b['actual']!r} — ตรวจก่อนส่งงาน")
+    return last_verify_mismatches
 
 
 def _review_note(data, msg: str):
@@ -4106,6 +4135,8 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
     main_window = driver.current_window_handle
     resolved_loss = resolve_loss_type(data, loss_type)
 
+    set_rule_context(claim=data.claim_value, survey_no=data.invoice_value, page="หน้าหลัก")
+    reset_filled()          # เริ่มจำค่าที่กรอกของ "หน้าหลัก" (เฟส 2 — อ่านกลับมาเทียบ)
     fill_claim_type(driver, data.claim_type, warn=appointment_hint(data))
     fill_severity(driver, severity)
     fill_insurer_and_refs(driver, data)
@@ -4116,6 +4147,7 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
     fill_verdict(driver, data)
 
     esurvey = save_main_form(driver, data)
+    _verify_after_save(driver, data, "หน้าหลัก")
     verify_car_saved(driver, data,
                      lambda: save_main_form(driver, data, button_id="btnUpdate",
                                             is_new=False))
@@ -4418,6 +4450,8 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
 
     # อุดช่องว่าง/แก้ที่ import ทำพลาด (reuse fill_* เดิม — ค่าจาก ClaimData แหล่งเดียวกับ XML)
     # ไม่แตะ ประเภทเคลม/บริษัท/กรมธรรม์ (import ตั้งถูกแล้ว + เลี่ยง postback layout เคลมสด)
+    set_rule_context(claim=data.claim_value, survey_no=data.invoice_value, page="หน้าหลัก")
+    reset_filled()          # เริ่มจำค่าที่กรอกของหน้าหลัก (เฟส 2 — อ่านกลับมาเทียบ)
     fill_severity(driver, severity)
     fill_car(driver, data)        # แก้ ddlCType (code-based) + จังหวัด/ยี่ห้อ
     # import เซ็ตจังหวัดแต่ไม่ cascade อำเภอ → บังคับจังหวัดว่างก่อน fill (เลือกใหม่จริง)
@@ -4442,6 +4476,7 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
     _set_or_clear_claim_ref(driver, data.notify_value)
 
     saved = save_main_form(driver, data, button_id="btnUpdate", is_new=False)
+    _verify_after_save(driver, data, "หน้าหลัก")
     verify_car_saved(driver, data,
                      lambda: save_main_form(driver, data, button_id="btnUpdate",
                                             is_new=False))
