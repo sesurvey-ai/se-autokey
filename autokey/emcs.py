@@ -4145,6 +4145,11 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
     fill_driver(driver, data)
     fill_accident(driver, data, loss_type=resolved_loss)
     fill_verdict(driver, data)
+    # เลขที่รับแจ้ง — เส้นนี้ไม่เคยกรอกเลย และไม่มีใครรู้ เพราะไอโออิ (1059) ยอมให้ว่างได้
+    # ถ้า txtRef_Claim_No มีค่า · พอทำงานไทยไพบูลย์ (2429) เป็นครั้งแรก EMCS ฟ้องทันที
+    # ว่า "1. เลขที่รับแจ้ง" แล้วบันทึกหน้าหลักไม่ผ่าน (เจอจริง 15/08/69 เคลม -001860)
+    # ตัวมันเองรู้กติกาแยกรายบริษัทอยู่แล้ว — เรียกได้เลย ไม่ต้องเช็คซ้ำตรงนี้
+    _set_or_clear_claim_ref(driver, data.notify_value)
 
     esurvey = save_main_form(driver, data)
     _verify_after_save(driver, data, "หน้าหลัก")
