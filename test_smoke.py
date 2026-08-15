@@ -2902,5 +2902,17 @@ check("ไม่มี + = คืนค่าเดิม",
 check("แปลงทุกจุดในข้อความเดียว",
       _PS("txtAcc_Comment", "2+ และ 3+") == "2พลัส และ 3พลัส")
 
+
+# ---- 27. บริษัทประกันของงาน = ดูจาก prefix เลขเซอร์เวย์ (ไม่ hardcode) ----
+# เดิม fill_insurer_and_refs คลิก option[2] ตายตัว = ไอโออิเสมอ -> งานไทยไพบูลย์
+# จะไปอยู่ใต้ไอโออิ (เจอจริง 15/08/69 เคลม 21BR10AVD-6905-001860 บันทึกหน้าหลักไม่ผ่าน)
+from autokey.insurer_map import resolve_insurer_code_by_job_no as _rjob  # noqa: E402
+check("SETP -> ไทยไพบูลย์ 2429", _rjob("SETP-69050083") == "2429")
+check("SEABI -> ไอโออิ 1059", _rjob("SEABI-000006") == "1059")
+check("prefix ตัวพิมพ์เล็กก็อ่านออก", _rjob("setp-69050083") == "2429")
+# ไม่รู้จัก = None -> ผู้เรียกต้องหยุด ห้าม fallback เป็นบริษัทใดบริษัทหนึ่ง
+check("prefix ที่ไม่รู้จัก -> None ไม่เดา", _rjob("SEMS-6907000124") is None)
+check("เลขเซอร์เวย์ว่าง -> None", _rjob("") is None and _rjob(None) is None)
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

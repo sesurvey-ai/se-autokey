@@ -43,6 +43,7 @@ from .browser import (
     wait_visible,
 )
 from .car_brand import BRAND_MIN_SCORE, normalize_brand
+from .insurer_map import resolve_insurer_code_by_job_no
 # ชื่อ/คำนำหน้า/เพศ อยู่ที่ claim_data (ฝั่งอ่าน ISURVEY ต้องใช้ด้วย) — re-export
 # ไว้ที่นี่เพื่อให้ผู้เรียกเดิม (main.py, webui.py, test_smoke.py) ไม่ต้องแก้
 from .claim_data import (  # noqa: F401
@@ -1066,7 +1067,10 @@ def new_report(driver):
 
 
 # ------------------------------------------------------ นำเข้าข้อมูลแบบ XML
-INSURER_MAJOR_ID = "1059"   # ไอโออิกรุงเทพประกันภัย (บริษัทเดียวของโปรเจกต์)
+# ค่าสำรองของ "หน้านำเข้า XML" เท่านั้น (ผู้เรียกส่ง insurer_code มาเสมอในทางปฏิบัติ)
+# ⛔ ห้ามเอาไปใช้เป็น default ของเส้นทางอื่น — ตอนนี้รับงาน 2 บริษัท (ไอโออิ 1059 ·
+#    ไทยไพบูลย์ 2429) การ default เป็นบริษัทใดบริษัทหนึ่งคือยื่นสำนวนผิดเจ้าของงาน
+INSURER_MAJOR_ID = "1059"   # ไอโออิกรุงเทพประกันภัย
 
 
 def _set_selectpicker(driver, select_id: str, value: str):
@@ -1394,12 +1398,65 @@ def _derive_insured_title(data: ClaimData) -> tuple:
     return weak or "", weak_src
 
 
+def _real_options(driver, select_id: str):
+    """[(value, text)] ของ option ที่ไม่ใช่ placeholder ('0'/ว่าง) — อ่านสด ไม่ค้าง stale"""
+    opts = driver.execute_script(
+        "var s=document.getElementById(arguments[0]);"
+        "return s?Array.prototype.map.call(s.options,function(o){"
+        "return [o.value,(o.text||'').trim()];}):[];", select_id) or []
+    return [(v, t) for v, t in opts if v and v != "0"]
+
+
+def _wait_selected(driver, select_id: str, value: str, timeout: int = 10) -> bool:
+    """รอให้ค่าที่ถูกเลือก "จริง" ตรงกับที่สั่ง — dropdown ของ EMCS ยิง postback หลังเลือก
+    อ่านทันทีหลังคลิกจะได้ค่าก่อน postback"""
+    for _ in range(timeout * 2):
+        cur = driver.execute_script(
+            "var s=document.getElementById(arguments[0]);return s?s.value:null;", select_id)
+        if str(cur) == str(value):
+            return True
+        time.sleep(0.5)
+    return False
+
+
 def fill_insurer_and_refs(driver, data: ClaimData):
-    """เลือกบริษัทประกัน (ตัวเลือกแรกตามเดิม) + เลขเซอร์เวย์/เลขเคลม"""
+    """เลือกบริษัทประกัน **ตามเจ้าของงานจริง** + เลขเซอร์เวย์/เลขเคลม
+
+    ⛔ เดิมคลิก option[2] ตายตัว = ไอโออิเสมอ ไม่ว่างานเป็นของบริษัทไหน
+       ใช้ได้ตราบที่เส้นนี้รับแต่งานไอโออิ · พองานไทยไพบูลย์ (SETP) เข้ามา สำนวนจะไปอยู่
+       ใต้ไอโออิ และ EMCS ก็ตรวจรูปแบบเลขเคลมด้วยกติกาผิดบริษัท
+       (เจอจริง 15/08/69 เคลม 21BR10AVD-6905-001860 → บันทึกหน้าหลักไม่ผ่าน)
+
+    ⛔ resolve ไม่ได้ = หยุด ห้าม fallback เป็นบริษัทใดบริษัทหนึ่ง — เดาผิดคือยื่นสำนวน
+       เข้าบริษัทที่ไม่ใช่เจ้าของงาน ซึ่งลบไม่ได้
+    """
     log("EMCS: เลือกบริษัทประกัน + เลขอ้างอิง")
-    wait_clickable(driver, By.XPATH, '//*[@id="ddlInsurerNameMajor"]/option[2]', 30).click()
+    prefix = str(data.invoice_value or "").split("-")[0].strip().upper()
+    code = resolve_insurer_code_by_job_no(data.invoice_value)
+    if not code:
+        raise RuntimeError(
+            f"ไม่รู้ว่าเลขเซอร์เวย์ {data.invoice_value!r} เป็นงานของบริษัทไหน — หยุดก่อน ไม่เดา "
+            f"(เติม prefix {prefix!r} ใน autokey/insurer_map.py แล้วรันใหม่)")
+
+    wait_clickable(driver, By.XPATH,
+                   f'//*[@id="ddlInsurerNameMajor"]/option[@value="{code}"]', 30).click()
+    if not _wait_selected(driver, "ddlInsurerNameMajor", code):
+        raise RuntimeError(f"เลือกบริษัทประกันรหัส {code} ไม่ติด — หยุดก่อน กันกรอกเข้าบริษัทผิด")
+    log(f"   ✓ บริษัทประกัน: รหัส {code} (จาก prefix {prefix} ของเลขเซอร์เวย์)")
+
+    # ชื่อบริษัทย่อย/สาขา โหลด lazy หลังเลือกบริษัทใหญ่ (postback) — เดิมคลิก option[2]
+    # ทันทีโดยไม่รอ ใช้ได้เพราะไอโออิมีตัวเลือกเดียวเสมอ บริษัทอื่นไม่รับประกันว่าเหมือนกัน
     wait_clickable(driver, By.ID, "ddlInsurer_Name", 30)
-    driver.find_element(By.XPATH, '//*[@id="ddlInsurer_Name"]/option[2]').click()
+    sub = None
+    for _ in range(24):
+        real = _real_options(driver, "ddlInsurer_Name")
+        if real:
+            sub = next((v for v, t in real if "กรุงเทพ" in t), real[0][0])
+            break
+        time.sleep(0.5)
+    if not sub:
+        raise RuntimeError("รายชื่อบริษัทย่อย (ddlInsurer_Name) ไม่โหลด — หยุดก่อน")
+    driver.find_element(By.XPATH, f'//*[@id="ddlInsurer_Name"]/option[@value="{sub}"]').click()
 
     wait_clickable(driver, By.ID, "txtSurv_JobNo")
     set_text(driver, "txtSurv_JobNo", data.invoice_value)

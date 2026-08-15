@@ -48,3 +48,26 @@ def resolve_insurer_code(company_name):
         if key and (key in n or n in key):
             return code
     return None
+
+
+# ── เลขเซอร์เวย์ → บริษัท ────────────────────────────────────────────────────
+# ISURVEY **ไม่ส่งชื่อบริษัทของรถประกันมาเลย** (ตรวจ payload จริง 15/08/69 — 104 คีย์
+# ไม่มีสักคีย์ที่บอกบริษัทผู้รับประกัน) สิ่งเดียวที่บอกได้คือ prefix ของเลขเซอร์เวย์
+#
+# ตรงกับ INSURER_BY_JOB_PREFIX ฝั่งเว็บ se-survey — แก้ที่ไหนต้องแก้อีกที่ด้วย
+# (user ยืนยัน 13/08/69: SETP = ไทยไพบูลย์ · SEABI = ไอโออิ)
+INSURER_BY_JOB_PREFIX = {
+    "SETP": "ไทยไพบูลย์ประกันภัย",
+    "SEABI": "ไอโออิกรุงเทพประกันภัย",
+}
+
+
+def resolve_insurer_code_by_job_no(survey_no):
+    """คืนรหัสบริษัทจาก prefix ของเลขเซอร์เวย์ (SETP-69050083 → 2429) — None ถ้าไม่รู้จัก
+
+    ⛔ คืน None แล้วผู้เรียกต้อง "หยุด+ฟ้อง" ห้าม fallback เป็นบริษัทใดบริษัทหนึ่ง —
+       เดาผิดคือยื่นสำนวนเข้าบริษัทที่ไม่ใช่เจ้าของงาน ซึ่งถอยไม่ได้
+    """
+    prefix = str(survey_no or "").split("-")[0].strip().upper()
+    name = INSURER_BY_JOB_PREFIX.get(prefix)
+    return resolve_insurer_code(name) if name else None
