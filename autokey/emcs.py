@@ -4561,6 +4561,10 @@ def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",
     set_skip_unchanged(True)
     try:
         # เติมหน้าหลัก (เหมือน fill_imported หลัง import)
+        # โหมดซ่อมก็ต้องตรวจกลับ — ที่จริงยิ่งต้องตรวจ เพราะเข้ามาเติมของที่รอบก่อนพลาด
+        set_rule_context(claim=data.claim_value, survey_no=data.invoice_value,
+                         page="หน้าหลัก (โหมดซ่อม)")
+        reset_filled()
         fill_severity(driver, severity)
         fill_car(driver, data)
         _recascade_province(driver, "ddlDri_ProvinceID")
@@ -4569,7 +4573,12 @@ def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",
         fill_accident(driver, data, loss_type=resolved_loss)
         fill_verdict(driver, data)
         _set_or_clear_claim_ref(driver, data.notify_value)
-        save_main_form(driver, data, button_id="btnUpdate", is_new=False)
+        try:
+            save_main_form(driver, data, button_id="btnUpdate", is_new=False)
+        except Exception:
+            _verify_after_save(driver, data, "หน้าหลัก (โหมดซ่อม · บันทึกไม่ผ่าน)")
+            raise
+        _verify_after_save(driver, data, "หน้าหลัก (โหมดซ่อม)")
 
         # ส่วนที่ import ไม่เติม (คู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน/ความเสียหาย/รูป/ค่าใช้จ่าย)
         fill_third_parties(driver, data)
