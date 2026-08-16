@@ -1053,7 +1053,7 @@ def _run_fill_existing(cfg, args, case_id, hdrs, meta):
     try:
         emcs.fill_existing_report(driver, cfg, data, esurvey=esurvey,
                                   images_folder=img_folder, loss_type=loss_type,
-                                  severity=severity, full_billing=False)
+                                  severity=severity, full_billing=True)
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"fill_existing_{case_id}")
         raise
@@ -1413,10 +1413,15 @@ def run_sesurvey_import(cfg, args):
     driver = make_driver(detach=True, download_dir=per_run_dl)
     banner(f"LIVE: นำเข้าเคส #{case_id} เข้า EMCS (บริษัทรหัส {ins_code}) — draft-only")
     try:
-        # ต้นทาง se-survey → หน้าค่าใช้จ่ายกรอกแค่ 2 ช่อง (เลขที่ใบแจ้งหนี้ + วันที่วางบิล)
-        # ความเห็น/เรทราคา หัวหน้ากรอกเองใน EMCS — กติกา user 2026-08-03
+        # หน้าค่าใช้จ่ายกรอกเต็ม — ความเห็น + เรทราคา ยกมาจาก se-survey
+        #
+        # กติกาเดิม (user 2026-08-03) ให้กรอกแค่เลขที่ใบแจ้งหนี้ + วันที่วางบิล เพราะตอนนั้น
+        # "หัวหน้ายังไม่ได้กรอกบนเว็บเรา จะไปกรอกใน EMCS เอง บอทเติมให้จะกลายเป็นขยะ"
+        # 2026-08-15 เงื่อนไขนั้นหมดไป: เว็บ se-survey เป็นศูนย์กลาง หัวหน้ากรอกยอด+ความเห็น
+        # ก่อนอนุมัติ (และกดอนุมัติไม่ได้ถ้ายังไม่กรอกยอด) → ยกมาได้เลย ไม่ใช่ขยะอีกต่อไป
+        # ช่องไหนต้นทางว่าง fill_billing ข้ามให้เอง ไม่ทับของที่คนกรอกไว้ใน EMCS
         esurvey = emcs.run_import(driver, cfg, data, images_folder=img_folder,
-                                  insurer_code=ins_code, full_billing=False, loss_type=loss_type,
+                                  insurer_code=ins_code, full_billing=True, loss_type=loss_type,
                                   severity=severity)
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"sesurvey_{case_id}")

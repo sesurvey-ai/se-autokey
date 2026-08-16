@@ -1600,8 +1600,11 @@ _alc = _insp.getsource(emcs._fill_police_and_alcohol)
 check("แอลกอฮอล์: ตีความ 'ไม่ได้ตรวจ' เป็น 'ไม่มีการตรวจ'",
       "ไม่ได้ตรวจ" in _alc and "no_test" in _alc)
 
-# หน้าค่าใช้จ่าย: กติกา user 2026-08-03 — กรอกมาก/น้อยตาม "ต้นทางข้อมูล"
-#   ISURVEY (หัวหน้ากรอกไว้แล้ว) = เต็มหน้า | se-survey (หัวหน้าจะกรอกเอง) = แค่ 2 ช่อง
+# หน้าค่าใช้จ่าย: ตั้งแต่ 2026-08-15 **ทุกต้นทางกรอกเต็มหน้า**
+#   เว็บ se-survey เป็นศูนย์กลาง หัวหน้ากรอกยอด+ความเห็นก่อนอนุมัติ (และกดอนุมัติไม่ได้
+#   ถ้ายังไม่กรอกยอด) → ยกมาได้เลย · กติกาเดิม 2026-08-03 ที่ให้ se-survey กรอกแค่ 2 ช่อง
+#   ตั้งบนสมมติฐาน "หัวหน้ายังไม่ได้กรอก จะไปกรอกใน EMCS เอง" ซึ่งไม่จริงอีกต่อไป
+#   โครงสร้าง full_billing=False ยังอยู่ (โหมด draft-park) แค่ไม่มี call site ใช้แล้ว
 # (ก่อนหน้านี้: 2026-07-27 กรอก 2 ช่องทุกกรณี — commit 9719228 ถอด fill_fee_table/set_textarea)
 _fb = _insp.getsource(emcs.fill_billing)
 _cut = _fb.index("if not full_billing:")       # ก่อนบรรทัดนี้ = กรอกทุกต้นทาง
@@ -1612,19 +1615,21 @@ check("ค่าใช้จ่าย (ISURVEY): กรอก 3 ช่องส�
       all(i in _fb for i in ("txtAcc_result", "txtAcc_Comment", "txtSurv_Comment")))
 check("ค่าใช้จ่าย (ISURVEY): กรอกตารางราคาคอลัมน์ 'เสนอ' จาก data.bill",
       "fill_fee_table(driver, data.bill)" in _fb)
-check("ค่าใช้จ่าย (se-survey): ไม่แตะ 3 ช่องสรุป — หัวหน้ากรอกเองใน EMCS",
+check("ค่าใช้จ่าย (โหมด draft-park): ไม่แตะ 3 ช่องสรุป",
       all(_fb.index(i) > _cut for i in
           ("txtAcc_result", "txtAcc_Comment", "txtSurv_Comment")))
-check("ค่าใช้จ่าย (se-survey): ไม่แตะตารางราคา",
+check("ค่าใช้จ่าย (โหมด draft-park): ไม่แตะตารางราคา",
       _fb.index("fill_fee_table(driver, data.bill)") > _cut)
-check("ค่าใช้จ่าย (se-survey): ยังกด 'บันทึกราคา' ก่อน return (ไม่งั้นหัวบิลไม่ติด)",
+check("ค่าใช้จ่าย (โหมด draft-park): ยังกด 'บันทึกราคา' ก่อน return (ไม่งั้นหัวบิลไม่ติด)",
       _cut < _fb.index("_save_and_exit_billing(driver, leave=leave)")
       < _fb.index("return", _cut))
-# call site ต้องผูกกับต้นทางจริง: se-survey → full_billing=False, ISURVEY → ตาม flag
+# call site: ไม่ควรเหลือเส้นไหนที่ปิดการกรอกยอด/ความเห็นอีก
 _main_src = _insp.getsource(_main) if hasattr(_main, "__file__") else open(
     "main.py", encoding="utf-8").read()
-check("call site: เส้นทาง se-survey ส่ง full_billing=False",
-      _main_src.count("full_billing=False") == 2)
+check("call site: ไม่มีเส้นทางไหนส่ง full_billing=False แล้ว",
+      _main_src.count("full_billing=False") == 0)
+check("call site: เส้นทาง se-survey (นำเข้า + ซ่อม draft) ส่ง full_billing=True",
+      _main_src.count("full_billing=True") == 2)
 # 3 จุด: run_fill (สร้างใหม่) / run_import (นำเข้า XML) / fill_existing_report (กรอกต่อเรื่องเดิม)
 check("call site: ทุกเส้นทาง ISURVEY ส่ง full_billing=not args.no_save_price",
       _main_src.count("full_billing=not args.no_save_price") == 3)
