@@ -142,6 +142,174 @@ def fetch_isurvey_cases(date_from: str = "", date_to: str = "",
         return None, f"อ่านรายการจาก ISURVEY ไม่ได้: {type(e).__name__}: {e}"
 
 
+# ── ดึงงาน "รอตรวจข้อมูล" จาก ISURVEY เข้า se-survey ────────────────────────
+# flow ใหม่: ตรวจงานบนเว็บเราแทนที่จะตรวจบน ISURVEY แล้วค่อย export XML มา
+# (สถานะนี้ = ช่างส่งงานแล้ว หัวหน้ายังไม่ตรวจ — คือจังหวะก่อนงานตรวจจะเริ่ม)
+ISURVEY_STATUS_PENDING = "รอตรวจข้อมูล"
+
+# ต้องตรงกับ INSURER_BY_JOB_PREFIX ของหน้า import-xml บนเว็บ se-survey
+# ⛔ prefix ที่ไม่รู้จัก = หยุด ห้าม fallback (เข้าผิดบริษัทใน EMCS ลบไม่ได้)
+_INSURER_BY_PREFIX = {
+    "SETP": "บริษัท ไทยไพบูลย์ประกันภัย จำกัด (มหาชน)",
+    "SEABI": "ไอโออิกรุงเทพประกันภัย",
+}
+
+
+def _sesurvey_post(path, payload=None, body=None, content_type=None, timeout=120):
+    """POST ไป se-survey พร้อม token — คืน (data, error)"""
+    url, token = _sesurvey_cfg()
+    if not token:
+        return None, "ยังไม่ได้ตั้ง SESURVEY_API_TOKEN ใน .env"
+    headers = {"Authorization": f"Bearer {token}"}
+    if payload is not None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json; charset=utf-8"
+    elif content_type:
+        headers["Content-Type"] = content_type
+    try:
+        req = urllib.request.Request(f"{url}{path}", data=body or b"",
+                                     headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8")), None
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = (json.loads(e.read().decode("utf-8")) or {}).get("message") or ""
+        except Exception:
+            pass
+        return None, f"se-survey ตอบ {e.code}" + (f": {detail}" if detail else "")
+    except Exception as e:
+        return None, f"เชื่อมต่อ se-survey ไม่ได้: {e}"
+
+
+def _zip_photos(folder) -> bytes:
+    """แพ็กรูปที่โหลดมาเป็น zip ในโครงที่ฝั่ง se-survey อ่านหมวดออก
+
+    importPhotoZip อ่านหมวดจาก **ส่วนที่ 2 ของ path** → ต้องเป็น `<ราก>/<หมวด>/<ไฟล์>`
+    ส่วน download_images วางไฟล์หมวดหลักแบนไว้ในโฟลเดอร์และบอกหมวดผ่าน _categories.json
+    → ประกอบโครงใหม่ตอนซิป (ไม่งั้นรูปทั้งเคสกลายเป็น 'รูปประกอบ' หมด)
+    """
+    import io as _io
+    import zipfile
+    from pathlib import Path as _P
+    folder = _P(folder)
+    cats = {}
+    try:
+        cats = json.loads((folder / "_categories.json").read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    buf = _io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in folder.rglob("*"):
+            if not p.is_file() or p.suffix.lower() not in (
+                    ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"):
+                continue
+            # tp_veh/ · tp_person/ · tp_prop/ อยู่ในโฟลเดอร์ย่อยอยู่แล้ว
+            cat = p.parent.name.upper() if p.parent != folder else cats.get(p.name, "OTHERS")
+            z.write(p, f"case/{cat}/{p.name}")
+    return buf.getvalue()
+
+
+def pull_isurvey_case(claim: str, survey_no: str = "", with_photos: bool = True):
+    """ดึงงาน ISURVEY 1 เรื่อง → สร้างเคสบน se-survey (+ รูป) — คืน (result, error)
+
+    **อ่านอย่างเดียวฝั่ง ISURVEY** ไม่เขียนกลับ ไม่เปลี่ยนสถานะงานต้นทาง
+    """
+    global _isv_client
+    import tempfile
+    from autokey.isurvey_to_sesurvey import build_case
+
+    prefix = str(survey_no or "").split("-")[0].strip().upper()
+    insurer = _INSURER_BY_PREFIX.get(prefix)
+    if not insurer:
+        return None, (f"ไม่รู้จักคำนำหน้าเลขเซอร์เวย์ {prefix or '(ว่าง)'} — "
+                      "บอกไม่ได้ว่างานของบริษัทไหน จึงไม่ดึงเข้าระบบ")
+    try:
+        from autokey.config import load_config
+        from autokey.isurvey_api import ISurveyAPI
+        if _isv_client is None:
+            _isv_client = ISurveyAPI(load_config())
+            _isv_client.login()
+        api = _isv_client
+        try:
+            case = api.find_case(claim, survey_no)
+        except Exception:
+            api.login()                      # session หมดอายุ → ลองใหม่รอบเดียว
+            case = api.find_case(claim, survey_no)
+        cid = case["caseID"]
+        payload = build_case(api, cid, case)
+    except Exception as e:
+        _isv_client = None
+        return None, f"อ่านงานจาก ISURVEY ไม่ได้: {type(e).__name__}: {e}"
+
+    payload["insurance_company"] = insurer
+    data, err = _sesurvey_post("/api/integrations/cases/import", payload=payload)
+    if err:
+        return None, err
+    result = (data or {}).get("data") or {}
+    case_id = result.get("caseId")
+
+    if with_photos and case_id:
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                counts = api.download_images(cid, tmp)
+                blob = _zip_photos(tmp)
+                if blob:
+                    boundary = "----sepull"
+                    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"zip\"; "
+                            f"filename=\"photos.zip\"\r\nContent-Type: application/zip\r\n\r\n"
+                            ).encode("utf-8") + blob + f"\r\n--{boundary}--\r\n".encode("utf-8")
+                    pdata, perr = _sesurvey_post(
+                        f"/api/integrations/cases/{case_id}/photos-zip", body=body,
+                        content_type=f"multipart/form-data; boundary={boundary}", timeout=300)
+                    result["photos"] = (pdata or {}).get("data") if not perr else {"error": perr}
+                else:
+                    result["photos"] = {"added": 0, "note": "ต้นทางยังไม่มีรูป"}
+                result["isurvey_photo_counts"] = counts
+        except Exception as e:
+            # รูปพลาดไม่ควรล้มทั้งงาน — เคสสร้างแล้ว กดปุ่ม "ดึงรูปใหม่" ตามทีหลังได้
+            result["photos"] = {"error": f"{type(e).__name__}: {e}"}
+    return result, None
+
+
+def refetch_isurvey_photos(case_id: int, claim: str, survey_no: str = ""):
+    """ดึงรูปจาก ISURVEY มาเติมเคสที่สร้างไว้แล้ว — รูปที่มีอยู่จะถูกข้าม
+
+    จำเป็นเพราะ **รูปยังทยอยขึ้นหลังช่างส่งงาน**: ตอน "รอตรวจข้อมูล" มักมี 1–5 รูป
+    พอถึง "จบงาน" กลายเป็น 20–40 (วัดจริง 16/08/69) — ดึงรอบเดียวจึงไม่พอ
+    """
+    global _isv_client
+    import tempfile
+    try:
+        from autokey.config import load_config
+        from autokey.isurvey_api import ISurveyAPI
+        if _isv_client is None:
+            _isv_client = ISurveyAPI(load_config())
+            _isv_client.login()
+        api = _isv_client
+        case = api.find_case(claim, survey_no)
+        with tempfile.TemporaryDirectory() as tmp:
+            counts = api.download_images(case["caseID"], tmp)
+            blob = _zip_photos(tmp)
+            if not blob:
+                return {"added": 0, "note": "ต้นทางยังไม่มีรูป"}, None
+            boundary = "----sepull"
+            body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"zip\"; "
+                    f"filename=\"photos.zip\"\r\nContent-Type: application/zip\r\n\r\n"
+                    ).encode("utf-8") + blob + f"\r\n--{boundary}--\r\n".encode("utf-8")
+            data, err = _sesurvey_post(
+                f"/api/integrations/cases/{case_id}/photos-zip", body=body,
+                content_type=f"multipart/form-data; boundary={boundary}", timeout=300)
+            if err:
+                return None, err
+            out = (data or {}).get("data") or {}
+            out["isurvey_photo_counts"] = counts
+            return out, None
+    except Exception as e:
+        _isv_client = None
+        return None, f"ดึงรูปไม่สำเร็จ: {type(e).__name__}: {e}"
+
+
 def check_sesurvey_case(case_id: str):
     """ตรวจก่อนนำเข้าฝั่ง se-survey — คืน (ผลตรวจ, error)
 
@@ -875,6 +1043,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(502, {"error": err})
             else:
                 self._send(200, {"cases": rows})
+        elif u.path == "/isurvey-pending":
+            # งานที่ยัง "รอตรวจข้อมูล" บน ISURVEY — ตัวเลือกของแท็บ "ดึงมาตรวจที่นี่"
+            q = parse_qs(u.query)
+            rows, err = fetch_isurvey_cases(
+                date_from=((q.get("from") or [""])[0]).strip(),
+                date_to=((q.get("to") or [""])[0]).strip(),
+                status=ISURVEY_STATUS_PENDING)
+            if err:
+                self._send(502, {"error": err})
+            else:
+                # ทำงานอยู่ 2 บริษัท — งานบริษัทอื่นดึงเข้าระบบไม่ได้อยู่ดี กรองทิ้งตั้งแต่ต้น
+                rows = [r for r in rows
+                        if str(r.get("survey_no") or "").split("-")[0].upper()
+                        in _INSURER_BY_PREFIX]
+                self._send(200, {"cases": rows})
         elif u.path == "/sesurvey-xml":
             # ดาวน์โหลดไฟล์ XML สำรอง (proxy แนบ token) — ไป import EMCS เอง
             ref = ((parse_qs(u.query).get("case_id") or [""])[0]).strip()
@@ -968,6 +1151,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(409, {"error": err})
             else:
                 self._send(200, {"run_id": run_id})
+        elif u.path == "/api/isurvey-pull":
+            # ดึงงาน "รอตรวจข้อมูล" เข้า se-survey — **ไม่แตะ EMCS และไม่เขียนกลับ ISURVEY**
+            # ผลลัพธ์คือเคสสถานะ "รอตรวจ" บนเว็บเท่านั้น จึงไม่ต้องกั้น cross-origin
+            # เข้มเหมือนปุ่มนำเข้า EMCS
+            p = self._read_json()
+            res, err = pull_isurvey_case(
+                str(p.get("claim_no") or "").strip(),
+                str(p.get("survey_no") or "").strip(),
+                with_photos=p.get("photos", True) is not False)
+            self._send(502 if err else 200, {"error": err} if err else res)
+        elif u.path == "/api/isurvey-photos":
+            p = self._read_json()
+            res, err = refetch_isurvey_photos(
+                p.get("case_id"), str(p.get("claim_no") or "").strip(),
+                str(p.get("survey_no") or "").strip())
+            self._send(502 if err else 200, {"error": err} if err else res)
         else:
             self._send(404, {"error": "not found"})
 
@@ -1232,6 +1431,7 @@ PAGE = r"""<!doctype html>
 
   <div class="tabs">
     <button class="tab active" data-pane="isurvey">🖊 นำเข้า ISURVEY</button>
+    <button class="tab" data-pane="pending">📤 ดึงงานรอตรวจ</button>
     <button class="tab" data-pane="sesurvey">📥 นำเข้า SE Survey</button>
     <button class="tab" data-pane="jobs">📚 สมุดงาน</button>
     <button class="tab" data-pane="settings">⚙ ตั้งค่า</button>
@@ -1270,6 +1470,49 @@ PAGE = r"""<!doctype html>
         <b>⚡ นำเข้า</b> = กรอก + อัปรูป + บันทึก draft (ไม่กดส่งงาน) ·
         <b>🧪 ทดสอบ</b> = dry-run ไม่แตะ EMCS
       </div>
+     </div>
+    </div>
+
+    <!-- ── ดึงงานที่ ISURVEY ยัง "รอตรวจข้อมูล" มาตรวจบนเว็บ se-survey แทน ──
+         ต่างจากแท็บ "นำเข้า ISURVEY" ตรงจังหวะ: แท็บนั้นหยิบงานที่ตรวจจบบน ISURVEY แล้ว
+         ไปเข้า EMCS ส่วนแท็บนี้หยิบงาน **ก่อน** หัวหน้าตรวจ เพื่อย้ายการตรวจมาที่เว็บเรา
+         ⛔ ปุ่มในแท็บนี้ไม่แตะ EMCS และไม่เขียนกลับ ISURVEY เลย -->
+    <div class="tabpane" id="pane-pending" hidden>
+     <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <h2 style="font-size:16px;margin:0">📤 รอตรวจข้อมูล (ISURVEY)</h2>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin-left:auto">
+          <input type="checkbox" id="pdhidedone" checked> ซ่อนที่ดึงแล้ว
+        </label>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap;margin-bottom:10px">
+        <input type="date" id="pdfrom" style="flex:1;min-width:0;padding:6px 8px">
+        <span style="color:var(--muted);flex:none">–</span>
+        <input type="date" id="pdto" style="flex:1;min-width:0;padding:6px 8px">
+        <button class="run" id="loadpdbtn"
+                style="flex:none;padding:7px 12px;font-size:13px;white-space:nowrap">↻ ดึงข้อมูล</button>
+      </div>
+      <div style="display:flex;gap:6px;margin:-4px 0 10px">
+        <button type="button" class="pddaybtn" data-days="0">วันนี้</button>
+        <button type="button" class="pddaybtn" data-days="2">3 วัน</button>
+        <button type="button" class="pddaybtn" data-days="6">7 วัน</button>
+      </div>
+      <div id="pdsummary" style="font-size:12px;color:var(--muted);margin-bottom:8px"></div>
+      <div id="pdtoolbar" style="display:none;gap:8px;align-items:center;margin-bottom:8px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="pdselall"> เลือกทั้งหมด
+        </label>
+        <span id="pdselcount" style="font-size:12px;color:var(--muted)"></span>
+        <button class="run" id="pdpullbtn" style="margin-left:auto;padding:6px 12px;font-size:13px">
+          ⬇ ดึงเข้า se-survey
+        </button>
+      </div>
+      <div id="pdlist"></div>
+      <p style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6">
+        ดึงแล้วเคสจะไปโผล่ที่เว็บ se-survey หน้า “รายการงานตรวจสอบ” สถานะ <b>สำรวจแล้ว</b>
+        ให้หัวหน้าตรวจ/กรอกยอด/กดอนุมัติ · <b>ไม่แตะงานฝั่ง ISURVEY</b> (อ่านอย่างเดียว)<br>
+        รูปที่ต้นทางยังทยอยอัปหลังช่างส่งงาน — กด <b>“ดึงรูปใหม่”</b> อีกครั้งก่อนอนุมัติได้
+      </p>
      </div>
     </div>
 
@@ -2537,6 +2780,134 @@ loadIsvBtn.addEventListener("click", async () => {
   finally{ loadIsvBtn.disabled = false; }
 });
 
+// -------- 📤 ดึงงาน "รอตรวจข้อมูล" จาก ISURVEY เข้า se-survey --------
+// เก็บผลลัพธ์ของแต่ละงานไว้ในหน่วยความจำหน้าเว็บเท่านั้น (คีย์ = เลขเซอร์เวย์)
+// รีเฟรชแล้วหาย ตั้งใจ — ความจริงว่า "ดึงไปแล้วหรือยัง" อยู่ที่ se-survey (เลขเซอร์เวย์ห้ามซ้ำ)
+const pdDone = {};
+let pdCache = [];
+const pdBox = $("#pdlist"), loadPdBtn = $("#loadpdbtn");
+$("#pdfrom").value = $("#pdto").value = todayStr();
+
+function pdRender(){
+  const hide = $("#pdhidedone").checked;
+  const rows = pdCache.filter(c => !(hide && pdDone[c.survey_no]?.ok));
+  $("#pdsummary").textContent =
+    "รอตรวจข้อมูล " + pdCache.length + " เรื่อง · ดึงแล้ว "
+    + Object.values(pdDone).filter(x => x.ok).length + " · แสดง " + rows.length;
+  $("#pdtoolbar").style.display = pdCache.length ? "flex" : "none";
+  if (!rows.length){
+    pdBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">ไม่มีรายการ</div>';
+    pdSelCount(); return;
+  }
+  pdBox.innerHTML = rows.map(c => {
+    const st = pdDone[c.survey_no];
+    const badge = st ? (st.ok
+        ? '<span style="color:var(--ok);font-size:12px">✓ ดึงแล้ว → เคส #' + st.caseId + '</span>'
+        : '<span style="color:var(--err);font-size:12px">⚠ ' + escHtml(st.error) + '</span>')
+      : '<span style="color:var(--muted);font-size:12px">— ยังไม่ดึง</span>';
+    const tip = [c.plate_no, c.surveyor_name, c.acc_province, c.finish_dt]
+                .filter(Boolean).join(" · ");
+    return '<div class="case-item" style="padding:8px 0;border-bottom:1px solid var(--line)">'
+      + '<div style="display:flex;align-items:center;gap:8px">'
+      + (st?.ok ? '' : '<input type="checkbox" class="pdsel" data-claim="' + escAttr(c.claim_no || "")
+                        + '" data-surv="' + escAttr(c.survey_no || "") + '">')
+      + '<b style="font-size:13px">' + escHtml(c.claim_no || "(ไม่มีเลขเคลม)") + '</b>'
+      + '<span style="margin-left:auto">' + badge + '</span></div>'
+      + '<div style="font-size:12px;color:var(--muted);margin-left:22px" title="' + escAttr(tip) + '">'
+      + escHtml(c.survey_no || "") + '</div>'
+      + (st?.ok ? '<div style="margin-left:22px;margin-top:4px">'
+          + '<button class="daybtn pdphoto" data-case="' + st.caseId + '" data-claim="'
+          + escAttr(c.claim_no || "") + '" data-surv="' + escAttr(c.survey_no || "") + '">'
+          + '🖼 ดึงรูปใหม่</button> <span style="font-size:12px;color:var(--muted)">'
+          + escHtml(st.photoNote || "") + '</span></div>' : '')
+      + '</div>';
+  }).join("");
+  pdBox.querySelectorAll(".pdsel").forEach(x => x.addEventListener("change", pdSelCount));
+  pdBox.querySelectorAll(".pdphoto").forEach(b => b.addEventListener("click", () => pdPhotos(b)));
+  pdSelCount();
+}
+
+function pdSelCount(){
+  const n = pdBox.querySelectorAll(".pdsel:checked").length;
+  $("#pdselcount").textContent = n ? "เลือก " + n : "";
+  $("#pdpullbtn").disabled = !n;
+}
+
+$("#pdhidedone").addEventListener("change", pdRender);
+$("#pdselall").addEventListener("change", e => {
+  pdBox.querySelectorAll(".pdsel").forEach(x => { x.checked = e.target.checked; });
+  pdSelCount();
+});
+document.querySelectorAll(".pddaybtn").forEach(b => {
+  b.addEventListener("click", () => {
+    $("#pdfrom").value = daysAgo(parseInt(b.dataset.days, 10));
+    $("#pdto").value = todayStr();
+    loadPdBtn.click();
+  });
+});
+
+loadPdBtn.addEventListener("click", async () => {
+  loadPdBtn.disabled = true;
+  pdBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">กำลังโหลด…</div>';
+  try{
+    const r = await fetch("/isurvey-pending?from=" + encodeURIComponent($("#pdfrom").value)
+                          + "&to=" + encodeURIComponent($("#pdto").value));
+    const d = await r.json();
+    if (!r.ok){
+      pdBox.innerHTML = '<div style="color:var(--err);font-size:13px;padding:8px 0">'
+                        + escHtml(d.error || "โหลดไม่สำเร็จ") + '</div>';
+      return;
+    }
+    pdCache = d.cases || [];
+    pdRender();
+  }catch(e){
+    pdBox.innerHTML = '<div style="color:var(--err);font-size:13px;padding:8px 0">ติดต่อเซิร์ฟเวอร์ไม่ได้</div>';
+  }finally{ loadPdBtn.disabled = false; }
+});
+
+// ดึงทีละเรื่องเรียงกัน — ไม่ยิงพร้อมกันเพราะ ISURVEY ใช้ session เดียวร่วมกัน
+// และการโหลดรูปพร้อมกันหลายเคสทำให้ต้นทางช้าลงทั้งระบบ
+$("#pdpullbtn").addEventListener("click", async () => {
+  const sel = [...pdBox.querySelectorAll(".pdsel:checked")]
+              .map(x => ({claim: x.dataset.claim, surv: x.dataset.surv}));
+  if (!sel.length) return;
+  $("#pdpullbtn").disabled = true;
+  for (let i = 0; i < sel.length; i++){
+    const s = sel[i];
+    $("#pdselcount").textContent = "กำลังดึง " + (i + 1) + "/" + sel.length + " …";
+    try{
+      const r = await fetch("/api/isurvey-pull", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({claim_no: s.claim, survey_no: s.surv})});
+      const d = await r.json();
+      pdDone[s.surv] = r.ok
+        ? {ok: true, caseId: d.caseId,
+           photoNote: d.photos ? ("รูป " + (d.photos.added ?? 0) + " ใบ"
+                                  + (d.photos.error ? " · " + d.photos.error : "")) : ""}
+        : {ok: false, error: d.error || ("ผิดพลาด " + r.status)};
+    }catch(e){ pdDone[s.surv] = {ok: false, error: "ติดต่อเซิร์ฟเวอร์ไม่ได้"}; }
+    pdRender();
+  }
+  $("#pdpullbtn").disabled = false;
+});
+
+async function pdPhotos(btn){
+  btn.disabled = true; const old = btn.textContent; btn.textContent = "กำลังดึงรูป…";
+  try{
+    const r = await fetch("/api/isurvey-photos", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({case_id: Number(btn.dataset.case),
+                            claim_no: btn.dataset.claim, survey_no: btn.dataset.surv})});
+    const d = await r.json();
+    const st = pdDone[btn.dataset.surv];
+    if (st) st.photoNote = r.ok
+      ? ("เพิ่ม " + (d.added ?? 0) + " ใบ" + (d.skipped ? " · มีอยู่แล้ว " + d.skipped : ""))
+      : (d.error || "ดึงรูปไม่สำเร็จ");
+    pdRender();
+  }catch(e){ btn.textContent = old; }
+  finally{ btn.disabled = false; }
+}
+
 // ---------------- 📚 สมุดงาน: เลขเคลม/เลขเซอร์เวย์ที่ทำไปแล้ว ----------------
 const jobsBox = $("#jobsbox"), jobsQ = $("#jobsq");
 const EV_LABEL = {sent: "ส่งแล้ว", draft: "draft", send_failed: "ส่งไม่ผ่าน"};
@@ -2645,7 +3016,7 @@ $("#esurvey").addEventListener("input", updateAdvCount);
 updateAdvCount();
 
 // แท็บสลับ (client-side toggle หน้าเดียว)
-const PANES = ["isurvey", "sesurvey", "jobs", "settings"];
+const PANES = ["isurvey", "pending", "sesurvey", "jobs", "settings"];
 document.querySelectorAll(".tab").forEach(t => {
   t.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
