@@ -2866,6 +2866,9 @@ def _dedup_images(paths):
     return out
 
 
+_RENAME_SEQ = 0          # ตัวคั่นชื่อไฟล์ชั่วคราว กันชนเมื่อเรียกหลายรอบในโฟลเดอร์เดียว
+
+
 def _rename_clean_files(paths, name_tmpl: str, idx: int):
     """เปลี่ยนชื่อ paths (list[Path] โฟลเดอร์เดียวกัน เรียงแล้ว) เป็น
     name_tmpl.format(i=idx, seq=ลำดับ) + นามสกุลเดิม — แพทเทิร์นเดียวกับรูปรถประกัน
@@ -2874,14 +2877,42 @@ def _rename_clean_files(paths, name_tmpl: str, idx: int):
     if not paths:
         return []
     folder = paths[0].parent
-    targets = [f"{name_tmpl.format(i=idx, seq=s)}{p.suffix.lower()}"
-               for s, p in enumerate(paths, start=1)]
+
+    def _targets(ps):
+        return [f"{name_tmpl.format(i=idx, seq=s)}{p.suffix.lower()}"
+                for s, p in enumerate(ps, start=1)]
+
+    targets = _targets(paths)
+    # กู้ซากจากรอบก่อนที่ล้มกลางการเปลี่ยนชื่อ: เหลือแต่ __bak_X ส่วน X หายไป
+    # (เจอจริง 16/08/69 เคลม -000348: 9 ไฟล์เป็น __bak_ หมด รอบถัดไปอัปรูปล้มทั้งงาน
+    #  ด้วย error ของ Selenium ว่า "File not found" ซึ่งอ่านแล้วไม่รู้เลยว่าเกิดอะไรขึ้น)
+    for t in targets:
+        dst, bak = folder / t, folder / f"__bak_{t}"
+        if bak.exists() and not dst.exists():
+            bak.rename(dst)
+            log(f"   ↻ กู้ไฟล์รูปที่ค้างจากรอบก่อน: {t}")
+
+    # ไฟล์ที่หายไปจริง ๆ — ข้ามไป ไม่ล้มทั้งงานเพราะรูปเดียว
+    gone = [p for p in paths if not p.exists()]
+    if gone:
+        log(f"   ⚠️ ไม่พบไฟล์รูป {len(gone)} ไฟล์ (ค้างจากรอบก่อน?) — ข้าม: "
+            + ", ".join(p.name for p in gone[:3]))
+        paths = [p for p in paths if p.exists()]
+        if not paths:
+            return []
+        targets = _targets(paths)
+
     if all(p.name == t for p, t in zip(paths, targets)):
         return list(paths)                       # ชื่อถูกหมดแล้ว — ไม่แตะ
     # phase 1: ทุกไฟล์ → ชื่อชั่วคราว (กันชนกับชื่อเป้าที่ไฟล์อื่นถืออยู่)
+    # ใส่ตัวคั่นเฉพาะรอบ — ถ้าฟังก์ชันนี้ถูกเรียกหลายครั้งในโฟลเดอร์เดียวกัน
+    # (รูปหลายหมวดในเคสเดียว) ชื่อชั่วคราวต้องไม่ชนกันเอง
+    global _RENAME_SEQ
+    _RENAME_SEQ += 1
+    tag = _RENAME_SEQ
     temps = []
     for j, p in enumerate(paths):
-        tmp = folder / f"__tpren_{j}{p.suffix.lower()}"
+        tmp = folder / f"__tpren_{tag}_{j}{p.suffix.lower()}"
         p.rename(tmp)
         temps.append(tmp)
     # phase 2: ชั่วคราว → ชื่อเป้า (สำรองไฟล์เก่าที่บังเอิญชื่อชนไว้ก่อน)
@@ -2892,6 +2923,13 @@ def _rename_clean_files(paths, name_tmpl: str, idx: int):
             dst.rename(folder / f"__bak_{t}")
         tmp.rename(dst)
         out.append(dst)
+    # ต้องมีครบทุกไฟล์ก่อนส่งต่อให้ตัวอัป — ไม่งั้นไปพังตอน send_keys ด้วย error
+    # ของ Selenium ที่อ่านไม่ออก และ draft ค้างครึ่ง ๆ กลาง ๆ
+    missing = [p.name for p in out if not p.exists()]
+    if missing:
+        raise RuntimeError(
+            f"เปลี่ยนชื่อรูปแล้วหาไฟล์ไม่เจอ {len(missing)} ไฟล์ ({missing[0]}) — "
+            f"โฟลเดอร์ {folder.name} เพี้ยน ลบโฟลเดอร์นี้แล้วให้บอทโหลดรูปใหม่")
     return out
 
 

@@ -2999,5 +2999,57 @@ finally:
     browser._rules_seen.update(_keep_seen)
 
 
+
+# ---- 30. เปลี่ยนชื่อไฟล์รูป: รันซ้ำต้องไม่ทำโฟลเดอร์พัง ----
+# เจอจริง 16/08/69 เคลม 21BR10ACD-6906-000348: รันซ่อมรอบ 2 แล้วเหลือแต่
+# __bak_ใบรายงานความเสียหาย_1..9 ส่วนตัวจริงหายหมด → รอบถัดไป Selenium ฟ้อง
+# "File not found" แล้วล้มทั้งงาน (อ่าน error แล้วไม่รู้เลยว่าเกิดอะไรขึ้น)
+import tempfile as _tf2  # noqa: E402
+from pathlib import Path as _P2  # noqa: E402
+
+
+def _mkfiles(folder, names):
+    for n in names:
+        (folder / n).write_bytes(b"x")
+    return [folder / n for n in names]
+
+
+_d = _P2(_tf2.mkdtemp())
+_ps = _mkfiles(_d, ["a.jpg", "b.jpg"])
+_out = emcs._rename_clean_files(_ps, "หมวด_{seq}", 1)
+check("rename: ตั้งชื่อตามแม่แบบ", [p.name for p in _out] == ["หมวด_1.jpg", "หมวด_2.jpg"])
+check("rename: ไฟล์ปลายทางมีจริงทุกไฟล์", all(p.exists() for p in _out))
+
+# รันซ้ำด้วยชื่อที่ถูกอยู่แล้ว = ไม่แตะอะไร
+_out2 = emcs._rename_clean_files(_out, "หมวด_{seq}", 1)
+check("rename: รันซ้ำชื่อเดิม = ไม่เปลี่ยนอะไร",
+      [p.name for p in _out2] == ["หมวด_1.jpg", "หมวด_2.jpg"]
+      and all(p.exists() for p in _out2))
+
+# โฟลเดอร์ที่ค้างจากรอบก่อน: เหลือแต่ __bak_ ตัวจริงหาย → ต้องกู้เองได้
+_d2 = _P2(_tf2.mkdtemp())
+_mkfiles(_d2, ["__bak_หมวด_1.jpg", "__bak_หมวด_2.jpg"])
+_want = [_d2 / "หมวด_1.jpg", _d2 / "หมวด_2.jpg"]
+_out3 = emcs._rename_clean_files(_want, "หมวด_{seq}", 1)
+check("rename: กู้ไฟล์จาก __bak_ เมื่อตัวจริงหาย (รอบก่อนล้มกลางคัน)",
+      [p.name for p in _out3] == ["หมวด_1.jpg", "หมวด_2.jpg"]
+      and all(p.exists() for p in _out3))
+
+# ไฟล์หายจริง (ไม่มี __bak_ ให้กู้) = ข้ามไฟล์นั้น ไม่ล้มทั้งงาน
+_d3 = _P2(_tf2.mkdtemp())
+_mkfiles(_d3, ["มีจริง.jpg"])
+_out4 = emcs._rename_clean_files([_d3 / "มีจริง.jpg", _d3 / "ไม่มี.jpg"], "หมวด_{seq}", 1)
+check("rename: ไฟล์หายที่กู้ไม่ได้ = ข้าม ไม่ล้มทั้งงาน",
+      len(_out4) == 1 and _out4[0].exists())
+
+# เรียกหลายรอบในโฟลเดอร์เดียว ชื่อชั่วคราวต้องไม่ชนกัน
+_d4 = _P2(_tf2.mkdtemp())
+_g1 = _mkfiles(_d4, ["z1.jpg", "z2.jpg"])
+_g2 = _mkfiles(_d4, ["y1.jpg", "y2.jpg"])
+_r1 = emcs._rename_clean_files(_g1, "กลุ่มเอ_{seq}", 1)
+_r2 = emcs._rename_clean_files(_g2, "กลุ่มบี_{seq}", 1)
+check("rename: 2 กลุ่มในโฟลเดอร์เดียว ไม่ทับกัน",
+      all(p.exists() for p in _r1 + _r2) and len(set(p.name for p in _r1 + _r2)) == 4)
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
