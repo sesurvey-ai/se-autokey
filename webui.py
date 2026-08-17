@@ -74,15 +74,42 @@ def save_env_keys(updates: dict) -> None:
     tmp.replace(path)
 
 
-def isurvey_login_status() -> dict:
-    """สถานะบัญชี ISURVEY — **ไม่คืนรหัสผ่านออกไปทางหน้าเว็บเด็ดขาด**
+def account_status(prefix: str) -> dict:
+    """สถานะบัญชี — **ไม่คืนรหัสผ่านออกไปทางหน้าเว็บเด็ดขาด**
 
     หน้าเว็บต้องการรู้แค่ "ตั้งไว้แล้วหรือยัง" กับ "ชื่อผู้ใช้อะไร" ก็พอ
     ส่งรหัสไปให้เบราว์เซอร์ = รหัสไปโผล่ใน devtools/ประวัติ โดยไม่จำเป็น
     """
     env = _load_env_file(BASE / ".env")
-    return {"username": env.get("ISURVEY_USERNAME", ""),
-            "has_password": bool(env.get("ISURVEY_PASSWORD", ""))}
+    return {"username": env.get(f"{prefix}_USERNAME", ""),
+            "has_password": bool(env.get(f"{prefix}_PASSWORD", ""))}
+
+
+def isurvey_login_status() -> dict:
+    return account_status("ISURVEY")
+
+
+def save_account(prefix: str, user: str, pwd: str):
+    """บันทึกบัญชีลง .env — คืน error string ('' = สำเร็จ)
+
+    ปล่อยช่องรหัสว่าง = แก้แค่ชื่อผู้ใช้ ไม่ล้างรหัสเดิมทิ้ง
+    """
+    user = str(user or "").strip()
+    if not user:
+        return "ยังไม่ได้กรอกชื่อผู้ใช้"
+    cur = _load_env_file(BASE / ".env")
+    if not pwd and not cur.get(f"{prefix}_PASSWORD"):
+        return "ยังไม่ได้กรอกรหัสผ่าน"
+    upd = {f"{prefix}_USERNAME": user}
+    if pwd:
+        upd[f"{prefix}_PASSWORD"] = pwd
+    try:
+        save_env_keys(upd)
+    except Exception as e:
+        return f"เขียนไฟล์ตั้งค่าไม่ได้: {e}"
+    # ⛔ พิมพ์ได้เฉพาะชื่อผู้ใช้ ห้ามให้รหัสหลุดไปอยู่ในหน้าต่างคอนโซล/ไฟล์ log
+    print(f"[settings] ตั้งค่าบัญชี {prefix} ใหม่: {user}")
+    return ""
 
 
 def isurvey_login_test():
@@ -1094,7 +1121,8 @@ class Handler(BaseHTTPRequestHandler):
             from autokey import isurvey_report as _ir
             self._send(200, {"keyers": _ir.load_keyers(),
                              "file": str(_ir.KEYERS_FILE),
-                             "isurvey": isurvey_login_status()})
+                             "isurvey": account_status("ISURVEY"),
+                             "emcs": account_status("EMCS")})
         elif u.path == "/isurvey-cases":
             q = parse_qs(u.query)
             rows, err = fetch_isurvey_cases(
@@ -1230,28 +1258,27 @@ class Handler(BaseHTTPRequestHandler):
                 return
             b = self._read_json() or {}
             user = str(b.get("username") or "").strip()
-            pwd = str(b.get("password") or "")
-            if not user:
-                self._send(400, {"error": "ยังไม่ได้กรอกชื่อผู้ใช้"})
+            bad = save_account("ISURVEY", user, str(b.get("password") or ""))
+            if bad:
+                self._send(400 if "กรอก" in bad else 500, {"error": bad})
                 return
-            cur = _load_env_file(BASE / ".env")
-            # ปล่อยช่องรหัสว่าง = แก้แค่ชื่อผู้ใช้ ไม่ล้างรหัสเดิมทิ้ง
-            if not pwd and not cur.get("ISURVEY_PASSWORD"):
-                self._send(400, {"error": "ยังไม่ได้กรอกรหัสผ่าน"})
-                return
-            upd = {"ISURVEY_USERNAME": user}
-            if pwd:
-                upd["ISURVEY_PASSWORD"] = pwd
-            try:
-                save_env_keys(upd)
-            except Exception as e:
-                self._send(500, {"error": f"เขียนไฟล์ตั้งค่าไม่ได้: {e}"})
-                return
-            # ⛔ พิมพ์ได้เฉพาะชื่อผู้ใช้ ห้ามให้รหัสหลุดไปอยู่ในหน้าต่างคอนโซล/ไฟล์ log
-            print(f"[settings] ตั้งค่าบัญชี ISURVEY ใหม่: {user}")
             who, err = isurvey_login_test()
             self._send(200, {"saved": True, "username": user,
                              "login_ok": err is None, "who": who, "error": err})
+        elif u.path == "/emcs-login":
+            # บันทึกบัญชี EMCS — **บันทึกอย่างเดียว ไม่มีปุ่มทดสอบล็อกอิน**
+            # การทดสอบต้องเปิดเบราว์เซอร์เข้าระบบของบริษัทประกันจริง ซึ่งมีกติกาว่า
+            # ห้ามแตะโดยไม่ได้รับอนุญาตชัดเจน — จะรู้ว่ารหัสถูกไหมตอนสั่งงานจริงเท่านั้น
+            if self._cors_origin() is not None:
+                self._send(403, {"error": "ตั้งรหัสได้จากหน้า operator ในเครื่องเท่านั้น"})
+                return
+            b = self._read_json() or {}
+            user = str(b.get("username") or "").strip()
+            bad = save_account("EMCS", user, str(b.get("password") or ""))
+            if bad:
+                self._send(400 if "กรอก" in bad else 500, {"error": bad})
+                return
+            self._send(200, {"saved": True, "username": user})
         elif u.path == "/isurvey-login-test":
             if self._cors_origin() is not None:
                 self._send(403, {"error": "ทดสอบได้จากหน้า operator ในเครื่องเท่านั้น"})
@@ -1795,6 +1822,34 @@ PAGE = r"""<!doctype html>
       <div class="note" style="margin-top:10px">
        • เก็บที่ไฟล์ <code>.env</code> ของเครื่องนี้ — <b>ไม่ถูกก๊อปไปกับ USB</b> ตอนแจกโปรแกรม<br>
        • บันทึกแล้วมีผลทันที ไม่ต้องรีสตาร์ตโปรแกรม<br>
+       • เว้นช่องรหัสผ่านว่าง = แก้แค่ชื่อผู้ใช้ รหัสเดิมยังอยู่
+      </div>
+     </div>
+     <!-- บัญชี EMCS — ไม่มีปุ่มทดสอบโดยตั้งใจ (ดูหมายเหตุในการ์ด) -->
+     <div class="card" style="margin-bottom:12px">
+      <b style="font-size:15px">🏢 บัญชี EMCS (ระบบบริษัทประกัน)</b>
+      <div style="color:var(--muted);font-size:12.5px;margin:4px 0 10px">
+       ใช้ตอนบอทเข้าไปกรอกงานในระบบประกัน — ตั้งครั้งเดียวต่อเครื่อง
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span class="fltlab">ชื่อผู้ใช้</span>
+        <input type="text" id="emcsuser" autocomplete="off" style="flex:1;min-width:0;padding:6px 8px">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="fltlab">รหัสผ่าน</span>
+        <input type="password" id="emcspass" autocomplete="new-password" style="flex:1;min-width:0;padding:6px 8px">
+        <button type="button" id="emcspasseye" class="ghost"
+                style="flex:none;padding:6px 10px;font-size:12px">แสดง</button>
+      </div>
+      <div id="emcspwstate" style="font-size:12px;color:var(--muted);margin:6px 0 0"></div>
+      <div class="actions" style="margin-top:8px">
+       <button class="run" id="saveemcs">💾 บันทึก</button>
+      </div>
+      <div id="emcsmsg" style="font-size:12.5px;margin-top:8px"></div>
+      <div class="note" style="margin-top:10px">
+       • เก็บที่ไฟล์ <code>.env</code> ของเครื่องนี้ — <b>ไม่ถูกก๊อปไปกับ USB</b><br>
+       • <b>ไม่มีปุ่มทดสอบเข้าสู่ระบบ</b> — การทดสอบต้องเปิดเข้าระบบของบริษัทประกันจริง
+         ซึ่งเราตกลงกันว่าห้ามแตะโดยไม่จำเป็น · จะรู้ว่ารหัสถูกไหมตอนสั่งงานจริง<br>
        • เว้นช่องรหัสผ่านว่าง = แก้แค่ชื่อผู้ใช้ รหัสเดิมยังอยู่
       </div>
      </div>
@@ -3210,12 +3265,14 @@ async function loadKeyers(){
       '<div class="keyrow"><div class="dg">' + dg + '</div>'
       + '<input class="keyin" data-dg="' + dg + '" value="' + escHtml(k[dg] || "") + '"'
       + ' placeholder="ชื่อ-นามสกุล คนคีย์"></div>').join("");
-    const isv = d.isurvey || {};
-    $("#isvuser").value = isv.username || "";
     // ⛔ ฝั่ง server ไม่ส่งรหัสกลับมา — โชว์ได้แค่ว่าตั้งไว้แล้วหรือยัง
-    $("#isvpwstate").textContent = isv.has_password
-      ? "รหัสผ่าน: ตั้งไว้แล้ว (เว้นว่างไว้ = ใช้รหัสเดิม)"
-      : "รหัสผ่าน: ยังไม่ได้ตั้ง";
+    const pwText = has => has ? "รหัสผ่าน: ตั้งไว้แล้ว (เว้นว่างไว้ = ใช้รหัสเดิม)"
+                              : "รหัสผ่าน: ยังไม่ได้ตั้ง";
+    const isv = d.isurvey || {}, em = d.emcs || {};
+    $("#isvuser").value = isv.username || "";
+    $("#isvpwstate").textContent = pwText(isv.has_password);
+    $("#emcsuser").value = em.username || "";
+    $("#emcspwstate").textContent = pwText(em.has_password);
   }catch(e){
     keyersBox.innerHTML = '<div style="color:var(--err);font-size:13px">โหลดตั้งค่าไม่ได้: ' + escHtml(String(e)) + '</div>';
   }
@@ -3259,6 +3316,33 @@ $("#saveisv").addEventListener("click", () => {
   isvCall("/isurvey-login", {username:u, password:$("#isvpass").value});
 });
 $("#testisv").addEventListener("click", () => isvCall("/isurvey-login-test", null));
+
+// ---------------- 🏢 บัญชี EMCS (บันทึกอย่างเดียว ไม่ทดสอบล็อกอิน) ----------------
+$("#emcspasseye").addEventListener("click", () => {
+  const f = $("#emcspass");
+  const show = f.type === "password";
+  f.type = show ? "text" : "password";
+  $("#emcspasseye").textContent = show ? "ซ่อน" : "แสดง";
+});
+$("#saveemcs").addEventListener("click", async () => {
+  const btn = $("#saveemcs"), msg = $("#emcsmsg");
+  const u = $("#emcsuser").value.trim();
+  const say = (ok, t) => { msg.innerHTML = '<span style="color:var(--' + (ok ? "ok" : "err") + ')">' + escHtml(t) + '</span>'; };
+  if (!u){ say(false, "ยังไม่ได้กรอกชื่อผู้ใช้"); return; }
+  btn.disabled = true; msg.textContent = "กำลังบันทึก…";
+  try{
+    const r = await fetch("/emcs-login", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({username:u, password:$("#emcspass").value})});
+    const d = await r.json();
+    if (!r.ok) say(false, d.error || ("ผิดพลาด " + r.status));
+    else say(true, "บันทึกแล้ว — จะใช้รหัสนี้ตอนสั่งงานเข้าระบบประกันครั้งถัดไป");
+    $("#emcspass").value = "";
+    $("#emcspass").type = "password";
+    $("#emcspasseye").textContent = "แสดง";
+    loadKeyers();
+  }catch(e){ say(false, "ติดต่อโปรแกรมไม่ได้"); }
+  finally{ btn.disabled = false; }
+});
 $("#savekeyers").addEventListener("click", async () => {
   const table = {};
   keyersBox.querySelectorAll(".keyin").forEach(i => { table[i.dataset.dg] = i.value.trim(); });

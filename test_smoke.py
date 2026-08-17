@@ -2488,20 +2488,27 @@ check("ดึงงานรอตรวจ (แท็บ 2): มีช่อง
 check("ตั้งค่า ISURVEY: มีช่องชื่อผู้ใช้ + รหัสผ่าน",
       'id="isvuser"' in _page and 'id="isvpass"' in _page
       and 'type="password"' in _page)
-_status_fn = _webui_src.split("def isurvey_login_status")[1].split("\ndef ")[0]
-check("ตั้งค่า ISURVEY: ⛔ server ต้องไม่ส่งรหัสกลับให้เบราว์เซอร์",
+check("ตั้งค่า EMCS: มีช่องชื่อผู้ใช้ + รหัสผ่าน",
+      'id="emcsuser"' in _page and 'id="emcspass"' in _page)
+# ⛔ EMCS ไม่มีปุ่มทดสอบล็อกอินโดยตั้งใจ — ทดสอบ = เปิดเข้าระบบบริษัทประกันจริง
+#    ซึ่งมีกติกาว่าห้ามแตะโดยไม่จำเป็น (ISURVEY เป็นระบบของเราเอง ทดสอบได้)
+check("ตั้งค่า EMCS: ⛔ ต้องไม่มีปุ่มทดสอบล็อกอิน (ห้ามแตะระบบประกันโดยไม่จำเป็น)",
+      'id="testemcs"' not in _page and '/emcs-login-test' not in _webui_src)
+_status_fn = _webui_src.split("def account_status")[1].split("\ndef ")[0]
+check("ตั้งค่าบัญชี: ⛔ server ต้องไม่ส่งรหัสกลับให้เบราว์เซอร์",
       '"has_password": bool(' in _status_fn
-      and "ISURVEY_PASSWORD" in _status_fn          # อ่านมาเช็คว่ามีไหม
+      and "_PASSWORD" in _status_fn                  # อ่านมาเช็คว่ามีไหม
       and '"password"' not in _status_fn)            # แต่ไม่ใส่ค่าลงผลลัพธ์
-check("ตั้งค่า ISURVEY: ⛔ ตั้งรหัสได้จากเครื่องตัวเองเท่านั้น (บล็อก cross-origin)",
+check("ตั้งค่าบัญชี: ⛔ ตั้งรหัสได้จากเครื่องตัวเองเท่านั้น (บล็อก cross-origin)",
       _webui_src.count('u.path == "/isurvey-login"') == 1
-      and 'ตั้งรหัสได้จากหน้า operator ในเครื่องเท่านั้น' in _webui_src)
-check("ตั้งค่า ISURVEY: ⛔ ห้าม print รหัสผ่านลงคอนโซล",
-      "[settings] ตั้งค่าบัญชี ISURVEY ใหม่: {user}" in _webui_src
-      and "{pwd}" not in _webui_src)
-check("ตั้งค่า ISURVEY: เว้นรหัสว่าง = ใช้รหัสเดิม ไม่ล้างทิ้ง",
-      'if pwd:' in _webui_src and 'upd["ISURVEY_PASSWORD"] = pwd' in _webui_src)
-check("ตั้งค่า ISURVEY: เขียน .env แบบคงบรรทัดอื่นไว้ + ผ่านไฟล์ชั่วคราว",
+      and _webui_src.count('u.path == "/emcs-login"') == 1
+      and _webui_src.count("ตั้งรหัสได้จากหน้า operator ในเครื่องเท่านั้น") == 2)
+_save_fn = _webui_src.split("def save_account")[1].split("\ndef ")[0]
+check("ตั้งค่าบัญชี: ⛔ ห้าม print รหัสผ่านลงคอนโซล",
+      "ตั้งค่าบัญชี {prefix} ใหม่: {user}" in _save_fn and "{pwd}" not in _save_fn)
+check("ตั้งค่าบัญชี: เว้นรหัสว่าง = ใช้รหัสเดิม ไม่ล้างทิ้ง",
+      "if pwd:" in _save_fn and 'upd[f"{prefix}_PASSWORD"] = pwd' in _save_fn)
+check("ตั้งค่าบัญชี: เขียน .env แบบคงบรรทัดอื่นไว้ + ผ่านไฟล์ชั่วคราว",
       'def save_env_keys' in _webui_src and 'tmp.replace(path)' in _webui_src
       and '.env.tmp' in _webui_src)
 # .gitignore ต้องดักไฟล์รหัสทุกแบบ ไม่ใช่แค่ ".env" เป๊ะ ๆ
