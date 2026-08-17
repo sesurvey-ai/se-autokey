@@ -1497,6 +1497,21 @@ PAGE = r"""<!doctype html>
         <button type="button" class="pddaybtn" data-days="2">3 วัน</button>
         <button type="button" class="pddaybtn" data-days="6">7 วัน</button>
       </div>
+      <!-- ตัวกรองชุดเดียวกับแท็บ "นำเข้า ISURVEY" — แต่ dropdown เป็น **ผู้สำรวจ** ไม่ใช่หัวหน้าตรวจ
+           เพราะงานสถานะนี้ยังไม่มีใครตรวจ ช่อง checkByName จึงว่างทั้งหมด (วัดจริง 0/406) -->
+      <div id="pdfilterrow" hidden style="margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span class="fltlab">ผู้สำรวจ</span>
+          <select id="pdwho" style="flex:1;min-width:0;padding:6px 8px"></select>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="fltlab">เลขท้าย</span>
+          <input type="text" id="pdtail" inputmode="numeric" placeholder="เช่น 0,1 — ว่าง = ทุกเลข"
+                 style="flex:1;min-width:0;padding:6px 8px">
+          <button type="button" id="pdtailclear" class="run"
+                  style="flex:none;padding:7px 10px;font-size:13px;background:#64748b">ล้าง</button>
+        </div>
+      </div>
       <div id="pdsummary" style="font-size:12px;color:var(--muted);margin-bottom:8px"></div>
       <div id="pdtoolbar" style="display:none;gap:8px;align-items:center;margin-bottom:8px">
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
@@ -2788,12 +2803,51 @@ let pdCache = [];
 const pdBox = $("#pdlist"), loadPdBtn = $("#loadpdbtn");
 $("#pdfrom").value = $("#pdto").value = todayStr();
 
+/** เลขท้ายที่พิมพ์ในช่องกรอง — พิมพ์ "0,1" / "0 1" / "01" ได้หมด (ชุดเดียวกับแท็บ 1) */
+function pdTailDigits(){
+  return new Set(($("#pdtail").value || "").match(/[0-9]/g) || []);
+}
+
+/** เติมรายชื่อผู้สำรวจใน dropdown พร้อมจำนวนงาน + จำคนที่เลือกไว้ข้ามวัน */
+function pdRebuildWho(rows){
+  const sel = $("#pdwho");
+  let cur = sel.value;
+  const cnt = {};
+  rows.forEach(r => { const n = (r.surveyor_name || "").trim(); if (n) cnt[n] = (cnt[n] || 0) + 1; });
+  const names = Object.keys(cnt).sort((a, b) => nameKey(a).localeCompare(nameKey(b), "th"));
+  // เลือกคนไว้แล้วเขาไม่มีงานในชุดนี้ → คงตัวเลือกไว้ให้เห็นว่า (0) ไม่ให้เด้งกลับเงียบ ๆ
+  if (cur && !cnt[cur]) names.push(cur);
+  sel.innerHTML = '<option value="">— ทุกคน —</option>'
+    + names.map(n => '<option value="' + escHtml(n) + '">'
+        + escHtml(n) + ' (' + (cnt[n] || 0) + ')</option>').join("");
+  if (!cur){
+    let saved = "";
+    try{ saved = localStorage.getItem("pdwho") || ""; }catch(e){}
+    if (saved && cnt[saved]) cur = saved;
+  }
+  sel.value = cur;
+}
+
 function pdRender(){
   const hide = $("#pdhidedone").checked;
-  const rows = pdCache.filter(c => !(hide && pdDone[c.survey_no]?.ok));
+  pdRebuildWho(pdCache);
+  const who = $("#pdwho").value, digits = pdTailDigits();
+  const rows = pdCache.filter(c => {
+    if (hide && pdDone[c.survey_no]?.ok) return false;
+    if (who && (c.surveyor_name || "").trim() !== who) return false;
+    if (digits.size){
+      const d = String(c.claim_no || "").replace(/\D/g, "").slice(-1);
+      if (!digits.has(d)) return false;
+    }
+    return true;
+  });
+  $("#pdfilterrow").hidden = !pdCache.length;
+  const flt = [who ? "ผู้สำรวจ: " + who : "", digits.size ? "เลขท้าย " + [...digits].sort().join(",") : ""]
+              .filter(Boolean).join(" · ");
   $("#pdsummary").textContent =
     "รอตรวจข้อมูล " + pdCache.length + " เรื่อง · ดึงแล้ว "
-    + Object.values(pdDone).filter(x => x.ok).length + " · แสดง " + rows.length;
+    + Object.values(pdDone).filter(x => x.ok).length + " · แสดง " + rows.length
+    + (flt ? "  (" + flt + ")" : "");
   $("#pdtoolbar").style.display = pdCache.length ? "flex" : "none";
   if (!rows.length){
     pdBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">ไม่มีรายการ</div>';
@@ -2834,6 +2888,20 @@ function pdSelCount(){
 }
 
 $("#pdhidedone").addEventListener("change", pdRender);
+try{ $("#pdtail").value = localStorage.getItem("pdtail") || ""; }catch(e){}
+$("#pdtail").addEventListener("input", () => {
+  try{ localStorage.setItem("pdtail", $("#pdtail").value); }catch(e){}
+  pdRender();
+});
+$("#pdtailclear").addEventListener("click", () => {
+  $("#pdtail").value = "";
+  try{ localStorage.setItem("pdtail", ""); }catch(e){}
+  pdRender();
+});
+$("#pdwho").addEventListener("change", () => {
+  try{ localStorage.setItem("pdwho", $("#pdwho").value); }catch(e){}
+  pdRender();
+});
 $("#pdselall").addEventListener("change", e => {
   pdBox.querySelectorAll(".pdsel").forEach(x => { x.checked = e.target.checked; });
   pdSelCount();

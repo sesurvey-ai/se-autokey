@@ -2467,10 +2467,22 @@ check("หัวหน้าตรวจ: ดึงคอลัมน์ checkBy
       and '"check_dt": x.get("checker_dt")' in _webui_src)
 check("หัวหน้าตรวจ: มี dropdown แยกจากช่องเลขท้าย (ใช้อันเดียวหรือคู่กันก็ได้)",
       'id="isvwho"' in _page and "function rebuildWhoOptions(rows)" in _page)
-check("หัวหน้าตรวจ: กรองด้วย check_by ไม่ใช่ surveyor_name",
-      'r.check_by || ""' in _page
+# ตัดเฉพาะตัว dropdown ของ "แท็บ 1" มาตรวจ — ห้ามสแกนทั้งหน้า เพราะแท็บ "ดึงงานรอตรวจ"
+# มี dropdown ของตัวเองที่กรองด้วย surveyor_name **โดยตั้งใจ** (งานสถานะ "รอตรวจข้อมูล"
+# ยังไม่มีใครตรวจ → checkByName ว่างทั้งหมด วัดจริง 0/406 เมื่อ 17/08/69)
+_who_fn = _page[_page.index("function rebuildWhoOptions(rows)"):
+                _page.index("function updateIsvSummary(")]
+check("หัวหน้าตรวจ (แท็บ 1): กรองด้วย check_by ไม่ใช่ surveyor_name",
+      'r.check_by || ""' in _who_fn
       and 'base.filter(r => (r.check_by || "").trim() === who)' in _page
-      and 'const n = (r.surveyor_name || "").trim();' not in _page)
+      and 'surveyor_name' not in _who_fn)
+check("ดึงงานรอตรวจ (แท็บ 2): dropdown กรองด้วย surveyor_name (check_by ว่างทุกแถว)",
+      'id="pdwho"' in _page
+      and 'const n = (r.surveyor_name || "").trim();' in _page
+      and '(c.surveyor_name || "").trim() !== who' in _page)
+check("ดึงงานรอตรวจ (แท็บ 2): มีช่องกรองเลขท้าย + จำค่าไว้",
+      'id="pdtail"' in _page and 'localStorage.setItem("pdtail"' in _page
+      and 'localStorage.getItem("pdtail")' in _page)
 check("หัวหน้าตรวจ: ตัวเลือกคิดจากงานที่เหลือหลังกรองเลขท้ายแล้ว",
       _page.index("rebuildWhoOptions(base)") > _page.index("&& matchTail(r.claim_no, digits));"))
 check("หัวหน้าตรวจ: บอกจำนวนงานของแต่ละคนในวงเล็บ",
