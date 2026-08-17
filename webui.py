@@ -46,6 +46,66 @@ def _sesurvey_cfg():
             get("SESURVEY_API_TOKEN"))
 
 
+def save_env_keys(updates: dict) -> None:
+    """เขียนค่าลง .env โดย **คงบรรทัดอื่นและคอมเมนต์ไว้ทั้งหมด**
+
+    แก้เฉพาะคีย์ที่ส่งมา · คีย์ไหนยังไม่มีในไฟล์ก็ต่อท้ายให้
+    เขียนผ่านไฟล์ชั่วคราวแล้วค่อยสลับ — ไฟดับกลางคันจะไม่ได้ .env ที่ขาดครึ่ง
+    ซึ่งแปลว่ารหัส EMCS/se-survey หายไปด้วยทั้งที่ไม่ได้ตั้งใจแตะ
+    """
+    path = BASE / ".env"
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    left = dict(updates)
+    out = []
+    for line in lines:
+        s = line.strip()
+        if s and not s.startswith("#") and "=" in s:
+            key = s.partition("=")[0].strip()
+            if key in left:
+                out.append(f"{key}={left.pop(key)}")
+                continue
+        out.append(line)
+    for key, val in left.items():
+        out.append(f"{key}={val}")
+    # ชื่อไฟล์ชั่วคราวต้องขึ้นต้น '.env' ด้วย — .gitignore ดัก `.env*` ไว้
+    # ถ้าโปรแกรมตายกลางคัน ไฟล์ที่ค้างจะได้ไม่โผล่ให้ commit ทั้งที่มีรหัสผ่านเต็ม ๆ
+    tmp = path.parent / ".env.tmp"
+    tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def isurvey_login_status() -> dict:
+    """สถานะบัญชี ISURVEY — **ไม่คืนรหัสผ่านออกไปทางหน้าเว็บเด็ดขาด**
+
+    หน้าเว็บต้องการรู้แค่ "ตั้งไว้แล้วหรือยัง" กับ "ชื่อผู้ใช้อะไร" ก็พอ
+    ส่งรหัสไปให้เบราว์เซอร์ = รหัสไปโผล่ใน devtools/ประวัติ โดยไม่จำเป็น
+    """
+    env = _load_env_file(BASE / ".env")
+    return {"username": env.get("ISURVEY_USERNAME", ""),
+            "has_password": bool(env.get("ISURVEY_PASSWORD", ""))}
+
+
+def isurvey_login_test():
+    """ลองล็อกอินด้วยค่าที่บันทึกไว้ — คืน (ชื่อเจ้าของบัญชี, error)
+
+    ยิงจริงเพื่อให้รู้ตั้งแต่ตอนตั้งค่าว่ารหัสใช้ได้ไหม ไม่ต้องรอไปพังตอนดึงงาน
+    """
+    global _isv_client
+    try:
+        import importlib
+        from autokey import config as _cfg
+        importlib.reload(_cfg)              # อ่าน .env ใหม่ ไม่ใช้ค่าที่ค้างในหน่วยความจำ
+        from autokey.isurvey_api import ISurveyAPI
+        api = ISurveyAPI(_cfg.load_config())
+        api.login()
+        who = api._get("getUserData.php", _dc=0).get("message", "")
+        _isv_client = api                   # ใช้ session นี้ต่อเลย ไม่ต้อง login ซ้ำ
+        return str(who).strip(), None
+    except Exception as e:
+        _isv_client = None
+        return None, f"{type(e).__name__}: {e}"
+
+
 def fetch_sesurvey_cases():
     """ดึงรายการเคสสำรวจแล้วจาก se-survey — คืน (cases, error)
     proxy ฝั่ง server: เบราว์เซอร์เรียก webui (same-origin) ไม่ต้องรู้ token/ไม่ติด CORS"""
@@ -1033,7 +1093,8 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/settings":
             from autokey import isurvey_report as _ir
             self._send(200, {"keyers": _ir.load_keyers(),
-                             "file": str(_ir.KEYERS_FILE)})
+                             "file": str(_ir.KEYERS_FILE),
+                             "isurvey": isurvey_login_status()})
         elif u.path == "/isurvey-cases":
             q = parse_qs(u.query)
             rows, err = fetch_isurvey_cases(
@@ -1161,6 +1222,42 @@ class Handler(BaseHTTPRequestHandler):
                 str(p.get("survey_no") or "").strip(),
                 with_photos=p.get("photos", True) is not False)
             self._send(502 if err else 200, {"error": err} if err else res)
+        elif u.path == "/isurvey-login":
+            # บันทึกบัญชี ISURVEY ลง .env — **เฉพาะหน้า operator ในเครื่องเท่านั้น**
+            # (กติกาเดียวกับ /settings — รหัสผ่านต้องไม่รับจากหน้าเว็บภายนอกเด็ดขาด)
+            if self._cors_origin() is not None:
+                self._send(403, {"error": "ตั้งรหัสได้จากหน้า operator ในเครื่องเท่านั้น"})
+                return
+            b = self._read_json() or {}
+            user = str(b.get("username") or "").strip()
+            pwd = str(b.get("password") or "")
+            if not user:
+                self._send(400, {"error": "ยังไม่ได้กรอกชื่อผู้ใช้"})
+                return
+            cur = _load_env_file(BASE / ".env")
+            # ปล่อยช่องรหัสว่าง = แก้แค่ชื่อผู้ใช้ ไม่ล้างรหัสเดิมทิ้ง
+            if not pwd and not cur.get("ISURVEY_PASSWORD"):
+                self._send(400, {"error": "ยังไม่ได้กรอกรหัสผ่าน"})
+                return
+            upd = {"ISURVEY_USERNAME": user}
+            if pwd:
+                upd["ISURVEY_PASSWORD"] = pwd
+            try:
+                save_env_keys(upd)
+            except Exception as e:
+                self._send(500, {"error": f"เขียนไฟล์ตั้งค่าไม่ได้: {e}"})
+                return
+            # ⛔ พิมพ์ได้เฉพาะชื่อผู้ใช้ ห้ามให้รหัสหลุดไปอยู่ในหน้าต่างคอนโซล/ไฟล์ log
+            print(f"[settings] ตั้งค่าบัญชี ISURVEY ใหม่: {user}")
+            who, err = isurvey_login_test()
+            self._send(200, {"saved": True, "username": user,
+                             "login_ok": err is None, "who": who, "error": err})
+        elif u.path == "/isurvey-login-test":
+            if self._cors_origin() is not None:
+                self._send(403, {"error": "ทดสอบได้จากหน้า operator ในเครื่องเท่านั้น"})
+                return
+            who, err = isurvey_login_test()
+            self._send(200, {"login_ok": err is None, "who": who, "error": err})
         elif u.path == "/api/isurvey-photos":
             p = self._read_json()
             res, err = refetch_isurvey_photos(
@@ -1671,6 +1768,36 @@ PAGE = r"""<!doctype html>
     </div>
 
     <div class="tabpane" id="pane-settings" hidden>
+     <!-- บัญชี ISURVEY ของเครื่องนี้ — เดิมต้องเปิดไฟล์ .env แก้เอง
+          ⛔ รหัสผ่านเดินทางทางเดียว: หน้าเว็บ → เครื่องนี้ เท่านั้น
+             ฝั่ง server ไม่เคยส่งรหัสกลับมาให้เบราว์เซอร์ (คืนแค่ "ตั้งไว้แล้วหรือยัง") -->
+     <div class="card" style="margin-bottom:12px">
+      <b style="font-size:15px">🔑 บัญชี ISURVEY (cloud.isurvey.mobi)</b>
+      <div style="color:var(--muted);font-size:12.5px;margin:4px 0 10px">
+       ใช้ดึงรายการงาน อ่านข้อมูลเคส และโหลดรูป — ตั้งครั้งเดียวต่อเครื่อง
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span class="fltlab">ชื่อผู้ใช้</span>
+        <input type="text" id="isvuser" autocomplete="off" style="flex:1;min-width:0;padding:6px 8px">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="fltlab">รหัสผ่าน</span>
+        <input type="password" id="isvpass" autocomplete="new-password" style="flex:1;min-width:0;padding:6px 8px">
+        <button type="button" id="isvpasseye" class="ghost"
+                style="flex:none;padding:6px 10px;font-size:12px">แสดง</button>
+      </div>
+      <div id="isvpwstate" style="font-size:12px;color:var(--muted);margin:6px 0 0"></div>
+      <div class="actions" style="margin-top:8px">
+       <button class="run" id="saveisv">💾 บันทึกและทดสอบเข้าสู่ระบบ</button>
+       <button class="ghost" id="testisv">🔌 ทดสอบด้วยค่าที่บันทึกไว้</button>
+      </div>
+      <div id="isvmsg" style="font-size:12.5px;margin-top:8px"></div>
+      <div class="note" style="margin-top:10px">
+       • เก็บที่ไฟล์ <code>.env</code> ของเครื่องนี้ — <b>ไม่ถูกก๊อปไปกับ USB</b> ตอนแจกโปรแกรม<br>
+       • บันทึกแล้วมีผลทันที ไม่ต้องรีสตาร์ตโปรแกรม<br>
+       • เว้นช่องรหัสผ่านว่าง = แก้แค่ชื่อผู้ใช้ รหัสเดิมยังอยู่
+      </div>
+     </div>
      <div class="card">
       <b style="font-size:15px">⚙ คนคีย์ตามเลขท้ายเลขเคลม</b>
       <div style="color:var(--muted);font-size:12.5px;margin:4px 0 12px">
@@ -3083,11 +3210,55 @@ async function loadKeyers(){
       '<div class="keyrow"><div class="dg">' + dg + '</div>'
       + '<input class="keyin" data-dg="' + dg + '" value="' + escHtml(k[dg] || "") + '"'
       + ' placeholder="ชื่อ-นามสกุล คนคีย์"></div>').join("");
+    const isv = d.isurvey || {};
+    $("#isvuser").value = isv.username || "";
+    // ⛔ ฝั่ง server ไม่ส่งรหัสกลับมา — โชว์ได้แค่ว่าตั้งไว้แล้วหรือยัง
+    $("#isvpwstate").textContent = isv.has_password
+      ? "รหัสผ่าน: ตั้งไว้แล้ว (เว้นว่างไว้ = ใช้รหัสเดิม)"
+      : "รหัสผ่าน: ยังไม่ได้ตั้ง";
   }catch(e){
     keyersBox.innerHTML = '<div style="color:var(--err);font-size:13px">โหลดตั้งค่าไม่ได้: ' + escHtml(String(e)) + '</div>';
   }
 }
 $("#reloadkeyers").addEventListener("click", loadKeyers);
+
+// ---------------- 🔑 บัญชี ISURVEY ----------------
+$("#isvpasseye").addEventListener("click", () => {
+  const f = $("#isvpass");
+  const show = f.type === "password";
+  f.type = show ? "text" : "password";
+  $("#isvpasseye").textContent = show ? "ซ่อน" : "แสดง";
+});
+function isvSay(ok, text){
+  $("#isvmsg").innerHTML = '<span style="color:var(--' + (ok ? "ok" : "err") + ')">'
+    + escHtml(text) + '</span>';
+}
+async function isvCall(url, body){
+  const btns = [$("#saveisv"), $("#testisv")];
+  btns.forEach(b => { b.disabled = true; });
+  $("#isvmsg").textContent = "กำลังทดสอบเข้าสู่ระบบ…";
+  try{
+    const r = await fetch(url, body
+      ? {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}
+      : {method:"POST"});
+    const d = await r.json();
+    if (!r.ok){ isvSay(false, d.error || ("ผิดพลาด " + r.status)); return; }
+    if (d.login_ok) isvSay(true, "เข้าสู่ระบบได้" + (d.who ? " — " + d.who : ""));
+    else isvSay(false, "บันทึกแล้ว แต่เข้าสู่ระบบไม่ได้: " + (d.error || "ไม่ทราบสาเหตุ"));
+    // ล้างช่องรหัสทิ้งหลังบันทึก ไม่ให้ค้างอยู่บนหน้าจอ
+    $("#isvpass").value = "";
+    $("#isvpass").type = "password";
+    $("#isvpasseye").textContent = "แสดง";
+    loadKeyers();
+  }catch(e){ isvSay(false, "ติดต่อโปรแกรมไม่ได้"); }
+  finally{ btns.forEach(b => { b.disabled = false; }); }
+}
+$("#saveisv").addEventListener("click", () => {
+  const u = $("#isvuser").value.trim();
+  if (!u){ isvSay(false, "ยังไม่ได้กรอกชื่อผู้ใช้"); return; }
+  isvCall("/isurvey-login", {username:u, password:$("#isvpass").value});
+});
+$("#testisv").addEventListener("click", () => isvCall("/isurvey-login-test", null));
 $("#savekeyers").addEventListener("click", async () => {
   const table = {};
   keyersBox.querySelectorAll(".keyin").forEach(i => { table[i.dataset.dg] = i.value.trim(); });

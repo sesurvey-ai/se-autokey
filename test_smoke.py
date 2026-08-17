@@ -2483,6 +2483,32 @@ check("ดึงงานรอตรวจ (แท็บ 2): dropdown กรอ
 check("ดึงงานรอตรวจ (แท็บ 2): มีช่องกรองเลขท้าย + จำค่าไว้",
       'id="pdtail"' in _page and 'localStorage.setItem("pdtail"' in _page
       and 'localStorage.getItem("pdtail")' in _page)
+# ── หน้าตั้งค่า: บัญชี ISURVEY ──
+# รหัสผ่านต้องเดินทางทางเดียว (หน้าเว็บ → เครื่องนี้) เท่านั้น
+check("ตั้งค่า ISURVEY: มีช่องชื่อผู้ใช้ + รหัสผ่าน",
+      'id="isvuser"' in _page and 'id="isvpass"' in _page
+      and 'type="password"' in _page)
+_status_fn = _webui_src.split("def isurvey_login_status")[1].split("\ndef ")[0]
+check("ตั้งค่า ISURVEY: ⛔ server ต้องไม่ส่งรหัสกลับให้เบราว์เซอร์",
+      '"has_password": bool(' in _status_fn
+      and "ISURVEY_PASSWORD" in _status_fn          # อ่านมาเช็คว่ามีไหม
+      and '"password"' not in _status_fn)            # แต่ไม่ใส่ค่าลงผลลัพธ์
+check("ตั้งค่า ISURVEY: ⛔ ตั้งรหัสได้จากเครื่องตัวเองเท่านั้น (บล็อก cross-origin)",
+      _webui_src.count('u.path == "/isurvey-login"') == 1
+      and 'ตั้งรหัสได้จากหน้า operator ในเครื่องเท่านั้น' in _webui_src)
+check("ตั้งค่า ISURVEY: ⛔ ห้าม print รหัสผ่านลงคอนโซล",
+      "[settings] ตั้งค่าบัญชี ISURVEY ใหม่: {user}" in _webui_src
+      and "{pwd}" not in _webui_src)
+check("ตั้งค่า ISURVEY: เว้นรหัสว่าง = ใช้รหัสเดิม ไม่ล้างทิ้ง",
+      'if pwd:' in _webui_src and 'upd["ISURVEY_PASSWORD"] = pwd' in _webui_src)
+check("ตั้งค่า ISURVEY: เขียน .env แบบคงบรรทัดอื่นไว้ + ผ่านไฟล์ชั่วคราว",
+      'def save_env_keys' in _webui_src and 'tmp.replace(path)' in _webui_src
+      and '.env.tmp' in _webui_src)
+# .gitignore ต้องดักไฟล์รหัสทุกแบบ ไม่ใช่แค่ ".env" เป๊ะ ๆ
+_gi = (__import__("pathlib").Path(__file__).parent / ".gitignore").read_text(encoding="utf-8")
+check("ตั้งค่า ISURVEY: .gitignore ดัก .env* ทุกแบบ (สำรอง/ชั่วคราวก็มีรหัส)",
+      ".env*" in _gi and "!.env.example" in _gi)
+
 check("ดึงงานรอตรวจ (แท็บ 2): ช่องพิมพ์ค้นผู้สำรวจ (รหัสหรือชื่อก็ได้)",
       'id="pdwhoq"' in _page
       and '(c.surveyor_name || "").toLowerCase().includes(whoQ)' in _page)
