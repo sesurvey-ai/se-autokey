@@ -193,16 +193,11 @@ def district_name(api, isv_amphur, isv_province) -> str:
     ('เทศบาลตำบลแหลมฉบัง*', 'สาขาตำบล...') ซึ่งไม่มีใน EMCS จริง ๆ → ว่างถูกแล้ว
     """
     ep = emcs_map.PROVINCE_TO_EMCS.get(_s(isv_province))
-    if not ep:
+    ec = emcs_map.district(_s(isv_amphur), _s(isv_province))
+    if not (ep and ec):
         return ""
-    pname = PROVINCE_NAME.get(ep, "")
-    want = _bare(api._amphur(_s(isv_amphur)), pname)
-    if not want:
-        return ""
-    for name in DISTRICT_NAME.get(ep, {}).values():
-        if _bare(name, pname) == want:
-            return name
-    return ""
+    # ตาราง DISTRICT_NAME เก็บรหัสแบบตัดศูนย์นำ
+    return DISTRICT_NAME.get(ep, {}).get(str(ec).lstrip("0") or "0", "")
 
 
 def surveyor_code(name_with_code: str) -> str:

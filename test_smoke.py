@@ -2863,12 +2863,35 @@ check("cross_check: เลขใบขับขี่ไม่ตรง → matc
 # สองระบบใช้รหัสคนละชุด ส่งรหัสดิบข้ามระบบ = เลือกจังหวัด/ประเภทผิดแบบเงียบ ๆ
 # ค่าเฉลยยืนยันจาก XML รูปแบบ EMCS ที่ ISURVEY ส่งออกเอง (เคลม 2026013147939)
 from autokey import isurvey_emcs_map as _cmap
+from autokey import emcs_names as _names
 check("code map: จังหวัดครบ 77 จังหวัด", len(_cmap.PROVINCE_TO_EMCS) == 77)
 check("code map: ชลบุรี ISURVEY 20 → EMCS 9", _cmap.province("20") == "9")
 check("code map: ชัยภูมิ ISURVEY 36 → EMCS 11", _cmap.province("36") == "11")
 check("code map: ใบขับขี่รถยนต์ส่วนบุคคล ISURVEY 15 → EMCS 19 (ชื่อ EMCS สะกดผิด)",
       _cmap.license_type("15") == "19")
 check("code map: อำเภอ ISURVEY 3607 (จ.36) → EMCS 1107", _cmap.district("3607", "36") == "1107")
+# ── อำเภอต้องเปิดตารางจับคู่ ห้ามคำนวณจากลำดับรหัส (แก้ 17/08/69) ──
+# สูตรเดิม <รหัสจังหวัด><ลำดับ 2 หลัก> ผิด 186/924 อำเภอ แบบเงียบ ๆ ไม่มี error
+# 4 เคสนี้คือของจริงที่เคยผิด — ถ้าใครกลับไปใช้สูตรเดิม เทสพวกนี้จะแดงทันที
+_dname = lambda isv_a, isv_p: _names.DISTRICT_NAME.get(
+    _cmap.PROVINCE_TO_EMCS.get(isv_p, ""), {}).get(
+    str(_cmap.district(isv_a, isv_p)).lstrip("0"), "")
+check("อำเภอ: เชียงใหม่ 5001 = อำเภอเมือง (สูตรเดิมได้ 'ดอยเต่า')",
+      _dname("5001", "50") == "อำเภอเมือง")
+check("อำเภอ: ชัยนาท 1803 = อำเภอวัดสิงห์ (สูตรเดิมได้ 'หันคา')",
+      _dname("1803", "18") == "อำเภอวัดสิงห์")
+check("อำเภอ: พิษณุโลก 6508 = อำเภอวังทอง (สูตรเดิมได้ 'เนินมะปราง')",
+      _dname("6508", "65") == "อำเภอวังทอง")
+check("อำเภอ: กรุงเทพฯ ต้องเหมือนเดิมทุกเขต (เคยถูกอยู่แล้ว ห้ามพัง)",
+      _dname("1001", "10") == "เขตพระนคร" and _dname("1028", "10") == "เขตสาทร"
+      and _dname("1050", "10") == "เขตบางบอน")
+check("อำเภอ: ตารางจับคู่ครอบคลุมเกือบทุกอำเภอ",
+      len(_names.DISTRICT_TO_EMCS) >= 900, f"{len(_names.DISTRICT_TO_EMCS)}")
+# ตัวสร้างไฟล์ต้องไม่ฝังสูตรเก่าไว้ — ไม่งั้นรัน build_code_map.py ทีเดียวบั๊กกลับมาเงียบ ๆ
+_gen_src = (__import__("pathlib").Path(__file__).parent / "tools" / "build_code_map.py"
+            ).read_text(encoding="utf-8")
+check("อำเภอ: ตัวสร้าง build_code_map.py ต้องไม่ฝังสูตรลำดับเดิมไว้",
+      "DISTRICT_TO_EMCS.get(a" in _gen_src and 'f"{{ep}}{{seq}}"' not in _gen_src)
 check("code map: อำเภอไม่ตรงจังหวัดที่ระบุ → '' (ข้อมูลไม่สอดคล้อง ไม่เดา)",
       _cmap.district("3607", "20") == "")
 check("code map: รหัสที่ไม่รู้จัก → '' ไม่เดา",

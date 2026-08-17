@@ -119,6 +119,9 @@ def main():
 ชลบุรี ISURVEY 20 / EMCS 9 · ใบขับขี่รถยนต์ส่วนบุคคล ISURVEY 15 / EMCS 19
 ส่งรหัสดิบข้ามระบบ = เลือกผิดแบบเงียบ ๆ ไม่มี error
 """
+# ตารางอำเภออยู่คนละไฟล์ (สร้างด้วย tools/build_emcs_names.py ซึ่งอ่านตารางอำเภอจริง
+# ของฝั่ง se-survey) — ที่นี่ใช้แค่เปิดดู ดู district() ท้ายไฟล์
+from .emcs_names import DISTRICT_TO_EMCS
 
 # {{รหัสจังหวัด ISURVEY: รหัสจังหวัด EMCS}}
 PROVINCE_TO_EMCS = {json.dumps(prov, ensure_ascii=False, indent=4)}
@@ -164,20 +167,26 @@ def license_type(isurvey_code) -> str:
 
 
 def district(isurvey_amphur_id, isurvey_province_id="") -> str:
-    """รหัสอำเภอ ISURVEY → EMCS
+    """รหัสอำเภอ ISURVEY → EMCS ('' เมื่อแปลงไม่ได้ — ผู้ใช้เลือกเอง)
 
-    ทั้งสองระบบใช้รูปแบบเดียวกัน = <รหัสจังหวัดของระบบนั้น><ลำดับอำเภอ 2 หลัก>
-    (ISURVEY 3607 = จ.36 อำเภอลำดับ 07 · EMCS 7101 = จ.71 อำเภอลำดับ 01)
-    ลำดับอำเภอเรียงเหมือนกัน (ทั้งคู่เรียงตามลำดับราชการ) → เปลี่ยนแค่ส่วนรหัสจังหวัด
-    คืน '' เมื่อรูปแบบไม่ตรงหรือแปลงจังหวัดไม่ได้"""
+    ⛔ **เปิดตารางจับคู่ ห้ามคำนวณจากลำดับรหัส** (แก้ 17/08/69)
+
+    เดิมใช้สูตร <รหัสจังหวัดของระบบนั้น><ลำดับอำเภอ 2 หลัก> โดยเชื่อว่าสองระบบเรียง
+    อำเภอเหมือนกัน — **ไม่จริง ผิด 186 จาก 924 อำเภอ** และผิดแบบเงียบ (ได้ชื่ออำเภอ
+    ที่มีอยู่จริงในจังหวัดนั้น แค่คนละอำเภอ ไม่มี error ให้จับ):
+        เชียงใหม่  ISURVEY 'เมืองเชียงใหม่' → เคยส่ง EMCS เป็น 'อำเภอดอยเต่า'
+        ชัยนาท    ISURVEY 'วัดสิงห์'      → เคยส่ง EMCS เป็น 'อำเภอหันคา'
+    กรุงเทพฯ รอดเพราะ 50 เขตบังเอิญเรียงตรงกัน ซึ่งเป็น 40% ของงาน จึงไม่มีใครเจอ
+
+    ตาราง DISTRICT_TO_EMCS จับคู่ด้วย "ชื่ออำเภอ" (tools/build_emcs_names.py)
+    ครอบคลุม 926 อำเภอ · ที่เหลือ ~78 เป็นชื่อที่ ISURVEY มีฝ่ายเดียว (เทศบาล/สาขาตำบล)
+    """
     a = str(isurvey_amphur_id or "").strip()
     if not a.isdigit() or len(a) < 3:
         return ""
-    seq, isv_prov = a[-2:], a[:-2]
-    if isurvey_province_id and str(isurvey_province_id).strip() != isv_prov:
+    if isurvey_province_id and str(isurvey_province_id).strip() != a[:-2]:
         return ""          # อำเภอไม่ได้อยู่ในจังหวัดที่ระบุ = ข้อมูลไม่สอดคล้อง
-    ep = province(isv_prov)
-    return f"{{ep}}{{seq}}" if ep else ""
+    return DISTRICT_TO_EMCS.get(a, "")
 '''
     OUT.write_text(body, encoding="utf-8")
     print(f"\n✓ เขียน {OUT} แล้ว (จังหวัด {len(prov)} · ใบขับขี่ {len(lic)})")

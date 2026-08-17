@@ -10,17 +10,18 @@ ISURVEY 'บางบ่อ' / EMCS 'อำเภอบางบ่อ' · ISURV
 
 ที่มา: se-survey/backend/src/data/emcsDistricts.ts (capture จากพอร์ทัลจริง)
       + ตาราง PROVINCE_BY_CODE ใน xmlImport.service.ts
+      + master ของ ISURVEY (ต้องต่อเน็ต — ใช้ทำตารางแปลงรหัสอำเภอ ISURVEY → EMCS)
 
 รันใหม่เมื่อฝั่ง se-survey อัปเดตตารางพวกนั้น:
     python tools/build_emcs_names.py
 """
-import io
 import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # ให้ import autokey ได้
 
 SE_SURVEY = Path(r"C:\Users\i9\Desktop\se-survey")
 OUT = Path(__file__).resolve().parent.parent / "autokey" / "emcs_names.py"
@@ -71,10 +72,68 @@ def main() -> int:
         lines.append(f'    "{pcode}": {{{inner}}},')
     lines += ["}", ""]
 
+    # ── ตารางแปลงรหัสอำเภอ ISURVEY → EMCS (จับคู่ด้วย "ชื่อ") ──
+    pair, unmatched = _district_code_map(provinces, districts)
+    lines += [
+        "# {รหัสอำเภอ ISURVEY: รหัสอำเภอ EMCS} — จับคู่ด้วย **ชื่อ** ไม่ใช่ลำดับรหัส",
+        "#",
+        "# ⛔ ห้ามกลับไปคำนวณจากลำดับ (<รหัสจังหวัด><ลำดับ 2 หลัก>) — สองระบบเรียงอำเภอ",
+        "#    ไม่เหมือนกัน วิธีนั้นผิด 186 จาก 924 อำเภอ (วัดจริง 17/08/69) เช่นเชียงใหม่",
+        "#    ลำดับ 01 ของ ISURVEY = 'เมืองเชียงใหม่' แต่ของ EMCS = 'อำเภอดอยเต่า'",
+        "#    ผิดแบบเงียบ ๆ ไม่มี error เพราะได้ชื่ออำเภอที่มีจริงในจังหวัดนั้น แค่ผิดอำเภอ",
+        "DISTRICT_TO_EMCS = {",
+    ]
+    for k in sorted(pair, key=lambda s: (len(s), s)):
+        lines.append(f'    "{k}": "{pair[k]}",')
+    lines += ["}", ""]
+
     OUT.write_text("\n".join(lines), encoding="utf-8")
     print(f"✅ เขียน {OUT.name}: จังหวัด {len(provinces)} · อำเภอ "
           f"{sum(len(v) for v in districts.values())} รายการ ใน {len(districts)} จังหวัด")
+    print(f"   ตารางแปลงอำเภอ ISURVEY→EMCS: จับคู่ได้ {len(pair)} · จับคู่ไม่ได้ {unmatched}")
     return 0
+
+
+def _bare(name: str, province: str = "") -> str:
+    """ตัดคำนำหน้าให้เทียบชื่อข้ามระบบได้ — ISURVEY 'บางบ่อ' / EMCS 'อำเภอบางบ่อ'
+    และ ISURVEY 'เมืองสมุทรปราการ' / EMCS 'อำเภอเมือง'"""
+    n = str(name or "").strip()
+    for p in ("กิ่งอำเภอ", "อำเภอ", "เขต"):
+        if n.startswith(p):
+            n = n[len(p):]
+            break
+    return "เมือง" if (province and n == "เมือง" + province) else n.strip()
+
+
+def _district_code_map(provinces: dict, districts: dict):
+    """{รหัสอำเภอ ISURVEY: รหัสอำเภอ EMCS} — ต้องต่อเน็ตเพื่ออ่าน master ของ ISURVEY
+
+    ที่จับคู่ไม่ได้ (~78 รายการ) เป็นชื่อที่ ISURVEY มีอยู่ฝ่ายเดียวจริง ๆ เช่น
+    'เทศบาลตำบลแหลมฉบัง*' · 'ลำลูกกา (สาขาตำบลคูคต)*' → ไม่ใส่ในตาราง ปล่อยให้คนเลือกเอง
+    """
+    from autokey import isurvey_emcs_map as emcs_map
+    from autokey.config import load_config
+    from autokey.isurvey_api import ISurveyAPI
+
+    api = ISurveyAPI(load_config())
+    api.login()
+    amphurs = api.master("masterAmphur", "amphurID", "amphurname")
+
+    out, miss = {}, 0
+    for aid, aname in amphurs.items():
+        ep = emcs_map.PROVINCE_TO_EMCS.get(str(aid)[:2])
+        if not ep:
+            miss += 1
+            continue
+        pname = provinces.get(ep, "")
+        want = _bare(aname, pname)
+        hit = next((code for code, nm in districts.get(ep, {}).items()
+                    if _bare(nm, pname) == want), None)
+        if hit:
+            out[str(aid)] = f"{ep}{hit[len(ep):]}" if hit.startswith(ep) else hit
+        else:
+            miss += 1
+    return out, miss
 
 
 if __name__ == "__main__":
