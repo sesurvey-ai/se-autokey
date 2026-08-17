@@ -1504,6 +1504,16 @@ PAGE = r"""<!doctype html>
           <span class="fltlab">ผู้สำรวจ</span>
           <select id="pdwho" style="flex:1;min-width:0;padding:6px 8px"></select>
         </div>
+        <!-- ช่องพิมพ์ค้นผู้สำรวจ — เร็วกว่าไล่หาใน dropdown ที่มีเป็นร้อยชื่อ
+             พิมพ์รหัส (se18) หรือชื่อ (กรกฎ) ก็ได้ · ใช้คู่กับ dropdown ไม่ได้
+             เลือกทางใดทางหนึ่งเท่านั้น ไม่งั้นกรองชนกันแล้วได้ 0 แถวแบบงง ๆ -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span class="fltlab">ค้นผู้สำรวจ</span>
+          <input type="text" id="pdwhoq" placeholder="เช่น se18 หรือ กรกฎ"
+                 style="flex:1;min-width:0;padding:6px 8px">
+          <button type="button" id="pdwhoqclear" class="run"
+                  style="flex:none;padding:7px 10px;font-size:13px;background:#64748b">ล้าง</button>
+        </div>
         <div style="display:flex;align-items:center;gap:8px">
           <span class="fltlab">เลขท้าย</span>
           <input type="text" id="pdtail" inputmode="numeric" placeholder="เช่น 0,1 — ว่าง = ทุกเลข"
@@ -2832,9 +2842,13 @@ function pdRender(){
   const hide = $("#pdhidedone").checked;
   pdRebuildWho(pdCache);
   const who = $("#pdwho").value, digits = pdTailDigits();
+  const whoQ = ($("#pdwhoq").value || "").trim().toLowerCase();
   const rows = pdCache.filter(c => {
     if (hide && pdDone[c.survey_no]?.ok) return false;
     if (who && (c.surveyor_name || "").trim() !== who) return false;
+    // ค้นแบบมีคำนี้อยู่ในชื่อ — ช่อง surveyor_name เป็น "SE314 นาย กรกฎ ..."
+    // พิมพ์รหัสหรือชื่อก็เจอ · 'se18' จะได้ทั้ง SE18 และ SE180/SE181 ตามที่พิมพ์
+    if (whoQ && !(c.surveyor_name || "").toLowerCase().includes(whoQ)) return false;
     if (digits.size){
       const d = String(c.claim_no || "").replace(/\D/g, "").slice(-1);
       if (!digits.has(d)) return false;
@@ -2842,7 +2856,9 @@ function pdRender(){
     return true;
   });
   $("#pdfilterrow").hidden = !pdCache.length;
-  const flt = [who ? "ผู้สำรวจ: " + who : "", digits.size ? "เลขท้าย " + [...digits].sort().join(",") : ""]
+  const flt = [who ? "ผู้สำรวจ: " + who : "",
+               whoQ ? "ค้น: " + $("#pdwhoq").value.trim() : "",
+               digits.size ? "เลขท้าย " + [...digits].sort().join(",") : ""]
               .filter(Boolean).join(" · ");
   $("#pdsummary").textContent =
     "รอตรวจข้อมูล " + pdCache.length + " เรื่อง · ดึงแล้ว "
@@ -2898,10 +2914,27 @@ $("#pdtailclear").addEventListener("click", () => {
   try{ localStorage.setItem("pdtail", ""); }catch(e){}
   pdRender();
 });
+// dropdown กับช่องค้นทำงานแทนกัน — เลือกทางหนึ่งแล้วอีกทางถูกล้าง
+// (ถ้าปล่อยให้กรองซ้อนกัน เลือก SE314 ไว้แล้วพิมพ์ se18 จะได้ 0 แถวโดยไม่รู้ว่าทำไม)
 $("#pdwho").addEventListener("change", () => {
+  if ($("#pdwho").value) pdSetWhoQ("");
   try{ localStorage.setItem("pdwho", $("#pdwho").value); }catch(e){}
   pdRender();
 });
+function pdSetWhoQ(v){
+  $("#pdwhoq").value = v;
+  try{ localStorage.setItem("pdwhoq", v); }catch(e){}
+}
+try{ $("#pdwhoq").value = localStorage.getItem("pdwhoq") || ""; }catch(e){}
+$("#pdwhoq").addEventListener("input", () => {
+  if ($("#pdwhoq").value.trim()){
+    $("#pdwho").value = "";
+    try{ localStorage.setItem("pdwho", ""); }catch(e){}
+  }
+  pdSetWhoQ($("#pdwhoq").value);
+  pdRender();
+});
+$("#pdwhoqclear").addEventListener("click", () => { pdSetWhoQ(""); pdRender(); });
 $("#pdselall").addEventListener("change", e => {
   pdBox.querySelectorAll(".pdsel").forEach(x => { x.checked = e.target.checked; });
   pdSelCount();

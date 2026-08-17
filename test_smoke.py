@@ -2483,6 +2483,14 @@ check("ดึงงานรอตรวจ (แท็บ 2): dropdown กรอ
 check("ดึงงานรอตรวจ (แท็บ 2): มีช่องกรองเลขท้าย + จำค่าไว้",
       'id="pdtail"' in _page and 'localStorage.setItem("pdtail"' in _page
       and 'localStorage.getItem("pdtail")' in _page)
+check("ดึงงานรอตรวจ (แท็บ 2): ช่องพิมพ์ค้นผู้สำรวจ (รหัสหรือชื่อก็ได้)",
+      'id="pdwhoq"' in _page
+      and '(c.surveyor_name || "").toLowerCase().includes(whoQ)' in _page)
+# dropdown กับช่องค้นต้องล้างกันเอง — ไม่งั้นเลือกคนไว้แล้วพิมพ์ชื่ออีกคน = 0 แถวแบบไม่รู้สาเหตุ
+check("ดึงงานรอตรวจ (แท็บ 2): เลือก dropdown แล้วล้างช่องค้น และกลับกัน",
+      'if ($("#pdwho").value) pdSetWhoQ("");' in _page
+      and 'if ($("#pdwhoq").value.trim()){' in _page
+      and '$("#pdwho").value = "";' in _page)
 check("หัวหน้าตรวจ: ตัวเลือกคิดจากงานที่เหลือหลังกรองเลขท้ายแล้ว",
       _page.index("rebuildWhoOptions(base)") > _page.index("&& matchTail(r.claim_no, digits));"))
 check("หัวหน้าตรวจ: บอกจำนวนงานของแต่ละคนในวงเล็บ",
