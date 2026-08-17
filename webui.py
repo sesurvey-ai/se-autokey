@@ -1509,8 +1509,7 @@ PAGE = r"""<!doctype html>
              เลือกทางใดทางหนึ่งเท่านั้น ไม่งั้นกรองชนกันแล้วได้ 0 แถวแบบงง ๆ -->
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
           <span class="fltlab">ค้นผู้สำรวจ</span>
-          <input type="text" id="pdwhoq" placeholder="เช่น se18 หรือ กรกฎ"
-                 style="flex:1;min-width:0;padding:6px 8px">
+          <input type="text" id="pdwhoq" style="flex:1;min-width:0;padding:6px 8px">
           <button type="button" id="pdwhoqclear" class="run"
                   style="flex:none;padding:7px 10px;font-size:13px;background:#64748b">ล้าง</button>
         </div>
