@@ -26,6 +26,7 @@ import re
 
 from . import isurvey_emcs_map as emcs_map
 from .emcs_names import DISTRICT_NAME, PROVINCE_NAME
+from .emcs_insurers import to_emcs_insurer
 
 # ── คำศัพท์ปลายทาง (ต้องตรง dropdown ของเว็บ se-survey เป๊ะ) ──────────────────
 
@@ -412,7 +413,10 @@ def _third_parties(api, case_id) -> list:
             "vin": _s(r.get("chassis_no")),
             "owner_name": _s(r.get("owner_name")),
             "owner_address": _s(r.get("owner_address")),
-            "insurer": _s(r.get("oth_insure_company_name")),
+            # แปลงชื่อบริษัทเป็นชื่อที่ EMCS มีจริง **ตั้งแต่ตอนนำเข้า** (ยังมีคนตรวจอยู่)
+            # ไม่ใช่ปล่อยให้บอท fuzzy เดาตอนกรอกซึ่งไม่มีใครดู · แปลงไม่ได้ = ปล่อยชื่อเดิม
+            # ไปให้หัวหน้าเลือกเองบนเว็บ (ช่องจะขึ้นเตือนว่าเลือกบน EMCS ไม่ได้)
+            "insurer": to_emcs_insurer(_s(r.get("oth_insure_company_name"))),
             "policy_no": _s(r.get("oth_policy_no")),
             "claim_no": _s(r.get("oth_accident_no")),
             "policy_type": api.master("masterPolicyType", "poTID", "policy_type").get(

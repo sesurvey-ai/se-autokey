@@ -68,6 +68,39 @@ check("ตัวอย่างอำเภอถูก", DISTRICT_NAME.get("36"
 check("ลำดับอำเภอสองระบบไม่ตรงกันจริง (กันคนเผลอกลับไปแปลงด้วยรหัส)",
       DISTRICT_NAME.get("36", {}).get("3608") != "อำเภอวังทอง")
 
+
+# ───────────────── ชื่อบริษัทประกัน: ISURVEY → ชื่อที่ EMCS มีจริง ─────────────────
+#
+# ลิสต์บนเว็บ se-survey ต้องเป็นของ **EMCS** ไม่ใช่ของ ISURVEY เพราะปลายทางที่บอท
+# ต้องไปเลือกคือ ddlHave_Insurance บนหน้า EMCS (value = ชื่อบริษัทตรง ๆ)
+print("\n── ชื่อบริษัทประกัน (ISURVEY → EMCS) ──")
+from autokey.emcs_insurers import EMCS_INSURERS, ISURVEY_TO_EMCS, to_emcs_insurer
+
+check("มีลิสต์บริษัทของ EMCS", len(EMCS_INSURERS) >= 50, f"{len(EMCS_INSURERS)} บริษัท")
+check("ปลายทางของทุกการจับคู่มีอยู่จริงในลิสต์ EMCS",
+      all(v in EMCS_INSURERS for v in ISURVEY_TO_EMCS.values()),
+      f"{len(ISURVEY_TO_EMCS)} คู่")
+check("ชื่อที่ตรงกับ EMCS อยู่แล้ว ส่งผ่านไม่แก้",
+      to_emcs_insurer(EMCS_INSURERS[0]) == EMCS_INSURERS[0])
+check("แปลงชื่อฝั่ง ISURVEY ได้",
+      to_emcs_insurer("วิริยะประกันภัย") == "บริษัท วิริยะประกันภัย จำกัด (มหาชน)")
+check("แปลงไม่ได้ = คืนชื่อเดิม ไม่เดา",
+      to_emcs_insurer("กมล ประกันภัย") == "กมล ประกันภัย")
+# ⛔ กับดักจริงที่เจอ 17/08/69: ตัดคำว่า "ประกันภัย" ออกแล้วเทียบแบบสับสตริง
+#    ทำให้ 'กรุงเทพประกัน*สุขภาพ*' จับคู่ไปเป็น 'กรุงเทพ*ประกันภัย*' คนละบริษัทกัน
+#    = เคลมไปผูกกับบริษัทผิดโดยไม่มีอะไรฟ้อง
+check("ห้ามจับคู่ 'ประกันสุขภาพ' ไปเป็น 'ประกันภัย'",
+      to_emcs_insurer("กรุงเทพประกันสุขภาพ จำกัด") != "บริษัท กรุงเทพประกันภัย จำกัด (มหาชน)")
+check("ไม่มีคู่ไหนที่ชื่อต้นทาง/ปลายทางเป็นคนละประเภทประกัน",
+      not [1 for k, v in ISURVEY_TO_EMCS.items()
+           if ("สุขภาพ" in k) != ("สุขภาพ" in v) or ("ชีวิต" in k) != ("ชีวิต" in v)])
+
+# ลิสต์ฝั่งเว็บต้องเป็นชุดเดียวกับที่ generate ไว้ — แก้ที่เดียวไม่ครบคือลิสต์เพี้ยนเงียบ ๆ
+_ts = Path(__file__).resolve().parent.parent / "se-survey" / "web" / "src" / "components" / "cases" / "insurerOptions.ts"
+_ts_names = re.findall(r'^  "(.+)",$', _ts.read_text(encoding="utf-8"), re.M) if _ts.exists() else []
+check("ลิสต์ฝั่งเว็บตรงกับลิสต์ EMCS ทุกชื่อ",
+      _ts_names == EMCS_INSURERS, f"เว็บ {len(_ts_names)} · EMCS {len(EMCS_INSURERS)}")
+
 if "--offline" in sys.argv:
     print(f"\n{'✅ ผ่านทั้งหมด' if failed == 0 else f'❌ ล้มเหลว {failed} รายการ'}  ({checked} ข้อ)")
     raise SystemExit(1 if failed else 0)
