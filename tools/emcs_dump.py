@@ -145,7 +145,9 @@ def learn(vals: dict, xml_src: str) -> dict:
 #   ""                             ไม่มีบนหน้านี้ (server เติมเอง / อยู่หน้าอื่น)
 REPORT_MAP = [
     ("SURV_JOBNO", "txtSurv_JobNo"), ("REF_CLAIM_NO", "txtRef_Claim_No"),
-    ("INSURERBRID", "ddlInsurer_Name"), ("SURVEYID", ""), ("SURVEYBRID", ""),
+    ("INSURERBRID", "ddlInsurer_Name"),
+    ("SURVEYID", "@na:EMCS ไม่ render ช่องนี้"),
+    ("SURVEYBRID", "@na:EMCS ไม่ render ช่องนี้"),
     ("ACC_CLAIMREF_NO", "txtAcc_ClaimRef_No"), ("ACC_POLICY_NO", "txtAcc_Policy_No"),
     ("ASSURED_NAME", "txtAssured_Name"), ("POLICY_TYPE", "txtPolicy_Type"),
     ("POLICY_START", "@date_be:wuCale_Policy_Start_txtCalendar"),
@@ -165,16 +167,18 @@ REPORT_MAP = [
     ("POLICE_COMMENT", "txtPolice_Comment"),
     ("POLICE_DATE", "@date:wuCale_Police_Date_txtCalendar"),
     ("BOOK_NUMBER", "txtBook_Number"), ("PRB_NUMBER", "txtPrb_Number"),
-    ("SURV_COMMENT", "txtSurv_Comment"), ("ACC_CAUSE_NO", "txtAcc_Cause_No"),
+    ("SURV_COMMENT", "@na:อยู่หน้าใบค่าใช้จ่าย ไม่ใช่หน้าหลัก"),
+    ("ACC_CAUSE_NO", "txtAcc_Cause_No"),
     ("ALC_CHK", "@radio:rdoAlc_Chk"), ("ALC_RESULT", "txtAlc_Result"),
-    ("FLU_TYPE", "ddlFlu_Type"), ("FLU_NO", "ddlFlu_No"),
+    ("FLU_TYPE", "@radio:rdoFlu_Type_"), ("FLU_NO", "ddlFlu_No"),
     ("FLU_DETAIL", "txtFlu_Detail"), ("FLU_DATE", "@date:wuCale_Flu_Date_txtCalendar"),
     ("HEV_CAR", "@radio:rdoHev_Car_"), ("ACC_CRASH_REAR", ""),
     ("HAS_PRB", "@check:chkHas_Prb"), ("RISK_CODE", "txtRisk_Code"),
     ("LOST_CAR", "@check:chkLost_Car"),
     ("INS_CALLING_SURV_DATE", "@date:wuCale_Ins_Calling_Surv_Date_txtCalendar"
      ":txtIns_Calling_Surv_Date_Hour:txtIns_Calling_Surv_Date_Minute"),
-    ("SURV_CLAIM_TYPE", "@radio:rdoSurv_Claim_Type_"), ("DRIVER_BY_POLICY", ""),
+    ("SURV_CLAIM_TYPE", "@radio:rdoSurv_Claim_Type_"),
+    ("DRIVER_BY_POLICY", "txtDriver_By_Policy"),
     ("DEDUCTIBLE", "txtDeductible"), ("CAUSE_CODE", "ddlClm_Cause"),
     ("LOSS_ID", "ddlLoss_ID"),
 ]
@@ -205,7 +209,23 @@ CAR_MAP = [
     ("REPAIRER_NAME", ""), ("REPAIRER_TYPE", ""), ("DAMAGE_LIST", ""),
     ("HAS_KFK", "@check:chkHas_KFK"),
 ]
-CAR_OPO_ALIAS = {"txtDri_Address": "txtDri_Adrress", "ddlCMFG": "ddlCmfg"}
+CAR_OPO_ALIAS = {
+    "txtDri_Address": "txtDri_Adrress", "ddlCMFG": "ddlCmfg",
+    # ⛔ บล็อกคู่กรณีของ EMCS **ไม่มีช่องเหล่านี้ให้กรอก** (ยืนยันจาก HTML จริง 19/08/69)
+    #    คำนำหน้า/ชื่อ-นามสกุลแยก อยู่ในแถว AXA + ตาราง tbName ที่ display:none
+    #    จังหวัด/อำเภอผู้ขับขี่ เป็น select ว่างเปล่าที่ display:none (ใช้ช่องที่อยู่เดี่ยวแทน)
+    #    สถานที่ออก/วันหมดอายุใบขับขี่ มีเฉพาะฝั่งรถประกัน
+    #    → ไม่ใช่ "ข้อมูลหาย" อย่าให้ --diff ฟ้องซ้ำทุกรอบ
+    "ddlDri_Title_ID": "@na:คู่กรณีไม่มีช่องคำนำหน้า (แถว AXA ซ่อนอยู่)",
+    "ddlDri_ProvinceID": "@na:คู่กรณีไม่มีช่องจังหวัดผู้ขับขี่",
+    "ddlDri_DistrictID": "@na:คู่กรณีไม่มีช่องอำเภอผู้ขับขี่",
+    "txtDri_DrvPlace": "@na:คู่กรณีไม่มีช่องสถานที่ออกใบขับขี่",
+    "@date:wuCale_Dri_DrvDate_End_txtCalendar": "@na:คู่กรณีไม่มีช่องวันหมดอายุใบขับขี่",
+}
+# ⚠️ ปีจดทะเบียน: **รถประกันเป็นช่องพิมพ์** (txtCar_RegNo_Year) แต่**คู่กรณีเป็น dropdown**
+#    (ddlCar_RegNo_Year) — CAR_MAP ใช้ชื่อของคู่กรณีเป็นหลัก จึงต้อง alias กลับฝั่งรถประกัน
+#    ไม่งั้น --diff ฟ้องผิดว่า "ปีจดทะเบียนรถประกันไม่เข้า EMCS" ทั้งที่เข้าอยู่แล้ว
+CAR_INS_ALIAS = {"ddlCar_RegNo_Year": "txtCar_RegNo_Year"}
 
 INJ_MAP = [
     ("INJ_SEQ", "@seq"), ("NAME", "txtInj_Name"), ("AGE", "txtInj_Age"),
@@ -263,9 +283,18 @@ def _date(vals, spec_: str, to_ce: bool) -> str:
     return f"{y}-{mo}-{d} {str(hh).zfill(2)}:{str(mi).zfill(2)}:00"
 
 
+# tag ที่ "อ่านจากหน้านี้ไม่ได้" หรือ "EMCS ไม่มีช่องให้กรอก" — เก็บพร้อมเหตุผลตอนประกอบ XML
+# แล้ว --diff แยกออกจาก "ข้อมูลต่าง" เพราะคนละเรื่องกัน: ต่าง = ต้องไปตาม ·
+# na = ไม่มีที่ให้เก็บตั้งแต่แรก (ข้อจำกัดของ EMCS) ฟ้องซ้ำทุกรอบมีแต่กลบของจริง
+NA_REASON: dict = {}
+
+
 def resolve(vals: dict, source: str, prefix: str = "", **kw) -> str:
     """แปลงคำสั่งใน map เป็นค่าจริงจากหน้าเว็บ"""
     if not source:
+        return ""
+    if source.startswith("@na:"):
+        NA_REASON[kw.get("_tag", "")] = source.split(":", 1)[1]
         return ""
     if source == "@type":
         return str(kw.get("type", 0))
@@ -325,12 +354,13 @@ def build_xml(pages: list) -> str:
         rows.update({k: v for k, v in p["values"].items() if k.startswith("dtl")})
 
     def block(name, mapping, vals, prefix="", **kw):
-        body = "".join(f"<{t}>{_esc(resolve(vals, src, prefix, **kw)) or ' '}</{t}>"
+        body = "".join(f"<{t}>{_esc(resolve(vals, src, prefix, _tag=t, **kw)) or ' '}</{t}>"
                        for t, src in mapping)
         return f"<{name}>{body}</{name}>"
 
+    ins_map = [(t, CAR_INS_ALIAS.get(src, src)) for t, src in CAR_MAP]
     out = [block("TXN_SURV_REPORT", REPORT_MAP, main),
-           block("TXN_SURV_CAR", CAR_MAP, main, insured=True, type=0)]
+           block("TXN_SURV_CAR", ins_map, main, insured=True, type=0)]
     for n, pre in enumerate(_rows(rows, "dtlOpo_ctl", "_wuOpo_", ("txtOpo_Name", "txtCar_RegNo"))):
         alias = [(t, CAR_OPO_ALIAS.get(s, s)) for t, s in CAR_MAP]
         out.append(block("TXN_SURV_CAR", alias, rows, pre, insured=False, type=20 + n))
@@ -426,7 +456,7 @@ def main():
         if a.diff:
             ref = Path(a.diff).read_text(encoding="utf-8", errors="replace")
             mine, gold = _blocks(xml), _blocks(ref)
-            ok = bad = 0
+            ok = bad = skipped = 0
             print(f"\n=== เทียบกับ {Path(a.diff).name} ===")
             for key in sorted(set(mine) | set(gold)):
                 m, g = mine.get(key, {}), gold.get(key, {})
@@ -435,13 +465,19 @@ def main():
                     print(f"  – {key}: มีแค่ฝั่ง{side} ({len(m or g)} tag)")
                     continue
                 rows = [(t, m.get(t, ""), g[t]) for t in g if m.get(t, "") != g[t]]
-                ok += len(g) - len(rows)
+                # แยก "EMCS ไม่มีช่องให้เก็บ / อ่านจากหน้านี้ไม่ได้" ออกจาก "ข้อมูลต่าง"
+                na = [(t, y) for t, x, y in rows if t in NA_REASON and not x]
+                rows = [r for r in rows if r[0] not in NA_REASON or r[1]]
+                ok += len(g) - len(rows) - len(na)
                 bad += len(rows)
+                skipped += len(na)
                 if rows:
                     print(f"  {key}: ต่าง {len(rows)}/{len(g)}")
                     for t, x, y in rows:
                         print(f"     ✗ {t:<20} เรา={x!r:<28} อ้างอิง={y!r}")
-            print(f"\n  รวม: ตรง {ok} · ต่าง {bad}")
+                for t, y in na:
+                    print(f"     ℹ {t:<20} {NA_REASON[t]} (ส่งไป {y!r})")
+            print(f"\n  รวม: ตรง {ok} · ต่าง {bad} · ไม่มีที่เก็บใน EMCS {skipped}")
 
     if a.learn:
         res = learn(merged, Path(a.learn).read_text(encoding="utf-8", errors="replace"))
