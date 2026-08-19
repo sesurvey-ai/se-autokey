@@ -3243,7 +3243,7 @@ def _group_flat_by_category(folder, file_names, fallback_type):
 
 def upload_images(driver, folder, image_type: str = "รูปรถประกัน", only=None,
                   n_opponents: int = 0, n_injuries: int = 0, n_assets: int = 0,
-                  single_type: str = ""):
+                  single_type: str = "", dedupe: bool = True):
     """อัปโหลดรูปทั้งหมด: รูปรถประกัน (หลัก) + บุคคลที่สาม (tp_veh/tp_person/tp_prop)
 
     - รูปรถประกัน: เลือกประเภท image_type ('รูปรถประกัน') — only คุมว่าจะอัปรูปไหน
@@ -3326,6 +3326,35 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
         html5_ui = True
     except TimeoutException:
         html5_ui = False
+
+    # ⛔ EMCS **ไม่ dedupe ชื่อไฟล์** — อัปชุดเดิมซ้ำ = รูปซ้ำทั้งกอง กินโควตา 80 ใบ
+    #    และบริษัทประกันเห็นรูปซ้ำ. โหมดซ่อม (--sesurvey-fill-existing) รันกี่รอบก็ได้
+    #    ตามธรรมชาติ (btnUpdate ล้มบ่อย) → เดิมรัน 3 รอบ รูป 5 ใบกลายเป็น 20 ใบ
+    #    (เจอจริง 19/08/69 บน S68426084815) → ตัดใบที่แนบไว้แล้วออกก่อนเสมอ
+    #    dedupe=False เฉพาะ "งานต่อเนื่อง" ซึ่งตั้งใจอัปไฟล์ชื่อเดิมซ้ำเข้าครั้งใหม่
+    if dedupe:
+        # ⚠️ EMCS เก็บชื่อไฟล์แบบ "ตัดช่องว่างทิ้ง" — ไฟล์ 'รูปรถคู่กรณี คันที่ 1_1.jpg'
+        #    ขึ้นในตารางเป็น 'รูปรถคู่กรณีคันที่1_1.jpg' → เทียบชื่อดิบจะไม่มีวันตรง
+        #    (รอบแรกของ dedupe จับได้แค่ชื่อที่ไม่มีช่องว่าง แล้วอัปรูปคู่กรณีซ้ำอีก)
+        _key = lambda n: "".join(str(n).split())      # noqa: E731
+        try:
+            attached = {_key(r["name"]) for r in list_report_images(driver)}
+        except Exception as e:
+            log(f"   ⚠️ อ่านรายการรูปที่แนบไว้ไม่ได้ ({type(e).__name__}) — อัปตามปกติ")
+            attached = set()
+        if attached:
+            kept, skipped = [], 0
+            for label, paths in batches:
+                keep = [p for p in paths if _key(p.name) not in attached]
+                skipped += len(paths) - len(keep)
+                if keep:
+                    kept.append((label, keep))
+            if skipped:
+                log(f"   ↩ ข้ามรูปที่แนบไว้แล้ว {skipped} ใบ (กันรูปซ้ำ)")
+            batches = kept
+            if not batches:
+                log("EMCS: รูปทุกใบแนบไว้แล้ว — ไม่ต้องอัปซ้ำ")
+                return
 
     for label, paths in batches:
         _upload_one_batch(driver, paths, label, html5_ui)
@@ -3422,6 +3451,13 @@ def delete_report_images(driver, names) -> list:
     btn.click()
     accept_alert(driver)                            # confirm("คุณต้องการลบรูปภาพที่เลือกไว้ใช่หรือไม่?")
     time.sleep(2)
+    # ⚠️ EMCS เด้ง alert **ใบที่สอง** ตามมาหลัง postback ("บันทึกการลบรายการภาพเรียบร้อยแล้ว")
+    #    ถ้าไม่ปิด คำสั่ง Selenium ถัดไปโยน UnexpectedAlertPresentException ทั้งที่ลบสำเร็จแล้ว
+    #    → เดิมสคริปต์ล้มหลังลบเสร็จ ทำให้ดูเหมือนลบไม่สำเร็จ (เจอจริง 19/08/69)
+    try:
+        log("   [alert] " + accept_alert(driver, timeout=10))
+    except Exception:
+        pass
 
     # หลัง postback ตารางถูก render ใหม่ — อ่านเร็วไปจะเจอ StaleElementReference/แถวยังไม่ครบ
     after = []
@@ -3430,8 +3466,11 @@ def delete_report_images(driver, names) -> list:
             after = list_report_images(driver)
             if after:
                 break
-        except StaleElementReferenceException:
-            pass
+        except (StaleElementReferenceException, UnexpectedAlertPresentException):
+            try:
+                accept_alert(driver, timeout=5)
+            except Exception:
+                pass
         time.sleep(1)
     if not after:
         raise RuntimeError(
@@ -3575,6 +3614,11 @@ def fill_fee_table(driver, bill: dict):
     if photo_total > 0:
         n = photo_num or 1
         unit = round(photo_total / n, 2)
+        # ⚠️ ยอดรวมคอลัมน์ "จำนวนเงินเสนอ" ของ EMCS คิดแถวค่ารูปถ่ายเป็น *ราคา/หน่วย*
+        #    ไม่ใช่ยอดของแถว (5×50 → รวมขึ้น 750 แทน 950) — ทดสอบสลับลำดับกรอก
+        #    (ราคาก่อน/จำนวนก่อน) แล้ว **ได้ 750 เท่ากันทั้งสองแบบ = ไม่ใช่ปัญหาลำดับ**
+        #    ตัวแถวเอง (txtPhoto_Price) · คอลัมน์ "อนุมัติ" · ยอดสะสม ถูกต้องหมด
+        #    → เป็นอาการฝั่ง EMCS แก้จากเราไม่ได้ อย่าเสียเวลาสลับลำดับซ้ำ (19/08/69)
         _type_fee(driver, "txtNum_Photo", n, "ค่ารูปถ่าย (จำนวนรูป)")
         _type_fee(driver, "txtPhoto_UnitPrice", f"{unit:g}",
                   f"ค่ารูปถ่าย (เสนอ/รูป จากยอดรวม {photo_total:g})")
@@ -4166,7 +4210,7 @@ def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
                       n_opponents=len(data.third_parties or []),
                       n_injuries=len(data.injuries or []),
                       n_assets=len(data.assets or []),
-                      single_type=_EMCS_DEFAULT_IMAGE_TYPE)
+                      single_type=_EMCS_DEFAULT_IMAGE_TYPE, dedupe=False)
     fill_billing(driver, data, full_billing=full_billing, navigate=moved,
                  leave=False)   # ค้างในเรื่องไว้ ปุ่มส่งงานอยู่หน้านี้
     return esurvey
@@ -4518,7 +4562,8 @@ def _fill_policy_extras(driver, data: ClaimData):
 def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
                   loss_type: str = "auto", image_type: str = "รูปรถประกัน",
                   severity: str = "เบา", force_new: bool = False,
-                  full_billing: bool = True, insurer_code: str = None) -> str:
+                  full_billing: bool = True, insurer_code: str = None,
+                  allow_continuation: bool = True) -> str:
     """กรอกเคลมผ่านโหมด "นำเข้า XML": ให้ EMCS import ฟอร์มหลักจาก SURV_REPORT XML
     แล้วบอทอุดช่องว่าง/แก้ที่ import ทำพลาด + กรอกส่วนที่ import ไม่แตะ
 
@@ -4534,6 +4579,15 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
             log(f"   ⚠️ ตรวจเรื่องเดิมไม่สำเร็จ ({type(e).__name__}) — ทำต่อแบบสร้างใหม่")
             existing = []
         cont = continuation_esurvey(existing, data.invoice_value)
+        if cont and not allow_continuation:
+            # ⛔ กติกา user (02/08/69 · ย้ำ 19/08/69): งานครั้งที่ 2 ของเคสที่มาจาก se-survey
+            #    **หัวหน้าทำเอง** บอทรับผิดชอบเฉพาะครั้งที่ 1 — เดิมเส้นนี้ไหลเข้าโหมด
+            #    งานต่อเนื่องเงียบ ๆ แล้วไปกรอกหน้าค่าใช้จ่ายทับของที่หัวหน้ากรอกไว้ได้
+            raise RuntimeError(
+                f"เคลม {data.claim_value} มีเรื่องอยู่แล้วใน EMCS ({cont}) และใบแจ้งหนี้เป็นเลขใหม่ "
+                f"({data.invoice_value}) = งานครั้งที่ 2 ขึ้นไป" + chr(10) +
+                "งานต่อเนื่องของเคสจาก se-survey เป็นงานของหัวหน้า บอทไม่กรอกให้ "
+                "(ทำเฉพาะครั้งที่ 1) — เข้าไปกรอกหน้าค่าใช้จ่ายบน EMCS เอง")
         if cont:
             log(f"EMCS: เคลมนี้มีเรื่องเดิม + invoice ใหม่ → โหมดงานต่อเนื่อง (ต่อจาก {cont})")
             return fill_continuation(driver, cfg, data, cont, full_billing=full_billing,
@@ -4605,13 +4659,18 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
 def run_import(driver, cfg, data: ClaimData, images_folder=None,
                loss_type: str = "auto", image_type: str = "รูปรถประกัน",
                severity: str = "เบา", force_new: bool = False,
-               full_billing: bool = True, insurer_code: str = None) -> str:
-    """login แล้วกรอกเคลมเดียวผ่านโหมดนำเข้า XML"""
+               full_billing: bool = True, insurer_code: str = None,
+               allow_continuation: bool = True) -> str:
+    """login แล้วกรอกเคลมเดียวผ่านโหมดนำเข้า XML
+
+    allow_continuation=False → เจอ "งานครั้งที่ 2" แล้วหยุด ไม่กรอกให้
+    (ใช้กับเส้น --sesurvey-case ตามกติกา user: งานต่อเนื่องของเคสเรา หัวหน้าทำเอง)"""
     login(driver, cfg)
     return fill_imported(driver, cfg, data, images_folder=images_folder,
                          loss_type=loss_type, image_type=image_type,
                          severity=severity, force_new=force_new,
-                         full_billing=full_billing, insurer_code=insurer_code)
+                         full_billing=full_billing, insurer_code=insurer_code,
+                         allow_continuation=allow_continuation)
 
 
 def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",

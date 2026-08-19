@@ -925,6 +925,19 @@ def _download_case_photos(cfg, case_id, hdrs, claim_no):
         # ไม่มีรูปในแอป → ใช้ zip export ของเคลมเป็น "แหล่งรูป" (ไม่ใช่แค่แหล่งหมวด)
         # เคสที่ข้อมูลมาจาก XML export ล้วน (ไม่ได้ถ่ายผ่านแอป) จะได้รูปครบพร้อมหมวด
         return _images_from_zip_drop(cfg, claim_no, img_dir)
+    # ⛔ ล้างโฟลเดอร์เดิมก่อนโหลดใหม่ทุกครั้ง — รอบก่อนหน้า rename ไฟล์เป็นชื่อหมวด
+    #    (รูปรถประกัน_1.jpg / __bak_*.jpg / รูปประกอบ_N.jpg) ค้างไว้ พอรอบใหม่โหลดทับ
+    #    ไฟล์เก่ายังอยู่ → กองรวมกันแล้วอัปขึ้น EMCS ทั้งหมด
+    #    (เจอจริง 19/08/69: รูป 5 ใบ กลายเป็น 21 ไฟล์บนเครื่อง / 20 ใบบน EMCS)
+    if img_dir.exists():
+        stale = [f for f in img_dir.iterdir() if f.is_file()]
+        for f in stale:
+            try:
+                f.unlink()
+            except Exception:
+                pass
+        if stale:
+            log(f"   ↻ ล้างรูปรอบก่อนในโฟลเดอร์ {len(stale)} ไฟล์ ก่อนโหลดใหม่")
     img_dir.mkdir(parents=True, exist_ok=True)
     got = 0
     names = []     # ชื่อไฟล์ทั้งหมด (ไว้จับคู่หมวดจาก zip export ถ้า API ไม่มี category)
@@ -1420,9 +1433,11 @@ def run_sesurvey_import(cfg, args):
         # 2026-08-15 เงื่อนไขนั้นหมดไป: เว็บ se-survey เป็นศูนย์กลาง หัวหน้ากรอกยอด+ความเห็น
         # ก่อนอนุมัติ (และกดอนุมัติไม่ได้ถ้ายังไม่กรอกยอด) → ยกมาได้เลย ไม่ใช่ขยะอีกต่อไป
         # ช่องไหนต้นทางว่าง fill_billing ข้ามให้เอง ไม่ทับของที่คนกรอกไว้ใน EMCS
+        # allow_continuation=False — กติกา user: งานครั้งที่ 2 ของเคสจาก se-survey
+        # หัวหน้ากรอกเอง บอททำเฉพาะครั้งที่ 1 (เส้น ISURVEY ยังทำงานต่อเนื่องตามปกติ)
         esurvey = emcs.run_import(driver, cfg, data, images_folder=img_folder,
                                   insurer_code=ins_code, full_billing=True, loss_type=loss_type,
-                                  severity=severity)
+                                  severity=severity, allow_continuation=False)
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"sesurvey_{case_id}")
         # draft อาจถูกสร้างไปแล้วก่อนพัง (ลบใน EMCS ไม่ได้) — ต้อง mark ฝั่ง se-survey
