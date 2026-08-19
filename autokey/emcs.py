@@ -4480,6 +4480,26 @@ def _set_or_clear_claim_ref(driver, notify_value, insurer_code: str = None):
         log(f"   ⚠️ ไม่มีเลขที่รับแจ้ง และบริษัท {code} บังคับ — บันทึกหน้าหลักจะไม่ผ่าน")
 
 
+def _fill_policy_extras(driver, data: ClaimData):
+    """3 ช่องบล็อกกรมธรรม์ที่ importer ของ EMCS ไม่ได้เซ็ตให้ และ fill_policy ก็ไม่ถูกเรียก
+    ในเส้น se-survey (fill_policy มี call site เดียว = fill_one ของสาย ISURVEY)
+
+    ⛔ ต้องเรียกทั้งตอน import ใหม่ **และตอนเปิด draft เดิมมาซ่อม** — เดิมมีแต่ตอน import
+       พอ btnUpdate ล้ม (เช่นติดกฎวันที่ของ EMCS) แล้วรันซ้ำด้วย --sesurvey-fill-existing
+       3 ช่องนี้จะไม่เคยถูกเขียนเลย เงียบ ๆ · ที่เจ็บสุดคือ **ค่าเสียหายส่วนแรก** ซึ่งเป็นตัวเงิน
+       (เจอจากการทดสอบสด 19/08/69 — เคสทดสอบทั้ง 2 ใบ import รอบแรกล้มทั้งคู่)
+    ไม่ reuse fill_policy ทั้งก้อน เพราะห้ามแตะบล็อกกรมธรรม์/ประเภทเคลมที่ importer ตั้งไว้แล้ว
+    """
+    for fid, val in (("txtAssured_Email", data.assured_email),
+                     ("txtDeductible", data.deductible),
+                     ("txtDri_Order", data.driver_ticket)):
+        try:
+            if str(val or "").strip():
+                set_text(driver, fid, val)
+        except Exception as e:
+            log(f"   ⚠️ เติม {fid} ไม่สำเร็จ: {e}")
+
+
 def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
                   loss_type: str = "auto", image_type: str = "รูปรถประกัน",
                   severity: str = "เบา", force_new: bool = False,
@@ -4529,17 +4549,7 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
     fill_accident(driver, data, loss_type=resolved_loss)  # อำเภอเกิดเหตุ + ลักษณะความเสียหาย
     fill_verdict(driver, data)
 
-    # 3 ช่องที่ importer ของ EMCS ไม่ได้เซ็ตให้ และ fill_policy ก็ไม่ถูกเรียกในเส้นนี้
-    # (fill_policy มี call site เดียว = fill_one ของสาย ISURVEY) → เส้น se-survey เคยหายทุกใบ
-    # ไม่ reuse fill_policy ทั้งก้อนตามคอมเมนต์ด้านบน (ห้ามแตะบล็อกกรมธรรม์/ประเภทเคลม)
-    for _fid, _val in (("txtAssured_Email", data.assured_email),
-                       ("txtDeductible", data.deductible),
-                       ("txtDri_Order", data.driver_ticket)):
-        try:
-            if str(_val or "").strip():
-                set_text(driver, _fid, _val)
-        except Exception as _e:
-            log(f"   ⚠️ เติม {_fid} ไม่สำเร็จ: {_e}")
+    _fill_policy_extras(driver, data)
 
     _set_or_clear_claim_ref(driver, data.notify_value)
 
@@ -4629,6 +4639,7 @@ def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",
         _recascade_province(driver, "ddlAcc_ProvinceID")
         fill_accident(driver, data, loss_type=resolved_loss)
         fill_verdict(driver, data)
+        _fill_policy_extras(driver, data)
         _set_or_clear_claim_ref(driver, data.notify_value)
         try:
             save_main_form(driver, data, button_id="btnUpdate", is_new=False)
