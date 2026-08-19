@@ -254,6 +254,31 @@ def _select_has_options(driver, select_id) -> bool:
         return False
 
 
+def _select_code_or_label(driver, select_id, wanted: str, label: str = "") -> bool:
+    """เลือก dropdown ด้วย **รหัส หรือ ป้ายไทย ก็ได้**
+
+    ⚠️ ต้นทางเดียวกันส่งมาคนละแบบ: XML ของระบบเก่าให้รหัส ('01' / '13') แต่ข้อมูล
+    ที่ดึงจาก se-survey ให้ป้ายไทย ('บาดเจ็บ - เล็กน้อย' / 'เจ้าของรถ') — โค้ดเดิม
+    เรียก select_by_value() อย่างเดียว จึงเงียบ ๆ ไม่เลือกให้เมื่อได้ป้ายไทยมา
+    (เจอจริง 19/08/69: ผู้บาดเจ็บบันทึกผ่าน แต่ 'ระดับการบาดเจ็บ' กับ 'ความสัมพันธ์' ว่าง)
+    """
+    name = label or select_id
+    try:
+        sel = Select(driver.find_element(By.ID, select_id))
+    except Exception:
+        log(f"   ⚠️ ไม่พบ dropdown {name}")
+        return False
+    for pick, how in ((sel.select_by_value, "รหัส"), (sel.select_by_visible_text, "ป้าย")):
+        try:
+            pick(wanted)
+            log(f"   ✓ {name}: {wanted} ({how})")
+            return True
+        except Exception:
+            continue
+    log(f"   ⚠️ เลือก {name} ไม่ได้ — ไม่มีทั้งรหัสและป้าย '{wanted}' ในลิสต์")
+    return False
+
+
 def _select_index(driver, select_id, index: int, label: str = "", timeout=10):
     """เลือก option ตามลำดับ — ใช้กับ dropdown จังหวัด/อำเภอของ EMCS ที่
     เรียงตรงกับรหัสของ ISURVEY (index 0 คือ '-- ระบุ --')
@@ -770,15 +795,11 @@ def fill_injuries(driver, data: ClaimData):
         set_text(driver, p + "txtInj_Hos_Name", _dash(inj.get("hospital", "")))
         set_text(driver, p + "txtInj_Cost", inj.get("cost", ""))
 
-        # ประเภทบาดเจ็บ — value ของ ddlWounded_Type = code XML (01-06) ตรงๆ
+        # ประเภทบาดเจ็บ — ddlWounded_Type รับได้ทั้ง code XML (01-06) และป้ายไทย
         wt = (inj.get("wounded_type", "") or "").strip()
         if wt:
-            try:
-                Select(driver.find_element(By.ID, p + "ddlWounded_Type")
-                       ).select_by_value(wt)
-                log(f"   ✓ ประเภทบาดเจ็บ (code {wt})")
-            except Exception:
-                log(f"   ⚠️ เลือกประเภทบาดเจ็บ {n + 1} (code {wt}) ไม่ได้")
+            _select_code_or_label(driver, p + "ddlWounded_Type", wt,
+                                  f"ประเภทบาดเจ็บ {n + 1}")
         set_text(driver, p + "txtInj_Injure", _dash(inj.get("injure", "")))
 
         # ── ฟิลด์เสริม form-carried (id ยืนยันจาก ผู้บาดเจ็บ.html; EMCS ไม่บังคับ,
@@ -791,15 +812,11 @@ def fill_injuries(driver, data: ClaimData):
                  iso_to_thai_date(inj.get("treat_from", "")))
         set_text(driver, p + "wuCale_To_Date_txtCalendar",
                  iso_to_thai_date(inj.get("treat_to", "")))
-        # ความสัมพันธ์ผู้บาดเจ็บ — value ของ dropdown = รหัส RELATION ตรงจาก producer
+        # ความสัมพันธ์ผู้บาดเจ็บ — รับได้ทั้งรหัส RELATION และป้ายไทย
         rel = (inj.get("relation", "") or "").strip()
         if rel:
-            try:
-                Select(driver.find_element(By.ID, p + "ddlDri_Relation_ID")
-                       ).select_by_value(rel)
-                log(f"   ✓ ความสัมพันธ์ผู้บาดเจ็บ (code {rel})")
-            except Exception:
-                log(f"   ⚠️ เลือกความสัมพันธ์ผู้บาดเจ็บ {n + 1} (code {rel}) ไม่ได้")
+            _select_code_or_label(driver, p + "ddlDri_Relation_ID", rel,
+                                  f"ความสัมพันธ์ผู้บาดเจ็บ {n + 1}")
 
     _save_section(driver, "btnSave_InjurePerson", "ผู้บาดเจ็บ")
 
