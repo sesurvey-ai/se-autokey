@@ -3242,7 +3242,8 @@ def _group_flat_by_category(folder, file_names, fallback_type):
 
 
 def upload_images(driver, folder, image_type: str = "รูปรถประกัน", only=None,
-                  n_opponents: int = 0, n_injuries: int = 0, n_assets: int = 0):
+                  n_opponents: int = 0, n_injuries: int = 0, n_assets: int = 0,
+                  single_type: str = ""):
     """อัปโหลดรูปทั้งหมด: รูปรถประกัน (หลัก) + บุคคลที่สาม (tp_veh/tp_person/tp_prop)
 
     - รูปรถประกัน: เลือกประเภท image_type ('รูปรถประกัน') — only คุมว่าจะอัปรูปไหน
@@ -3250,7 +3251,10 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
     - รูปคู่กรณี (tp_veh/) → 'รูปรถคู่กรณี คันที่N' / ผู้บาดเจ็บ (tp_person/) →
       'รูปผู้บาดเจ็บ คนที่N' / ทรัพย์สิน (tp_prop/) → 'รูปทรัพย์สิน รายการที่N'
       (option dynamic — โผล่หลังบันทึก section นั้นแล้ว ซึ่ง upload รันหลัง fill_*)
-      แยกตามรายการด้วยจำนวน n_opponents/n_injuries/n_assets"""
+      แยกตามรายการด้วยจำนวน n_opponents/n_injuries/n_assets
+    - single_type: ยัดทุกรูปลงหมวดเดียวที่ระบุ ไม่แยกตามหมวดเดิม — ใช้กับ **งานต่อเนื่อง**
+      ซึ่ง EMCS หลังกด 'งานต่อเนื่อง' ทำได้แค่ใส่รูป + หน้าค่าใช้จ่าย (ตัวเลือกหมวดที่ผูกกับ
+      คู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินไม่มีให้เลือกในโหมดนั้น) — user เคาะ 19/08/69"""
     folder = Path(folder)
     files = list_images(folder)
     opp_batches = _opponent_image_batches(folder, n_opponents)
@@ -3301,6 +3305,13 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
     batches.extend(opp_batches)     # รูปคู่กรณี (tp_veh/)
     batches.extend(inj_batches)     # รูปผู้บาดเจ็บ (tp_person/)
     batches.extend(asset_batches)   # รูปทรัพย์สิน (tp_prop/)
+
+    if single_type:
+        merged = [p for _lbl, paths in batches for p in paths]
+        batches = [(single_type, merged)] if merged else []
+        if merged:
+            log(f"EMCS: งานต่อเนื่อง — รวมรูป {len(merged)} ไฟล์ลงหมวดเดียว '{single_type}' "
+                "(EMCS ติดป้าย 'ครั้งที่' ให้เอง)")
 
     if not batches:
         log("EMCS: ไม่มีรูปให้อัปโหลด — ข้าม")
@@ -4134,10 +4145,13 @@ def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
     **อัปรูปของครั้งนี้** → กรอกหน้าค่าใช้จ่าย (invoice ใหม่ + ตารางราคา)
     ไม่แตะหน้าหลัก/คู่กรณี (ข้อมูลพวกนั้นอยู่ครั้งที่ 1 แล้ว)
 
-    รูป: user ยืนยัน 2026-08-03 ว่า **งานครั้งที่ 2 เป็นต้นไปต้องใส่รูปด้วย**
-    (เดิมค้างไว้ไม่สรุป เส้นนี้จึงไม่เคยอัปรูปเลย) — รูปใน EMCS ผูกกับ "เคลม" ไม่ใช่
-    ครั้งที่ โควตา 80 ใบจึงเป็นของทั้งเคลมร่วมกัน upload_images ตัดให้พอดีโควตาที่
-    เหลืออยู่แล้ว (image_quota_left) ครั้งที่ 2 จึงเติมต่อจากที่ครั้งแรกใช้ไป
+    รูป (user เคาะ 19/08/69): **ใส่ทุกใบที่มี ไม่ต้องพิสูจน์ว่าซ้ำกับครั้งที่ 1 ไหม**
+    และ **ลงหมวด "รูปประกอบ" หมด** — หลังกด 'งานต่อเนื่อง' EMCS ให้ทำได้แค่ใส่รูปกับ
+    กรอกหน้าค่าใช้จ่าย ตัวเลือกหมวดที่ผูกกับคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินจึงไม่มีให้เลือก
+    EMCS ติดป้าย "ครั้งที่ N" ให้เองตามครั้งที่กำลังเปิดอยู่
+    🟡 โควตา 80 ใบ: **ยังไม่รู้ว่านับรวมทั้งเคลมหรือแยกรายครั้ง** (รูปติดป้ายแยกครั้ง)
+       ตอนนี้ upload_images ยังตัดตาม image_quota_left ที่อ่านจากหน้าจอ ซึ่งปลอดภัยกว่า
+       เพราะเป็นตัวเลขที่ EMCS บอกเอง ไม่ใช่เราเดา
 
     full_billing=False: ไม่กด 'บันทึกราคา'. ปุ่มส่งจริงคือ 'ส่งผลงานต่อเนื่อง'
     (wuFlow1_cmdSendFollow) — สคริปต์ไม่กดให้เด็ดขาด (เหมือนปุ่ม 'ส่งงานใหม่')
@@ -4151,7 +4165,8 @@ def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
         upload_images(driver, images_folder, image_type=image_type,
                       n_opponents=len(data.third_parties or []),
                       n_injuries=len(data.injuries or []),
-                      n_assets=len(data.assets or []))
+                      n_assets=len(data.assets or []),
+                      single_type=_EMCS_DEFAULT_IMAGE_TYPE)
     fill_billing(driver, data, full_billing=full_billing, navigate=moved,
                  leave=False)   # ค้างในเรื่องไว้ ปุ่มส่งงานอยู่หน้านี้
     return esurvey
