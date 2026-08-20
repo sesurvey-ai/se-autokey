@@ -563,6 +563,28 @@ def _save_opponents(driver, max_rounds: int = 5) -> bool:
     return _save_section(driver, "btnSave_Opponent", "รถคู่กรณี", max_rounds)
 
 
+def _clear_free_text_slots(driver, slots):
+    """ล้างชื่อชิ้นส่วนในช่องอิสระ **ทุกช่อง** ก่อนเขียนชุดใหม่
+
+    ⛔ ต้องล้างทั้งหมด ไม่ใช่เฉพาะช่องที่กำลังจะเขียน — EMCS เก็บของเดิมไว้ และจำนวน/ลำดับ
+       ช่องที่อ่านได้เปลี่ยนไปได้ระหว่างรอบ (หลังบันทึกมันแทรกแถวว่างเพิ่ม) พอรันซ้ำ
+       ชุดใหม่ไปลงคนละช่องกับรอบก่อน ของเก่าเลยค้าง กลายเป็นรายการซ้ำ
+       เจอจริง 20/08/69 บน S68426084815: คู่กรณี 4 ชิ้น รัน 2 รอบ เหลือ 6 แถว
+       (ฝากระโปรงหลัง/คิ้วท้าย ซ้ำอย่างละ 2)
+    """
+    n = 0
+    for pp in slots or []:
+        try:
+            el = driver.find_element(By.ID, pp + "txtDam_Name")
+            if (el.get_attribute("value") or "").strip():
+                el.clear()
+                n += 1
+        except Exception:
+            continue
+    if n:
+        log(f"   ↻ ล้างช่องอิสระของเดิม {n} ช่อง ก่อนเขียนชุดใหม่ (กันรายการซ้ำ)")
+
+
 def fill_opponent_damage(driver, prefix, damages, main_window):
     """กรอกความเสียหายคู่กรณีลง popup (frmDamage.aspx) — ใช้ช่อง free-text
     dgvOtherDamage_List (โครงสร้างเดียวกับความเสียหายรถประกันใน fill_damage_list)
@@ -592,6 +614,7 @@ def fill_opponent_damage(driver, prefix, damages, main_window):
     # จำนวนช่องอิสระอ่านจาก DOM จริง (cmdNewReport=8 / ฟอร์ม import=20) เหมือนฝั่งรถประกัน
     # — เดิมฮาร์ดโค้ด 8 ทั้งที่ฟอร์มที่ใช้จริงมี 20 ช่อง ทำให้รายการที่ 9+ หายเงียบ
     _slots = _free_text_slots(driver)
+    _clear_free_text_slots(driver, _slots)
     _cap = len(_slots) if _slots else MAX_DAMAGE_ITEMS
     if len(items) > _cap:
         log(f"   ⚠️ ความเสียหายคู่กรณี {len(items)} เกิน {_cap} ช่องที่มีจริง — "
@@ -2832,6 +2855,7 @@ def fill_damage_list(driver, data: ClaimData, main_window: str):
     # ที่เหลือ (ไม่ match checklist) → ช่องอิสระ dgvOtherDamage_List
     # อ่าน slot จริงจาก DOM (cmdNewReport=8 / ฟอร์ม import=20) แทน hardcode
     slots = _free_text_slots(driver)
+    _clear_free_text_slots(driver, slots)
     cap = len(slots) if slots else MAX_DAMAGE_ITEMS
     if len(free_items) > cap:
         log(f"   ⚠️ ช่องอิสระมี {len(free_items)} เกิน {cap} ช่อง — "

@@ -181,6 +181,9 @@ def parse_args():
                    help="เปิด draft เดิม แล้วเติม 'เฉพาะบล็อกผู้บาดเจ็บ' + บันทึก (re-save หน้าหลักเพื่อ "
                         "ปลดล็อกเมนู) — ไม่แตะคู่กรณี/ความเสียหาย/ทรัพย์สิน/รูป/ค่าใช้จ่าย (กันเพิ่ม row "
                         "ซ้ำ+อัปรูปซ้ำ) ไม่กดส่งงาน. ใช้เมื่อผู้บาดเจ็บ save ไม่ผ่านตอน import (เช่น รพ.ว่าง)")
+    p.add_argument("--emcs-sync-status", action="store_true",
+                   help="กวาดอ่านสถานะ 'ส่งงานให้ประกันแล้วหรือยัง' ของทุกเคสที่นำเข้า EMCS "
+                        "ไปแล้ว (อ่านอย่างเดียว ไม่เปิดเรื่อง) แล้วอัปเดตกลับ se-survey")
     p.add_argument("--emcs-images", default="",
                    help="เปิดเรื่องเดิมใน EMCS แล้ว 'ดูรายการรูปที่แนบไว้' (อ่านอย่างเดียว) — "
                         "ใส่เลขเคลม; ระบุเรื่องด้วย --esurvey (ไม่ระบุ = เลือก draft อัตโนมัติ). "
@@ -1236,6 +1239,69 @@ def _mark_emcs_imported(cfg, case_id, hdrs, esurvey: str):
         log(f"⚠️ แจ้ง se-survey (emcs-imported) ไม่ได้: {e} — mark ด้วยมือภายหลัง")
 
 
+def run_emcs_sync_status(cfg, args):
+    """กวาดอ่าน "ส่งงานให้ประกันแล้วหรือยัง" ของทุกเคสที่นำเข้า EMCS ไปแล้ว  **อ่านอย่างเดียว**
+
+    ทำไมต้องมี: บอทไม่กดปุ่ม 'ส่งงานใหม่' (คนกด) → ฝั่ง se-survey จึงไม่มีทางรู้ว่าใบไหน
+    ถึงมือบริษัทประกันจริง ป้ายบนเว็บค้างที่ "นำเข้า EMCS แล้ว" ตลอดไป
+    ตาราง `cases` มีช่อง `emcs_submitted_at` และ backend มี endpoint `emcs-status` รออยู่แล้ว
+    แต่ **ไม่เคยมีใครเรียก** — โหมดนี้คือตัวที่ขาดไป
+
+    ⛔ ไม่แตะข้อมูลใน EMCS เลย: แค่ค้นเลขเคลมในหน้ารายการแล้วอ่านคอลัมน์สถานะ
+       ไม่เปิดเรื่อง (ไม่ล็อกงานคนอื่น) ไม่กดปุ่มอะไรทั้งนั้น
+    สถานะที่แยกไม่ออก → ส่ง submitted=null (เก็บแค่ข้อความ ไม่สรุปแทนคน)
+    """
+    import requests
+    if not cfg.sesurvey_api_token:
+        raise SystemExit("ไม่พบ SESURVEY_API_TOKEN ใน .env")
+    hdrs = {"Authorization": f"Bearer {cfg.sesurvey_api_token}"}
+    try:
+        rr = requests.get(f"{cfg.sesurvey_api_url}/api/integrations/cases", headers=hdrs, timeout=30)
+        rr.raise_for_status()
+        cases = (rr.json().get("data") or {}).get("cases") or []
+    except Exception as e:
+        raise SystemExit(f"ดึงรายการเคสจาก se-survey ไม่ได้: {e}")
+
+    todo = [c for c in cases
+            if c.get("emcs_imported_at") and not c.get("emcs_submitted_at")
+            and str(c.get("claim_no") or "").strip()]
+    banner(f"SYNC STATUS: เคสที่นำเข้า EMCS แล้วแต่ยังไม่รู้ว่าส่งหรือยัง {len(todo)} เคส (อ่านอย่างเดียว)")
+    if not todo:
+        log("ไม่มีเคสค้าง — ป้ายบนเว็บตรงกับ EMCS อยู่แล้ว")
+        return
+
+    driver = make_driver(detach=False,
+                         download_dir=cfg.download_dir / "_dl" / str(os.getpid()))
+    done = {"ส่งแล้ว": 0, "ยังไม่ส่ง": 0, "ไม่ทราบ": 0}
+    try:
+        emcs.login(driver, cfg)
+        mainpage = driver.current_url
+        for c in todo:
+            cid, claim = c["id"], str(c["claim_no"]).strip()
+            sv = str(c.get("survey_job_no") or "").strip()
+            try:
+                mainpage = emcs.goto_mainpage(driver, cfg, mainpage)
+                sent, why = emcs.is_report_submitted(driver, claim, survey_no=sv)
+            except Exception as e:
+                sent, why = None, f"อ่านไม่ได้ ({type(e).__name__})"
+            key = "ส่งแล้ว" if sent is True else "ยังไม่ส่ง" if sent is False else "ไม่ทราบ"
+            done[key] += 1
+            mark = {"ส่งแล้ว": "✅", "ยังไม่ส่ง": "🕒", "ไม่ทราบ": "❔"}[key]
+            log(f"   {mark} #{cid} {claim} {sv} — {why}")
+            try:
+                requests.post(f"{cfg.sesurvey_api_url}/api/integrations/cases/{cid}/emcs-status",
+                              headers=hdrs, timeout=30,
+                              json={"status_text": why, "submitted": sent}).raise_for_status()
+            except Exception as e:
+                log(f"      ⚠️ แจ้งกลับ se-survey ไม่สำเร็จ: {e}")
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+    banner("SYNC STATUS เสร็จ — " + " · ".join(f"{k} {v}" for k, v in done.items()))
+
+
 def run_emcs_images(cfg, args):
     """ดู (และลบ) รูปที่แนบไว้ในเรื่องเดิมของ EMCS — ไม่แตะข้อมูลส่วนอื่นเลย
 
@@ -1657,6 +1723,10 @@ def main():
     set_log_file(cfg.runs_dir / "logs"
                  / f"run_{datetime.now():%Y%m%d_%H%M%S}_{os.getpid()}.log")
 
+    # --emcs-sync-status: กวาดอ่านสถานะ "ส่งงานแล้วหรือยัง" กลับมาอัปเดต se-survey แล้วจบ
+    if getattr(args, "emcs_sync_status", False):
+        run_emcs_sync_status(cfg, args)
+        return
     # --emcs-images: ดู/ลบรูปที่แนบไว้ในเรื่องเดิม (ไม่แตะข้อมูลอื่นเลย) แล้วจบ
     if args.emcs_images:
         run_emcs_images(cfg, args)
