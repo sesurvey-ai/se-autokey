@@ -81,12 +81,20 @@ def account_status(prefix: str) -> dict:
     ส่งรหัสไปให้เบราว์เซอร์ = รหัสไปโผล่ใน devtools/ประวัติ โดยไม่จำเป็น
     """
     env = _load_env_file(BASE / ".env")
-    return {"username": env.get(f"{prefix}_USERNAME", ""),
-            "has_password": bool(env.get(f"{prefix}_PASSWORD", ""))}
+    user_key, pass_key = _account_keys(prefix)
+    return {"username": env.get(user_key, ""),
+            "has_password": bool(env.get(pass_key, ""))}
 
 
 def isurvey_login_status() -> dict:
     return account_status("ISURVEY")
+
+
+def _account_keys(prefix: str):
+    """ชื่อคีย์ใน .env ของบัญชีนั้น — ISURVEY_REPORT ใช้ _USER/_PASS ไม่เหมือนชาวบ้าน"""
+    if prefix == "ISURVEY_REPORT":
+        return "ISURVEY_REPORT_USER", "ISURVEY_REPORT_PASS"
+    return f"{prefix}_USERNAME", f"{prefix}_PASSWORD"
 
 
 def save_account(prefix: str, user: str, pwd: str):
@@ -94,15 +102,16 @@ def save_account(prefix: str, user: str, pwd: str):
 
     ปล่อยช่องรหัสว่าง = แก้แค่ชื่อผู้ใช้ ไม่ล้างรหัสเดิมทิ้ง
     """
+    user_key, pass_key = _account_keys(prefix)
     user = str(user or "").strip()
     if not user:
         return "ยังไม่ได้กรอกชื่อผู้ใช้"
     cur = _load_env_file(BASE / ".env")
-    if not pwd and not cur.get(f"{prefix}_PASSWORD"):
+    if not pwd and not cur.get(pass_key):
         return "ยังไม่ได้กรอกรหัสผ่าน"
-    upd = {f"{prefix}_USERNAME": user}
+    upd = {user_key: user}
     if pwd:
-        upd[f"{prefix}_PASSWORD"] = pwd
+        upd[pass_key] = pwd
     try:
         save_env_keys(upd)
     except Exception as e:
@@ -1122,7 +1131,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"keyers": _ir.load_keyers(),
                              "file": str(_ir.KEYERS_FILE),
                              "isurvey": account_status("ISURVEY"),
-                             "emcs": account_status("EMCS")})
+                             "emcs": account_status("EMCS"),
+                             "isurvey_report": account_status("ISURVEY_REPORT")})
         elif u.path == "/isurvey-cases":
             q = parse_qs(u.query)
             rows, err = fetch_isurvey_cases(
@@ -1275,6 +1285,21 @@ class Handler(BaseHTTPRequestHandler):
             b = self._read_json() or {}
             user = str(b.get("username") or "").strip()
             bad = save_account("EMCS", user, str(b.get("password") or ""))
+            if bad:
+                self._send(400 if "กรอก" in bad else 500, {"error": bad})
+                return
+            self._send(200, {"saved": True, "username": user})
+        elif u.path == "/isurvey-report-login":
+            # รหัส "แจ้งกลับ ISURVEY ว่าคีย์แล้ว" (EMCSstatus=send) — คนละ host/auth
+            # กับฝั่งอ่าน cloud จึงเป็นคนละบัญชี · เดิมตั้งได้ทางเดียวคือแก้ .env เอง
+            # ⛔ ไม่มีปุ่มทดสอบโดยตั้งใจ: การทดสอบ = ยิง POST จริง ซึ่งจะไปติ๊ก
+            #    ให้เคลมนั้นกลายเป็น "คีย์แล้ว" บน ISURVEY ทั้งที่ยังไม่ได้ทำ
+            if self._cors_origin() is not None:
+                self._send(403, {"error": "ตั้งรหัสได้จากหน้า operator ในเครื่องเท่านั้น"})
+                return
+            b = self._read_json() or {}
+            user = str(b.get("username") or "").strip()
+            bad = save_account("ISURVEY_REPORT", user, str(b.get("password") or ""))
             if bad:
                 self._send(400 if "กรอก" in bad else 500, {"error": bad})
                 return
@@ -1851,6 +1876,36 @@ PAGE = r"""<!doctype html>
        • <b>ไม่มีปุ่มทดสอบเข้าสู่ระบบ</b> — การทดสอบต้องเปิดเข้าระบบของบริษัทประกันจริง
          ซึ่งเราตกลงกันว่าห้ามแตะโดยไม่จำเป็น · จะรู้ว่ารหัสถูกไหมตอนสั่งงานจริง<br>
        • เว้นช่องรหัสผ่านว่าง = แก้แค่ชื่อผู้ใช้ รหัสเดิมยังอยู่
+      </div>
+     </div>
+     <!-- รหัสแจ้งกลับ ISURVEY — คนละบัญชีกับฝั่งอ่าน cloud (คนละ host/auth)
+          เดิมตั้งได้ทางเดียวคือเปิดไฟล์ .env แก้เอง เครื่องพนักงานจึงมักไม่มี
+          → ส่งงานเข้า EMCS ได้ แต่ ISURVEY ไม่ถูกติ๊กว่าคีย์แล้ว เสี่ยงคีย์ซ้ำ -->
+     <div class="card" style="margin-bottom:12px">
+      <b style="font-size:15px">🔔 รหัสแจ้งกลับ ISURVEY (ผู้ดูแลเป็นคนให้)</b>
+      <div style="color:var(--muted);font-size:12.5px;margin:4px 0 10px">
+       ใช้ตอนกด "ส่งงาน + แจ้ง ISURVEY" เพื่อติ๊กว่าเคลมนี้คีย์เข้า EMCS แล้ว —
+       <b>คนละบัญชีกับช่องข้างบน</b> ทุกเครื่องใช้ค่าเดียวกัน
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span class="fltlab">ชื่อผู้ใช้</span>
+        <input type="text" id="rptuser" autocomplete="off" style="flex:1;min-width:0;padding:6px 8px">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="fltlab">รหัสผ่าน</span>
+        <input type="password" id="rptpass" autocomplete="new-password" style="flex:1;min-width:0;padding:6px 8px">
+        <button type="button" id="rptpasseye" class="ghost"
+                style="flex:none;padding:6px 10px;font-size:12px">แสดง</button>
+      </div>
+      <div id="rptpwstate" style="font-size:12px;color:var(--muted);margin:6px 0 0"></div>
+      <div class="actions" style="margin-top:8px">
+       <button class="run" id="saverpt">💾 บันทึก</button>
+      </div>
+      <div id="rptmsg" style="font-size:12.5px;margin-top:8px"></div>
+      <div class="note" style="margin-top:10px">
+       • <b>ยังไม่ตั้ง = ส่งงานเข้า EMCS ได้</b> แต่ ISURVEY ไม่ถูกติ๊กว่าคีย์แล้ว → เสี่ยงคีย์ซ้ำ<br>
+       • <b>ไม่มีปุ่มทดสอบ</b> — ทดสอบ = ยิงจริง จะไปติ๊กเคลมทั้งที่ยังไม่ได้ทำ<br>
+       • เก็บที่ <code>.env</code> เครื่องนี้ (ไม่ไปกับ USB) · เว้นรหัสว่าง = แก้แค่ชื่อผู้ใช้
       </div>
      </div>
      <div class="card">
@@ -3273,6 +3328,11 @@ async function loadKeyers(){
     $("#isvpwstate").textContent = pwText(isv.has_password);
     $("#emcsuser").value = em.username || "";
     $("#emcspwstate").textContent = pwText(em.has_password);
+    const rp = d.isurvey_report || {};
+    $("#rptuser").value = rp.username || "";
+    $("#rptpwstate").textContent = rp.has_password
+      ? pwText(true)
+      : "รหัสผ่าน: ยังไม่ได้ตั้ง — ส่งงานได้ แต่ ISURVEY จะไม่ถูกติ๊กว่าคีย์แล้ว";
   }catch(e){
     keyersBox.innerHTML = '<div style="color:var(--err);font-size:13px">โหลดตั้งค่าไม่ได้: ' + escHtml(String(e)) + '</div>';
   }
@@ -3339,6 +3399,32 @@ $("#saveemcs").addEventListener("click", async () => {
     $("#emcspass").value = "";
     $("#emcspass").type = "password";
     $("#emcspasseye").textContent = "แสดง";
+    loadKeyers();
+  }catch(e){ say(false, "ติดต่อโปรแกรมไม่ได้"); }
+  finally{ btn.disabled = false; }
+});
+// ---------------- 🔔 รหัสแจ้งกลับ ISURVEY (บันทึกอย่างเดียว ทดสอบไม่ได้) ----------------
+$("#rptpasseye").addEventListener("click", () => {
+  const f = $("#rptpass");
+  const show = f.type === "password";
+  f.type = show ? "text" : "password";
+  $("#rptpasseye").textContent = show ? "ซ่อน" : "แสดง";
+});
+$("#saverpt").addEventListener("click", async () => {
+  const btn = $("#saverpt"), msg = $("#rptmsg");
+  const u = $("#rptuser").value.trim();
+  const say = (ok, t) => { msg.innerHTML = '<span style="color:var(--' + (ok ? "ok" : "err") + ')">' + escHtml(t) + '</span>'; };
+  if (!u){ say(false, "ยังไม่ได้กรอกชื่อผู้ใช้"); return; }
+  btn.disabled = true; msg.textContent = "กำลังบันทึก…";
+  try{
+    const r = await fetch("/isurvey-report-login", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({username:u, password:$("#rptpass").value})});
+    const d = await r.json();
+    if (!r.ok) say(false, d.error || ("ผิดพลาด " + r.status));
+    else say(true, "บันทึกแล้ว — จะใช้ตอนกด \"ส่งงาน + แจ้ง ISURVEY\" ครั้งถัดไป");
+    $("#rptpass").value = "";
+    $("#rptpass").type = "password";
+    $("#rptpasseye").textContent = "แสดง";
     loadKeyers();
   }catch(e){ say(false, "ติดต่อโปรแกรมไม่ได้"); }
   finally{ btn.disabled = false; }

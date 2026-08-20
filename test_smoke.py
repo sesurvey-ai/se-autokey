@@ -2497,17 +2497,34 @@ check("ตั้งค่า EMCS: ⛔ ต้องไม่มีปุ่ม�
 _status_fn = _webui_src.split("def account_status")[1].split("\ndef ")[0]
 check("ตั้งค่าบัญชี: ⛔ server ต้องไม่ส่งรหัสกลับให้เบราว์เซอร์",
       '"has_password": bool(' in _status_fn
-      and "_PASSWORD" in _status_fn                  # อ่านมาเช็คว่ามีไหม
+      and "pass_key" in _status_fn                   # อ่านมาเช็คว่ามีไหม
       and '"password"' not in _status_fn)            # แต่ไม่ใส่ค่าลงผลลัพธ์
 check("ตั้งค่าบัญชี: ⛔ ตั้งรหัสได้จากเครื่องตัวเองเท่านั้น (บล็อก cross-origin)",
       _webui_src.count('u.path == "/isurvey-login"') == 1
       and _webui_src.count('u.path == "/emcs-login"') == 1
-      and _webui_src.count("ตั้งรหัสได้จากหน้า operator ในเครื่องเท่านั้น") == 2)
+      and _webui_src.count('u.path == "/isurvey-report-login"') == 1
+      and _webui_src.count("ตั้งรหัสได้จากหน้า operator ในเครื่องเท่านั้น") == 3)
 _save_fn = _webui_src.split("def save_account")[1].split("\ndef ")[0]
+_ir_src = (__import__("pathlib").Path(__file__).parent / "autokey" / "isurvey_report.py").read_text(encoding="utf-8")
 check("ตั้งค่าบัญชี: ⛔ ห้าม print รหัสผ่านลงคอนโซล",
       "ตั้งค่าบัญชี {prefix} ใหม่: {user}" in _save_fn and "{pwd}" not in _save_fn)
 check("ตั้งค่าบัญชี: เว้นรหัสว่าง = ใช้รหัสเดิม ไม่ล้างทิ้ง",
-      "if pwd:" in _save_fn and 'upd[f"{prefix}_PASSWORD"] = pwd' in _save_fn)
+      "if pwd:" in _save_fn and "upd[pass_key] = pwd" in _save_fn)
+# ── หน้าตั้งค่า: รหัสแจ้งกลับ ISURVEY ──
+# คนละ host/auth กับฝั่งอ่าน cloud จึงเป็นคนละบัญชี · เดิมตั้งได้ทางเดียวคือแก้ .env เอง
+# เครื่องพนักงานจึงมักไม่มี → ส่งเข้า EMCS ได้ แต่ ISURVEY ไม่ถูกติ๊ก เสี่ยงคีย์ซ้ำ
+check("ตั้งค่าแจ้งกลับ: มีช่องชื่อผู้ใช้ + รหัสผ่าน",
+      'id="rptuser"' in _page and 'id="rptpass"' in _page)
+check("ตั้งค่าแจ้งกลับ: ⛔ ต้องไม่มีปุ่มทดสอบ (ทดสอบ = ยิงจริง ไปติ๊กเคลมว่าคีย์แล้ว)",
+      'id="testrpt"' not in _page and "/isurvey-report-login-test" not in _webui_src)
+check("ตั้งค่าแจ้งกลับ: ใช้คีย์ ISURVEY_REPORT_USER/PASS ไม่ใช่ _USERNAME/_PASSWORD",
+      '"ISURVEY_REPORT_USER", "ISURVEY_REPORT_PASS"' in _webui_src
+      and _ir_src.count("cfg.isurvey_report_user") >= 1)
+check("ตั้งค่าแจ้งกลับ: /settings ส่งสถานะมาให้หน้าเว็บอ่าน",
+      '"isurvey_report": account_status("ISURVEY_REPORT")' in _webui_src
+      and "d.isurvey_report" in _page)
+check("ตั้งค่าแจ้งกลับ: ยังไม่ตั้ง = บอกผลกระทบ ไม่ใช่แค่ 'ยังไม่ได้ตั้ง'",
+      "ISURVEY จะไม่ถูกติ๊กว่าคีย์แล้ว" in _page)
 check("ตั้งค่าบัญชี: เขียน .env แบบคงบรรทัดอื่นไว้ + ผ่านไฟล์ชั่วคราว",
       'def save_env_keys' in _webui_src and 'tmp.replace(path)' in _webui_src
       and '.env.tmp' in _webui_src)
