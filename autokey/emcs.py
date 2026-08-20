@@ -2843,7 +2843,13 @@ def fill_damage_list(driver, data: ClaimData, main_window: str):
             prefix = (f"dgvOtherDamage_List_ctl0{2 + (c % 4)}_"
                       f"wuOtherDamL{'A' if c < 4 else 'B'}_")
 
-        driver.find_element(By.ID, prefix + "txtDam_Name").send_keys(name)
+        # ⛔ ต้อง clear() ก่อนพิมพ์ — ช่องอิสระของ popup เก็บค่าเดิมไว้ พอรันซ้ำ
+        #    (โหมดซ่อมรันกี่รอบก็ได้) send_keys จะ "ต่อท้าย" ชื่อเดิมเรื่อย ๆ
+        #    เจอจริง 20/08/69 บน S68426084815: รัน 7 รอบ ได้ 'คิ้วกันชน' ซ้ำ 7 ครั้งติดกัน
+        #    (ฝั่งคู่กรณี fill_opponent_damage clear() อยู่แล้ว — ตกหล่นเฉพาะฝั่งรถประกัน)
+        el = driver.find_element(By.ID, prefix + "txtDam_Name")
+        el.clear()
+        el.send_keys(name)
         driver.find_element(
             By.ID, prefix + f"rdoDam_Left_Right_{side or _damage_side(name)}").click()
         ri = _damage_rank_idx(rank)
