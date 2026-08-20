@@ -115,7 +115,10 @@ def save_debug_snapshot(driver, out_dir, tag: str = "error"):
     except Exception:
         pass
     if saved:
-        log("   📸 เก็บหลักฐาน error: " + " , ".join(saved))
+        # ชื่อ tag บอกเองว่าเป็นภาพตอนพัง หรือภาพตอนจบงานปกติ — เดิมขึ้นว่า
+        # "เก็บหลักฐาน error" ทุกกรณี งานที่สำเร็จก็อ่านเหมือนมีอะไรผิด
+        kind = "หลักฐาน error" if str(tag).startswith("error") else "ภาพหน้าจอไว้ดู"
+        log(f"   📸 เก็บ{kind}: " + " , ".join(saved))
     return saved
 
 

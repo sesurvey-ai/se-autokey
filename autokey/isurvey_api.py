@@ -324,6 +324,30 @@ class ISurveyAPI:
                 out[key] = str(raw)
         return out
 
+    def opponent_parts(self, case_id, ikey) -> list:
+        """ความเสียหายรายชิ้นของคู่กรณี 1 คัน → [{part, type, level, labour, parts, memo}]
+
+        คีย์ผลลัพธ์ตรงกับที่ฝั่ง scrape ทำไว้ (_read_opo_damage_grid) เพราะ
+        emcs.fill_opponent_damage อ่าน tp['damages'] ชุดเดียวกัน
+        endpoint เดียวกับตาราง othercar-damage_grid บนหน้าจอ ISURVEY —
+        **ต้องส่ง ikey ของคู่กรณีคันนั้นไปด้วย** ไม่ส่ง = ได้ 0 แถวเงียบ ๆ
+        (ยืนยันสด 20/08/69 เคลม 2026013164636: ไม่มี ikey → 0 แถว, มี → 2 แถว)"""
+        if not ikey:
+            return []
+        try:
+            rows = self._get("supervisor/list_parts_other_car.php", caseID=case_id,
+                             ikey=ikey, page=1, start=0, limit=1000).get("parts", []) or []
+        except Exception as e:
+            log(f"   ⚠️ อ่านความเสียหายคู่กรณี (ikey={ikey}) ไม่ได้: {type(e).__name__}")
+            return []
+        return [{"part": str(p.get("partname", "") or ""),
+                 "type": str(p.get("damage_type_detail", "") or ""),
+                 "level": str(p.get("damaged_level", "") or ""),
+                 "labour": str(p.get("LABOUR_COST", "") or ""),
+                 "parts": str(p.get("damage_cost", "") or ""),
+                 "memo": str(p.get("memo", "") or "")}
+                for p in rows if str(p.get("partname", "") or "").strip()]
+
     def read_record_tabs(self, case_id, d: ClaimData):
         """อ่านคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน (tab 4/5/6) **ทุกเคลมทุกประเภท**
 
@@ -342,12 +366,23 @@ class ISurveyAPI:
                     continue
                 rec = self.get_record(case_id, tab, ikey)
                 if rec:
-                    out.append(self._apply_map(rec, spec))
+                    one = self._apply_map(rec, spec)
+                    # ความเสียหายรายชิ้นของคู่กรณี — คนละ endpoint กับตัว record
+                    # เดิมเส้น API ไม่เคยอ่านเลย (มีแต่ฝั่ง scrape) → EMCS ได้คู่กรณี
+                    # ครบทุกช่อง "ยกเว้นความเสียหาย" แบบเงียบ ๆ เพราะ
+                    # fill_third_parties ข้ามเมื่อ tp['damages'] ว่าง
+                    if tab == 4:
+                        one["damages"] = self.opponent_parts(case_id, ikey)
+                    out.append(one)
                 else:
                     log(f"   ⚠️ {label} ikey={ikey} มีในรายการแต่อ่านรายละเอียดไม่ได้")
             setattr(d, target, out)
             if rows:
-                log(f"   ✓ {label} {len(out)}/{len(rows)} ราย")
+                extra = ""
+                if tab == 4:
+                    nd = sum(len(o.get("damages") or []) for o in out)
+                    extra = f" (ความเสียหายรวม {nd} รายการ)"
+                log(f"   ✓ {label} {len(out)}/{len(rows)} ราย{extra}")
 
     # ------------------------------------------------------------------- รูป
     def get_images_list(self, case_id, t) -> list:

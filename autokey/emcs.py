@@ -2416,7 +2416,17 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
         except Exception:
             pass
         _wait_page_quiet(driver)
-        btn = wait_clickable(driver, By.ID, button_id)
+        try:
+            btn = wait_clickable(driver, By.ID, button_id)
+        except TimeoutException:
+            # ปุ่มไม่ขึ้น/ยังกดไม่ได้ — เดิมโยน TimeoutException ดิบออกไปล้มทั้งงาน
+            # ทั้งที่ผู้เรียก (save_main_form) มีทางวินิจฉัย + หยุดรอคนอยู่แล้ว
+            # (เจอจริง 20/08/69 เคลม 2026013164636 บนเครื่องพนักงาน: ค่าครบ 41/41
+            #  ช่อง แต่ btnSave กดไม่ได้ → traceback ยาว งานค้าง เรื่องล็อกไว้ใน EMCS)
+            log(f"   ⚠️ {button_id} ยังกดไม่ได้ (รอบ {i}/{tries}) — ปุ่มไม่ขึ้นหรือถูกปิดอยู่")
+            if i < tries:
+                continue
+            return False
         _arm_click_probe(driver, button_id)     # ไว้บอกทีหลังว่าคลิกไปตายตรงไหน
         btn.click()
         try:    # onclick ทำงาน → ปุ่มถูกปิด/เปลี่ยนข้อความทันที

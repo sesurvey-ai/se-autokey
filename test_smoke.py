@@ -2543,6 +2543,30 @@ check("เครื่องใหม่: handler ตอบเสมอ ไม�
       and "self._guard(self._get)" in _webui_src)
 check("เครื่องใหม่: _guard ไม่ตอบซ้ำถ้า handler ตอบไปแล้ว",
       "self._sent = True" in _webui_src and "if not self._sent:" in _webui_src)
+# ── งานจริงบนเครื่องพนักงาน 20/08/69 ──
+_api_src = (__import__("pathlib").Path(__file__).parent / "autokey" / "isurvey_api.py").read_text(encoding="utf-8")
+_emcs_src = (__import__("pathlib").Path(__file__).parent / "autokey" / "emcs.py").read_text(encoding="utf-8")
+_brw_src = (__import__("pathlib").Path(__file__).parent / "autokey" / "browser.py").read_text(encoding="utf-8")
+# ความเสียหายคู่กรณีเคยหายทั้งเส้น API: fill_third_parties ข้ามเมื่อ tp['damages'] ว่าง
+# และ _MAP_TP ไม่เคยผลิตคีย์นั้นเลย (มีแต่ฝั่ง scrape) → EMCS ได้คู่กรณีครบทุกช่อง
+# ยกเว้นความเสียหาย แบบไม่มี error สักบรรทัด
+check("คู่กรณี: เส้น API อ่านความเสียหายรายชิ้นด้วย (ไม่ใช่เฉพาะ scrape)",
+      "def opponent_parts" in _api_src
+      and "list_parts_other_car.php" in _api_src
+      and 'one["damages"] = self.opponent_parts(case_id, ikey)' in _api_src)
+check("คู่กรณี: ต้องส่ง ikey ไปด้วย ไม่งั้นได้ 0 แถวเงียบ ๆ",
+      "ikey=ikey" in _api_src and "if not ikey:" in _api_src)
+check("คู่กรณี: คีย์ผลลัพธ์ตรงกับที่ emcs.fill_opponent_damage อ่าน",
+      all(f'"{k}":' in _api_src.split("def opponent_parts")[1].split("\n    def ")[0]
+          for k in ("part", "level", "type", "labour")))
+# ปุ่มบันทึกกดไม่ได้ = เข้าทางวินิจฉัยเดิม (หยุดรอคน) ไม่ใช่ traceback ล้มทั้งงาน
+check("บันทึกหน้าหลัก: ปุ่มกดไม่ได้ต้องไม่โยน TimeoutException ดิบออกไป",
+      "btn = wait_clickable(driver, By.ID, button_id)" in _emcs_src
+      and _emcs_src.split("def _click_save_button")[1].split("\ndef ")[0]
+          .count("except TimeoutException:") >= 1)
+# งานสำเร็จต้องไม่อ่านเหมือนพัง
+check("log: ภาพตอนจบงานปกติต้องไม่เขียนว่า 'หลักฐาน error'",
+      'kind = "หลักฐาน error" if str(tag).startswith("error")' in _brw_src)
 check("ตั้งค่าบัญชี: เขียน .env แบบคงบรรทัดอื่นไว้ + ผ่านไฟล์ชั่วคราว",
       'def save_env_keys' in _webui_src and 'tmp.replace(path)' in _webui_src
       and '.env.tmp' in _webui_src)
