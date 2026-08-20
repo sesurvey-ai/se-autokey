@@ -59,7 +59,15 @@ class Config:
     sesurvey_zip_dir: str = ""
 
 
-def load_config() -> Config:
+# บัญชีที่ต้องมีใน .env ต่อ "งานที่จะทำ" — งานที่แตะแค่ ISURVEY ไม่ควรตายเพราะ
+# ยังไม่ได้ตั้งรหัส EMCS (เครื่องที่เพิ่งติดตั้งเป็นแบบนั้นเสมอ: ตั้ง ISURVEY ก่อน)
+REQUIRED_KEYS = {
+    "ISURVEY": ("ISURVEY_USERNAME", "ISURVEY_PASSWORD"),
+    "EMCS": ("EMCS_USERNAME", "EMCS_PASSWORD"),
+}
+
+
+def load_config(require=("ISURVEY", "EMCS")) -> Config:
     env = _load_env_file(BASE_DIR / ".env")
 
     def get(key: str) -> str:
@@ -84,14 +92,13 @@ def load_config() -> Config:
     if get("SESURVEY_ZIP_DIR"):
         cfg.sesurvey_zip_dir = get("SESURVEY_ZIP_DIR")
 
-    missing = [
-        name for name, val in [
-            ("ISURVEY_USERNAME", cfg.isurvey_username),
-            ("ISURVEY_PASSWORD", cfg.isurvey_password),
-            ("EMCS_USERNAME", cfg.emcs_username),
-            ("EMCS_PASSWORD", cfg.emcs_password),
-        ] if not val
-    ]
+    need = [k for group in require for k in REQUIRED_KEYS[group]]
+    missing = [name for name, val in [
+        ("ISURVEY_USERNAME", cfg.isurvey_username),
+        ("ISURVEY_PASSWORD", cfg.isurvey_password),
+        ("EMCS_USERNAME", cfg.emcs_username),
+        ("EMCS_PASSWORD", cfg.emcs_password),
+    ] if name in need and not val]
     if missing:
         raise SystemExit(
             f"ไม่พบ credentials: {', '.join(missing)}\n"

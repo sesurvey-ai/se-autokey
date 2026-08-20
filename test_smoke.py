@@ -2525,6 +2525,24 @@ check("ตั้งค่าแจ้งกลับ: /settings ส่งสถ�
       and "d.isurvey_report" in _page)
 check("ตั้งค่าแจ้งกลับ: ยังไม่ตั้ง = บอกผลกระทบ ไม่ใช่แค่ 'ยังไม่ได้ตั้ง'",
       "ISURVEY จะไม่ถูกติ๊กว่าคีย์แล้ว" in _page)
+# ── เครื่องที่เพิ่งติดตั้ง: ตั้งบัญชี ISURVEY ก่อน EMCS เสมอ ──
+# เคยพัง: load_config() raise SystemExit เพราะยังไม่มีรหัส EMCS · SystemExit เป็น
+# BaseException จึงลอด `except Exception` ทุกชั้น → connection ถูกปิดเงียบ ๆ
+# หน้าเว็บฟ้อง "ติดต่อโปรแกรมไม่ได้" ทั้งที่บันทึกรหัสสำเร็จไปแล้ว
+_cfg_src = (__import__("pathlib").Path(__file__).parent / "autokey" / "config.py").read_text(encoding="utf-8")
+check("เครื่องใหม่: load_config เลือกได้ว่าต้องมีบัญชีไหน (ไม่บังคับ EMCS ทุกงาน)",
+      "def load_config(require=" in _cfg_src and "REQUIRED_KEYS" in _cfg_src
+      and "if name in need and not val" in _cfg_src)
+check("เครื่องใหม่: งานฝั่ง ISURVEY ต้องไม่ขอรหัส EMCS",
+      _webui_src.count('load_config(require=("ISURVEY",))') == 5
+      and "ISurveyAPI(load_config())" not in _webui_src)
+check("เครื่องใหม่: handler ตอบเสมอ ไม่ปล่อย connection ตายเงียบ",
+      "def _guard(self, fn):" in _webui_src
+      and "except SystemExit as e:" in _webui_src
+      and "self._guard(self._post)" in _webui_src
+      and "self._guard(self._get)" in _webui_src)
+check("เครื่องใหม่: _guard ไม่ตอบซ้ำถ้า handler ตอบไปแล้ว",
+      "self._sent = True" in _webui_src and "if not self._sent:" in _webui_src)
 check("ตั้งค่าบัญชี: เขียน .env แบบคงบรรทัดอื่นไว้ + ผ่านไฟล์ชั่วคราว",
       'def save_env_keys' in _webui_src and 'tmp.replace(path)' in _webui_src
       and '.env.tmp' in _webui_src)

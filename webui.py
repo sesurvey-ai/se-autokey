@@ -24,6 +24,7 @@ import re
 import subprocess
 import sys
 import threading
+import traceback
 import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -132,7 +133,7 @@ def isurvey_login_test():
         from autokey import config as _cfg
         importlib.reload(_cfg)              # อ่าน .env ใหม่ ไม่ใช้ค่าที่ค้างในหน่วยความจำ
         from autokey.isurvey_api import ISurveyAPI
-        api = ISurveyAPI(_cfg.load_config())
+        api = ISurveyAPI(_cfg.load_config(require=("ISURVEY",)))
         api.login()
         who = api._get("getUserData.php", _dc=0).get("message", "")
         _isv_client = api                   # ใช้ session นี้ต่อเลย ไม่ต้อง login ซ้ำ
@@ -196,7 +197,7 @@ def fetch_isurvey_cases(date_from: str = "", date_to: str = "",
         from autokey.config import load_config
         from autokey.isurvey_api import ISurveyAPI
         if _isv_client is None:
-            _isv_client = ISurveyAPI(load_config())
+            _isv_client = ISurveyAPI(load_config(require=("ISURVEY",)))
             _isv_client.login()
 
         def _report():
@@ -324,7 +325,7 @@ def pull_isurvey_case(claim: str, survey_no: str = "", with_photos: bool = True)
         from autokey.config import load_config
         from autokey.isurvey_api import ISurveyAPI
         if _isv_client is None:
-            _isv_client = ISurveyAPI(load_config())
+            _isv_client = ISurveyAPI(load_config(require=("ISURVEY",)))
             _isv_client.login()
         api = _isv_client
         try:
@@ -380,7 +381,7 @@ def refetch_isurvey_photos(case_id: int, claim: str, survey_no: str = ""):
         from autokey.config import load_config
         from autokey.isurvey_api import ISurveyAPI
         if _isv_client is None:
-            _isv_client = ISurveyAPI(load_config())
+            _isv_client = ISurveyAPI(load_config(require=("ISURVEY",)))
             _isv_client.login()
         api = _isv_client
         case = api.find_case(claim, survey_no)
@@ -501,7 +502,7 @@ def check_isurvey_case(claim: str, invoice: str = ""):
         from autokey import emcs
         from autokey.isurvey_api import ISurveyAPI
         if _isv_client is None:
-            _isv_client = ISurveyAPI(load_config())
+            _isv_client = ISurveyAPI(load_config(require=("ISURVEY",)))
             _isv_client.login()
         try:
             data = _isv_client.read_claim(claim, invoice, expect_claim=claim)
@@ -1045,6 +1046,7 @@ class Handler(BaseHTTPRequestHandler):
         return origin if origin in _ALLOWED_ORIGINS else None
 
     def _send(self, code, body, ctype="application/json; charset=utf-8"):
+        self._sent = True
         if isinstance(body, (dict, list)):
             body = json.dumps(body, ensure_ascii=False)
         data = body.encode("utf-8") if isinstance(body, str) else body
@@ -1087,7 +1089,7 @@ class Handler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             return -1
 
-    def do_GET(self):
+    def _get(self):
         u = urlparse(self.path)
         if u.path in ("/", "/index.html"):
             self._send(200, PAGE, "text/html; charset=utf-8")
@@ -1195,7 +1197,34 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "not found"})
         self._send(200, data, _img_ctype(name))
 
+    def _guard(self, fn):
+        """เรียก handler โดยรับประกันว่า "มีคำตอบกลับไปเสมอ"
+
+        เดิมถ้า handler โยน exception ออกมาก่อนตอบ ThreadingHTTPServer จะปิด
+        connection เฉย ๆ หน้าเว็บเห็นเป็น network error ขึ้นว่า "ติดต่อโปรแกรมไม่ได้"
+        ทั้งที่โปรแกรมยังอยู่ · **SystemExit ยิ่งเงียบ** เพราะเป็น BaseException
+        จึงลอด handle_error ไปด้วย ไม่มี traceback ให้เห็นสักบรรทัด
+        (เคสจริง: เครื่องใหม่กดบันทึกบัญชี ISURVEY → load_config() ไม่เจอรหัส EMCS
+         → raise SystemExit → หน้าเว็บฟ้อง "ติดต่อโปรแกรมไม่ได้" ทั้งที่บันทึกสำเร็จ)
+        """
+        self._sent = False
+        try:
+            fn()
+        except SystemExit as e:
+            if not self._sent:
+                self._send(500, {"error": str(e) or "โปรแกรมหยุดกลางคัน"})
+        except Exception as e:
+            traceback.print_exc()
+            if not self._sent:
+                self._send(500, {"error": f"{type(e).__name__}: {e}"})
+
     def do_POST(self):
+        self._guard(self._post)
+
+    def do_GET(self):
+        self._guard(self._get)
+
+    def _post(self):
         u = urlparse(self.path)
         if u.path == "/poll":
             params = self._read_json()
