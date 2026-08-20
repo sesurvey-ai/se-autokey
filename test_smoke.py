@@ -2525,6 +2525,25 @@ check("ตั้งค่าแจ้งกลับ: /settings ส่งสถ�
       and "d.isurvey_report" in _page)
 check("ตั้งค่าแจ้งกลับ: ยังไม่ตั้ง = บอกผลกระทบ ไม่ใช่แค่ 'ยังไม่ได้ตั้ง'",
       "ISURVEY จะไม่ถูกติ๊กว่าคีย์แล้ว" in _page)
+# ── หน้าตั้งค่า: ทะเบียนงานคีย์กลาง se-key ──
+# ไม่ตั้ง = ส่งงานได้ แต่ไม่มีแถวขึ้น key.sesurvey.cloud เงียบ ๆ (เครื่องที่แจกไปเป็นแบบนั้น)
+check("ตั้งค่า se-key: มีช่องที่อยู่ระบบ + รหัส API",
+      'id="skurl"' in _page and 'id="skkey"' in _page)
+check("ตั้งค่า se-key: ⛔ server ไม่ส่งรหัส API กลับให้เบราว์เซอร์",
+      '"has_key": bool(' in _webui_src
+      and '"api_key"' not in
+      _webui_src.split("def sekey_status")[1].split(chr(10) + "def ")[0])
+check("ตั้งค่า se-key: ⛔ ตั้งค่าได้จากเครื่องตัวเองเท่านั้น",
+      _webui_src.count('u.path == "/sekey-account"') == 1
+      and "ตั้งค่าได้จากหน้า operator ในเครื่องเท่านั้น" in _webui_src)
+check("ตั้งค่า se-key: URL ต้องเป็น http(s) และเว้นรหัสว่าง = ใช้รหัสเดิม",
+      'startswith(("http://", "https://"))' in _webui_src
+      and 'if not api_key and not cur.get("SE_KEY_API_KEY")' in _webui_src)
+check("ตั้งค่า se-key: ปุ่มทดสอบต้องอ่านอย่างเดียว (ไม่เขียนทะเบียน)",
+      "check_survey(cfg, \"PING-CHECK-CONNECTION\")" in _webui_src
+      and "save_record" not in _webui_src)
+check("ตั้งค่า se-key: /settings ส่งสถานะมาให้หน้าเว็บ",
+      '"sekey": sekey_status()' in _webui_src and "d.sekey" in _page)
 # ── เครื่องที่เพิ่งติดตั้ง: ตั้งบัญชี ISURVEY ก่อน EMCS เสมอ ──
 # เคยพัง: load_config() raise SystemExit เพราะยังไม่มีรหัส EMCS · SystemExit เป็น
 # BaseException จึงลอด `except Exception` ทุกชั้น → connection ถูกปิดเงียบ ๆ
@@ -2534,7 +2553,9 @@ check("เครื่องใหม่: load_config เลือกได้�
       "def load_config(require=" in _cfg_src and "REQUIRED_KEYS" in _cfg_src
       and "if name in need and not val" in _cfg_src)
 check("เครื่องใหม่: งานฝั่ง ISURVEY ต้องไม่ขอรหัส EMCS",
-      _webui_src.count('load_config(require=("ISURVEY",))') == 5
+      # >= เพราะจุดที่ต้องใช้เพิ่มได้เรื่อย ๆ (การ์ด se-key เพิ่มมาอีก 1)
+      # ตัวชี้ขาดคือบรรทัดล่าง: ต้องไม่เหลือ load_config() เปล่า ๆ ในงานฝั่ง ISURVEY
+      _webui_src.count('load_config(require=("ISURVEY",))') >= 5
       and "ISurveyAPI(load_config())" not in _webui_src)
 check("เครื่องใหม่: handler ตอบเสมอ ไม่ปล่อย connection ตายเงียบ",
       "def _guard(self, fn):" in _webui_src

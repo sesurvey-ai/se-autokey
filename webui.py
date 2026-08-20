@@ -122,6 +122,55 @@ def save_account(prefix: str, user: str, pwd: str):
     return ""
 
 
+def sekey_status() -> dict:
+    """สถานะทะเบียนงานคีย์กลาง — **ไม่คืนรหัส API ออกทางหน้าเว็บ** (คืนแค่ตั้งแล้วหรือยัง)"""
+    env = _load_env_file(BASE / ".env")
+    return {"url": env.get("SE_KEY_API_URL", ""),
+            "has_key": bool(env.get("SE_KEY_API_KEY", ""))}
+
+
+def save_sekey(url: str, api_key: str):
+    """บันทึก SE_KEY_API_URL/SE_KEY_API_KEY ลง .env — คืน error string ('' = สำเร็จ)
+
+    เว้นช่องรหัสว่าง = แก้แค่ที่อยู่ ไม่ล้างรหัสเดิม (กติกาเดียวกับการ์ดบัญชีอื่น)"""
+    url = str(url or "").strip().rstrip("/")
+    if not url:
+        return "ยังไม่ได้กรอกที่อยู่ระบบ"
+    if not url.startswith(("http://", "https://")):
+        return "ที่อยู่ระบบต้องขึ้นต้นด้วย http:// หรือ https://"
+    cur = _load_env_file(BASE / ".env")
+    if not api_key and not cur.get("SE_KEY_API_KEY"):
+        return "ยังไม่ได้กรอกรหัส API"
+    upd = {"SE_KEY_API_URL": url}
+    if api_key:
+        upd["SE_KEY_API_KEY"] = api_key
+    try:
+        save_env_keys(upd)
+    except Exception as e:
+        return f"เขียนไฟล์ตั้งค่าไม่ได้: {e}"
+    print(f"[settings] ตั้งค่าทะเบียนงานคีย์กลางใหม่: {url}")   # ⛔ ห้าม print รหัส
+    return ""
+
+
+def sekey_test():
+    """ทดสอบเชื่อมต่อทะเบียนกลาง — **อ่านอย่างเดียว** (GET รายการ 1 แถว)
+
+    ปลอดภัยกว่าการ์ดแจ้งกลับ ISURVEY ตรงที่ไม่มีผลข้างเคียง: ไม่เขียน ไม่ติ๊กอะไร
+    คืน (ok, error)"""
+    try:
+        import importlib
+        from autokey import config as _cfg
+        importlib.reload(_cfg)              # อ่าน .env ใหม่ ไม่ใช้ค่าที่ค้างในหน่วยความจำ
+        from autokey import sekey_client
+        cfg = _cfg.load_config(require=("ISURVEY",))
+        if not sekey_client.enabled(cfg):
+            return False, "ยังไม่ได้ตั้งที่อยู่ระบบ/รหัส API"
+        res = sekey_client.check_survey(cfg, "PING-CHECK-CONNECTION")
+        return bool(res.get("ok")), str(res.get("error") or "")
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
 def isurvey_login_test():
     """ลองล็อกอินด้วยค่าที่บันทึกไว้ — คืน (ชื่อเจ้าของบัญชี, error)
 
@@ -1134,7 +1183,8 @@ class Handler(BaseHTTPRequestHandler):
                              "file": str(_ir.KEYERS_FILE),
                              "isurvey": account_status("ISURVEY"),
                              "emcs": account_status("EMCS"),
-                             "isurvey_report": account_status("ISURVEY_REPORT")})
+                             "isurvey_report": account_status("ISURVEY_REPORT"),
+                             "sekey": sekey_status()})
         elif u.path == "/isurvey-cases":
             q = parse_qs(u.query)
             rows, err = fetch_isurvey_cases(
@@ -1333,6 +1383,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400 if "กรอก" in bad else 500, {"error": bad})
                 return
             self._send(200, {"saved": True, "username": user})
+        elif u.path == "/sekey-account":
+            # ทะเบียนงานคีย์กลาง (key.sesurvey.cloud) — คนละชนิดกับบัญชีอื่น
+            # (URL + API key ไม่ใช่ user/password) จึงไม่ผ่าน save_account
+            if self._cors_origin() is not None:
+                self._send(403, {"error": "ตั้งค่าได้จากหน้า operator ในเครื่องเท่านั้น"})
+                return
+            b = self._read_json() or {}
+            bad = save_sekey(str(b.get("url") or ""), str(b.get("api_key") or ""))
+            if bad:
+                # ผิดที่ค่าที่กรอก = 400 · เขียนไฟล์ไม่ได้ = 500 (คนละเรื่องกัน)
+                self._send(500 if "เขียนไฟล์" in bad else 400, {"error": bad})
+                return
+            ok, err = sekey_test()
+            self._send(200, {"saved": True, **sekey_status(),
+                             "test_ok": ok, "error": err})
+        elif u.path == "/sekey-test":
+            if self._cors_origin() is not None:
+                self._send(403, {"error": "ทดสอบได้จากหน้า operator ในเครื่องเท่านั้น"})
+                return
+            ok, err = sekey_test()
+            self._send(200, {"test_ok": ok, "error": err, **sekey_status()})
         elif u.path == "/isurvey-login-test":
             if self._cors_origin() is not None:
                 self._send(403, {"error": "ทดสอบได้จากหน้า operator ในเครื่องเท่านั้น"})
@@ -1935,6 +2006,37 @@ PAGE = r"""<!doctype html>
        • <b>ยังไม่ตั้ง = ส่งงานเข้า EMCS ได้</b> แต่ ISURVEY ไม่ถูกติ๊กว่าคีย์แล้ว → เสี่ยงคีย์ซ้ำ<br>
        • <b>ไม่มีปุ่มทดสอบ</b> — ทดสอบ = ยิงจริง จะไปติ๊กเคลมทั้งที่ยังไม่ได้ทำ<br>
        • เก็บที่ <code>.env</code> เครื่องนี้ (ไม่ไปกับ USB) · เว้นรหัสว่าง = แก้แค่ชื่อผู้ใช้
+      </div>
+     </div>
+     <!-- ทะเบียนงานคีย์กลาง — งานที่ "ส่งแล้ว" ต้องไปโผล่ที่ key.sesurvey.cloud
+          ไม่ตั้ง = ส่งงานได้ตามปกติ แต่ไม่มีแถวขึ้นทะเบียน เงียบ ๆ ไม่มี error -->
+     <div class="card" style="margin-bottom:12px">
+      <b style="font-size:15px">🔗 ทะเบียนงานคีย์กลาง (se-key)</b>
+      <div style="color:var(--muted);font-size:12.5px;margin:4px 0 10px">
+       บันทึกงานที่ส่งแล้วขึ้น <b>key.sesurvey.cloud</b> — ทุกเครื่องใช้ค่าเดียวกัน
+       (ผู้ดูแลเป็นคนให้ ไม่ใช่บัญชีส่วนตัว)
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span class="fltlab">ที่อยู่ระบบ</span>
+        <input type="text" id="skurl" autocomplete="off" placeholder="https://key.sesurvey.cloud"
+               style="flex:1;min-width:0;padding:6px 8px">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="fltlab">รหัส API</span>
+        <input type="password" id="skkey" autocomplete="new-password" style="flex:1;min-width:0;padding:6px 8px">
+        <button type="button" id="skkeyeye" class="ghost"
+                style="flex:none;padding:6px 10px;font-size:12px">แสดง</button>
+      </div>
+      <div id="skstate" style="font-size:12px;color:var(--muted);margin:6px 0 0"></div>
+      <div class="actions" style="margin-top:8px">
+       <button class="run" id="savesk">💾 บันทึกและทดสอบเชื่อมต่อ</button>
+       <button class="ghost" id="testsk">🔌 ทดสอบด้วยค่าที่บันทึกไว้</button>
+      </div>
+      <div id="skmsg" style="font-size:12.5px;margin-top:8px"></div>
+      <div class="note" style="margin-top:10px">
+       • <b>ยังไม่ตั้ง = ส่งงานได้ตามปกติ</b> แต่ไม่มีแถวขึ้น key.sesurvey.cloud<br>
+       • แถวจะติ๊ก "ส่งแล้ว" ก็ต่อเมื่อ<b>แจ้งกลับ ISURVEY สำเร็จ</b>ด้วย (ดูการ์ดข้างบน)<br>
+       • ทดสอบได้ปลอดภัย — แค่อ่านรายการ ไม่เขียนอะไรลงทะเบียน
       </div>
      </div>
      <div class="card">
@@ -3357,6 +3459,11 @@ async function loadKeyers(){
     $("#isvpwstate").textContent = pwText(isv.has_password);
     $("#emcsuser").value = em.username || "";
     $("#emcspwstate").textContent = pwText(em.has_password);
+    const sk = d.sekey || {};
+    $("#skurl").value = sk.url || "";
+    $("#skstate").textContent = sk.has_key
+      ? "รหัส API: ตั้งไว้แล้ว (เว้นว่างไว้ = ใช้รหัสเดิม)"
+      : "รหัส API: ยังไม่ได้ตั้ง — ส่งงานได้ แต่ไม่มีแถวขึ้นทะเบียนกลาง";
     const rp = d.isurvey_report || {};
     $("#rptuser").value = rp.username || "";
     $("#rptpwstate").textContent = rp.has_password
@@ -3432,6 +3539,40 @@ $("#saveemcs").addEventListener("click", async () => {
   }catch(e){ say(false, "ติดต่อโปรแกรมไม่ได้"); }
   finally{ btn.disabled = false; }
 });
+// ---------------- 🔗 ทะเบียนงานคีย์กลาง se-key ----------------
+$("#skkeyeye").addEventListener("click", () => {
+  const f = $("#skkey");
+  const show = f.type === "password";
+  f.type = show ? "text" : "password";
+  $("#skkeyeye").textContent = show ? "ซ่อน" : "แสดง";
+});
+async function skCall(url, body){
+  const btns = [$("#savesk"), $("#testsk")], msg = $("#skmsg");
+  const say = (ok, t) => { msg.innerHTML = '<span style="color:var(--' + (ok ? "ok" : "err") + ')">' + escHtml(t) + '</span>'; };
+  btns.forEach(b => { b.disabled = true; });
+  msg.textContent = "กำลังทดสอบเชื่อมต่อ…";
+  try{
+    const r = await fetch(url, body
+      ? {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}
+      : {method:"POST"});
+    const d = await r.json();
+    if (!r.ok) say(false, d.error || ("ผิดพลาด " + r.status));
+    else if (d.test_ok) say(true, "เชื่อมต่อทะเบียนกลางได้");
+    else say(false, "บันทึกแล้ว แต่เชื่อมต่อไม่ได้: " + (d.error || "ไม่ทราบสาเหตุ"));
+    $("#skkey").value = "";
+    $("#skkey").type = "password";
+    $("#skkeyeye").textContent = "แสดง";
+    loadKeyers();
+  }catch(e){ say(false, "ติดต่อโปรแกรมไม่ได้"); }
+  finally{ btns.forEach(b => { b.disabled = false; }); }
+}
+$("#savesk").addEventListener("click", () => {
+  const u = $("#skurl").value.trim();
+  if (!u){ $("#skmsg").textContent = "ยังไม่ได้กรอกที่อยู่ระบบ"; return; }
+  skCall("/sekey-account", {url:u, api_key:$("#skkey").value});
+});
+$("#testsk").addEventListener("click", () => skCall("/sekey-test", null));
+
 // ---------------- 🔔 รหัสแจ้งกลับ ISURVEY (บันทึกอย่างเดียว ทดสอบไม่ได้) ----------------
 $("#rptpasseye").addEventListener("click", () => {
   const f = $("#rptpass");
