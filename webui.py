@@ -3460,7 +3460,9 @@ async function loadKeyers(){
     $("#emcsuser").value = em.username || "";
     $("#emcspwstate").textContent = pwText(em.has_password);
     const sk = d.sekey || {};
-    $("#skurl").value = sk.url || "";
+    // เติมที่อยู่มาตรฐานให้เลยเมื่อยังไม่เคยตั้ง — เดิมโชว์เป็น placeholder จาง ๆ
+    // ซึ่งหน้าตาเหมือนกรอกไว้แล้ว คนกดบันทึกแล้วงงว่าทำไมฟ้อง "ยังไม่ได้กรอกที่อยู่ระบบ"
+    $("#skurl").value = sk.url || "https://key.sesurvey.cloud";
     $("#skstate").textContent = sk.has_key
       ? "รหัส API: ตั้งไว้แล้ว (เว้นว่างไว้ = ใช้รหัสเดิม)"
       : "รหัส API: ยังไม่ได้ตั้ง — ส่งงานได้ แต่ไม่มีแถวขึ้นทะเบียนกลาง";

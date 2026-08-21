@@ -2544,6 +2544,11 @@ check("ตั้งค่า se-key: ปุ่มทดสอบต้องอ�
       and "save_record" not in _webui_src)
 check("ตั้งค่า se-key: /settings ส่งสถานะมาให้หน้าเว็บ",
       '"sekey": sekey_status()' in _webui_src and "d.sekey" in _page)
+# เครื่องใหม่ยังไม่มีค่าใน .env → ช่องต้องมี "ค่าจริง" ไม่ใช่ placeholder จาง ๆ
+# (เจอจริง 20/08/69: user วางรหัส API แล้วกดบันทึก ได้ "ยังไม่ได้กรอกที่อยู่ระบบ"
+#  ทั้งที่บนจอเห็น https://key.sesurvey.cloud อยู่ — นั่นคือ placeholder)
+check("ตั้งค่า se-key: ที่อยู่ระบบต้องเติมค่าจริงให้ ไม่ใช่แค่ placeholder",
+      'sk.url || "https://key.sesurvey.cloud"' in _page)
 # ── เครื่องที่เพิ่งติดตั้ง: ตั้งบัญชี ISURVEY ก่อน EMCS เสมอ ──
 # เคยพัง: load_config() raise SystemExit เพราะยังไม่มีรหัส EMCS · SystemExit เป็น
 # BaseException จึงลอด `except Exception` ทุกชั้น → connection ถูกปิดเงียบ ๆ
