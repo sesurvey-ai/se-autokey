@@ -2586,6 +2586,51 @@ check("คู่กรณี: คีย์ผลลัพธ์ตรงกั�
       all(f'"{k}":' in _api_src.split("def opponent_parts")[1].split("\n    def ")[0]
           for k in ("part", "level", "type", "labour")))
 # ปุ่มบันทึกกดไม่ได้ = เข้าทางวินิจฉัยเดิม (หยุดรอคน) ไม่ใช่ traceback ล้มทั้งงาน
+# ── บันทึกผ่านแล้วแต่ alert มาช้า (เจอจริงบนเครื่องพนักงาน 20-21/08/69) ──
+# EMCS สลับปุ่ม 'บันทึก' เป็น 'แก้ไข' ทันทีที่บันทึกสำเร็จ แต่ alert ยืนยันมาช้า 90 วิ
+# เดิมบอทอ่านว่า "เงียบ = ไม่ผ่าน" แล้วกดซ้ำ — ซึ่งกดไม่ได้เพราะ btnSave หายไปแล้ว
+# → วนจนตาย ทิ้งเรื่องล็อกค้างใน EMCS ทั้งที่งานเข้าเรียบร้อยแล้ว
+def _t_saved_without_alert():
+    from selenium.common.exceptions import NoSuchElementException, TimeoutException
+    from autokey import emcs as _e
+
+    class _El:
+        def is_enabled(self):
+            return True
+
+    class _D:                       # หน้าเว็บที่ "บันทึกไปแล้ว": ไม่มี btnSave, มี btnUpdate
+        def execute_script(self, script, *a):
+            return "btnUpdate" in script and "btnSave" in script
+
+        def find_element(self, by, value):
+            if value == "btnPopUp_DamList":
+                return _El()
+            raise NoSuchElementException(value)
+
+    _orig = (_e._click_save_button, _e.accept_alert)
+    _e._click_save_button = lambda *a, **k: True          # คลิกติด
+    def _no_alert(*a, **k):                               # แต่ EMCS เงียบ
+        raise TimeoutException("จำลอง: alert ยังไม่มา")
+    _e.accept_alert = _no_alert
+    try:
+        out = _e.save_main_form(_D(), None)
+        return True, out
+    except BaseException as e:
+        return False, f"{type(e).__name__}: {e}"
+    finally:
+        _e._click_save_button, _e.accept_alert = _orig
+
+_ok_saved, _saved_out = _t_saved_without_alert()
+check("บันทึกหน้าหลัก: บันทึกผ่านแล้วแต่ alert มาช้า → ถือว่าสำเร็จ ไม่กดซ้ำ ไม่ตาย",
+      _ok_saved, _saved_out)
+check("บันทึกหน้าหลัก: อ่านสถานะจาก DOM ได้ (ปุ่ม 'บันทึก' → 'แก้ไข')",
+      "def _main_form_saved" in _emcs_src
+      and "_main_form_saved(driver, button_id)" in _emcs_src)
+check("บันทึกหน้าหลัก: ⛔ เช็คนี้ต้องไม่ใช้กับโหมด btnUpdate (ไม่งั้น True ตลอด)",
+      'if button_id != "btnSave":' in _emcs_src)
+check("บันทึกหน้าหลัก: alert เด้งตอนรอปุ่ม = คลิกติด ไม่ใช่ error",
+      "except UnexpectedAlertPresentException:" in
+      _emcs_src.split("def _click_save_button")[1].split(chr(10) + "def ")[0])
 check("บันทึกหน้าหลัก: ปุ่มกดไม่ได้ต้องไม่โยน TimeoutException ดิบออกไป",
       "btn = wait_clickable(driver, By.ID, button_id)" in _emcs_src
       and _emcs_src.split("def _click_save_button")[1].split("\ndef ")[0]

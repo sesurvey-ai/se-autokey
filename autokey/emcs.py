@@ -2418,6 +2418,12 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
         _wait_page_quiet(driver)
         try:
             btn = wait_clickable(driver, By.ID, button_id)
+        except UnexpectedAlertPresentException:
+            # alert โผล่ระหว่างรอปุ่ม = คำสั่งก่อนหน้าถึง handler แล้ว (มักเป็นข้อความ
+            # "บันทึก...เรียบร้อยแล้ว" ที่มาช้า) — ผู้เรียกอ่าน alert ต่อเอง
+            # เดิมหลุดออกไปเป็น UnexpectedAlertPresentException ดิบ ล้มทั้งงาน
+            log("   ↳ มี alert เด้งระหว่างรอปุ่ม — ถือว่าคลิกก่อนหน้าถึง EMCS แล้ว")
+            return True
         except TimeoutException:
             # ปุ่มไม่ขึ้น/ยังกดไม่ได้ — เดิมโยน TimeoutException ดิบออกไปล้มทั้งงาน
             # ทั้งที่ผู้เรียก (save_main_form) มีทางวินิจฉัย + หยุดรอคนอยู่แล้ว
@@ -2567,6 +2573,33 @@ def _diagnose_save_click(driver, button_id: str = "") -> str:
     return ""
 
 
+def _main_form_saved(driver, button_id: str) -> bool:
+    """EMCS บันทึกหน้าหลักไปแล้วหรือยัง — **ถามจาก DOM ไม่พึ่ง alert**
+
+    บันทึกสำเร็จแล้ว EMCS จะสลับปุ่ม 'บันทึก' (btnSave) เป็น 'แก้ไข' (btnUpdate)
+    และปลดล็อกปุ่มความเสียหาย · alert ยืนยันมาช้าหรือหายไปเลยก็ได้
+
+    เจอจริง 20-21/08/69 บนเครื่องพนักงาน (เคลม 2026013164636 · 2026013164456 ·
+    2026013163746): บันทึกผ่านตั้งแต่รอบแรก แต่ alert มาถึงช้ากว่า 90 วิ ระหว่างนั้น
+    บอทเห็นว่า "เงียบ" เลยกดซ้ำ — ซึ่งกดไม่ได้เพราะ btnSave หายไปแล้ว — วนจนตาย
+    และทิ้งเรื่องล็อกไว้ใน EMCS ทั้งที่งานเข้าเรียบร้อยแล้ว
+
+    ⚠️ ใช้กับเส้น btnSave (สร้างเรื่องใหม่) เท่านั้น — โหมด btnUpdate ไม่มี btnSave
+    อยู่แล้วตั้งแต่ต้น เช็คแบบนี้จะได้ True ตลอด
+    """
+    if button_id != "btnSave":
+        return False
+    try:
+        return bool(driver.execute_script(
+            "var s=document.getElementById('btnSave');"
+            "var u=document.getElementById('btnUpdate');"
+            "var d=document.getElementById('btnPopUp_DamList');"
+            "var gone=(!s)||s.offsetParent===null||s.disabled;"
+            "return gone && ((!!u && u.offsetParent!==null) || (!!d && !d.disabled));"))
+    except Exception:
+        return False
+
+
 def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
                    is_new: bool = True):
     """กดบันทึกหน้าหลัก แล้ว "ตรวจว่าบันทึกสำเร็จจริง"
@@ -2594,7 +2627,12 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
             alert_text, silent = accept_alert(driver), False
         except TimeoutException:
             alert_text, silent = "", True
-            if not clicked:
+            # ⚠️ "ไม่มี alert" ไม่ได้แปลว่าไม่ได้บันทึก — ถาม DOM ก่อนเสมอ
+            if _main_form_saved(driver, button_id):
+                log("   ↳ หน้าเว็บบอกว่าบันทึกไปแล้ว (ปุ่ม 'บันทึก' กลายเป็น 'แก้ไข') "
+                    "— ถือว่าสำเร็จ ไม่กดซ้ำ")
+                silent = False
+            elif not clicked:
                 # คลิกไม่ถึง handler เลย — คนละเรื่องกับ "ข้อมูลไม่ครบ" ต้องบอกให้ตรง
                 log("   ⚠️ ปุ่มบันทึกไม่ตอบสนอง (คลิกไม่ถึง handler ของ EMCS)")
                 _vf = _read_validform(driver)
@@ -2658,6 +2696,17 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
                     pass
                 silent = False
                 log(f"   ⚠️ EMCS เตือนหลังกดบันทึก: {(alert_text or '')[:200]}")
+
+        # ── ข้อความยืนยันความสำเร็จที่มาช้า ────────────────────────────────
+        # EMCS ตอบ "บันทึกรายละเอียด เซอร์เวย์ เรียบร้อยแล้ว หมายเลข e-Survey คือ S684..."
+        # ซึ่งอาจโผล่หลังจากที่ตัวตรวจสำเร็จข้างบนหมดเวลารอไปแล้ว · ห้ามปล่อยให้ไหลลงไป
+        # เข้าทาง "validation ไม่ผ่าน" เพราะจะไปขึ้นบนหน้าเว็บว่า "ข้อมูลหน้าหลักที่ยังขาด
+        # — สาเหตุ: บันทึก...เรียบร้อยแล้ว" (เจอจริง 20/08/69 เคลม 2026013163746)
+        # แล้วบอทยังกดบันทึกซ้ำอีกรอบทั้งที่เรื่องเกิดไปแล้ว
+        _m_ok = re.search(r"S\d{9,13}", alert_text or "")
+        if _m_ok and "กรุณา" not in (alert_text or ""):
+            log(f"EMCS: บันทึกหน้าหลักสำเร็จ ✓ (e-Survey {_m_ok.group(0)} — ข้อความยืนยันมาช้า)")
+            return _m_ok.group(0)
 
         # validation ไม่ผ่าน — ลองซ่อม dropdown ที่หลุดจาก postback ก่อน (อัตโนมัติ)
         if auto_heal_left > 0 and "กรุณา" in (alert_text or "") \
