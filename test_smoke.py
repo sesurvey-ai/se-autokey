@@ -2628,6 +2628,18 @@ check("บันทึกหน้าหลัก: อ่านสถานะ�
       and "_main_form_saved(driver, button_id)" in _emcs_src)
 check("บันทึกหน้าหลัก: ⛔ เช็คนี้ต้องไม่ใช้กับโหมด btnUpdate (ไม่งั้น True ตลอด)",
       'if button_id != "btnSave":' in _emcs_src)
+# ── คู่กรณีหลายคัน: EMCS เด้ง dialog "เลือกทะเบียนรถคู่กรณี" ทับทั้งหน้า ──
+# overlay กินคลิกทุกอย่าง (radio เพศ + ปุ่มบันทึกผู้บาดเจ็บ) → ElementClickIntercepted
+# เจอจริง 22/08/69 ตอนเทสคู่กรณี 3 คัน + ผู้บาดเจ็บ 3 คน
+check("ผู้บาดเจ็บ: ปิด dialog เลือกทะเบียนคู่กรณีก่อน ไม่งั้นปุ่มบันทึกโดน overlay บัง",
+      "def _pick_car_regno_dialog" in _emcs_src
+      and "overlaySelectCarRegNo" in _emcs_src
+      and "btnConfirmCarRegNo" in _emcs_src)
+check("ผู้บาดเจ็บ: เรียกทั้งตอนเลือกประเภทบุคคล และก่อนกดบันทึก (กันค้างจากคนสุดท้าย)",
+      _emcs_src.count("_pick_car_regno_dialog(") >= 3)
+check("ผู้บาดเจ็บ: เลือก radio ให้ตรงทะเบียนที่ผู้บาดเจ็บนั่งมา ไม่ใช่หยิบคันแรกเสมอ",
+      "input[name='otherCRN']" in _emcs_src
+      and 'inj.get("car_regno", "")' in _emcs_src)
 check("บันทึกหน้าหลัก: alert เด้งตอนรอปุ่ม = คลิกติด ไม่ใช่ error",
       "except UnexpectedAlertPresentException:" in
       _emcs_src.split("def _click_save_button")[1].split(chr(10) + "def ")[0])

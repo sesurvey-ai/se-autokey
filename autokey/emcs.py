@@ -673,6 +673,47 @@ def _read_person_type_options(driver):
         return None
 
 
+def _pick_car_regno_dialog(driver, want: str = "", who: str = "") -> bool:
+    """ปิด dialog "กรุณาเลือกทะเบียนรถคู่กรณี" ของ EMCS — คืน True ถ้ามีและปิดแล้ว
+
+    EMCS เด้ง dialog นี้เมื่อเลือกประเภทบุคคลเป็น "รถคู่กรณี" **ขณะที่มีคู่กรณี
+    มากกว่า 1 คัน** (มันไม่รู้ว่าจะเติมทะเบียนคันไหนให้) · ตัว dialog มี overlay
+    ทับทั้งหน้า → ทุกคลิกหลังจากนั้นโดนกิน ทั้ง radio เพศ และปุ่มบันทึกผู้บาดเจ็บ
+    (เจอจริง 22/08/69: คู่กรณี 3 คัน + ผู้บาดเจ็บ 3 คน → ElementClickIntercepted
+     ที่ btnSave_InjurePerson ทั้งที่กรอกครบแล้ว)
+
+    เลือก radio ที่ทะเบียนตรงกับที่ผู้บาดเจ็บนั่งมา ไม่ตรงก็ใช้คันแรก แล้วกด 'ตกลง'
+    """
+    try:
+        if not driver.find_element(By.ID, "overlaySelectCarRegNo").is_displayed():
+            return False
+    except Exception:
+        return False
+    want, picked = _plate(want or ""), ""
+    try:
+        radios = driver.find_elements(By.CSS_SELECTOR, "input[name='otherCRN']")
+        target = next((r for r in radios
+                       if want and _plate(r.get_attribute("value") or "") == want), None)
+        target = target or (radios[0] if radios else None)
+        if target:
+            driver.execute_script("arguments[0].click();", target)
+            picked = target.get_attribute("value") or ""
+    except Exception:
+        pass
+    try:
+        driver.execute_script(
+            "var b=document.getElementById('btnConfirmCarRegNo');if(b){b.click();}")
+        WebDriverWait(driver, 10).until(
+            lambda d: not d.find_element(By.ID, "overlaySelectCarRegNo").is_displayed())
+        log(f"   ✓ เลือกทะเบียนคู่กรณีใน dialog{(' ' + who) if who else ''}: "
+            f"{picked or '(คันแรก)'}")
+        return True
+    except Exception as e:
+        log(f"   ⚠️ ปิด dialog เลือกทะเบียนคู่กรณีไม่ได้ ({type(e).__name__}) "
+            "— ปุ่มบันทึกจะกดไม่ได้ ต้องกดเองบนหน้าจอ")
+        return False
+
+
 def fill_injuries(driver, data: ClaimData):
     """กรอกผู้บาดเจ็บ (Tab 5) — กดเมนู imbInjure_Person → เลือกจำนวน ddlInj_Count
     → กรอกทีละบล็อก (dtlInj_ctl00_wuInj_*) → บันทึก btnSave_InjurePerson
@@ -746,6 +787,9 @@ def fill_injuries(driver, data: ClaimData):
                     "if(el){el.dispatchEvent(new Event('change',{bubbles:true}));}",
                     p + "ddlPerson_Type")
                 time.sleep(0.6)   # รอ JS เติมทะเบียน
+                # คู่กรณีหลายคัน → EMCS ถามว่าจะเอาทะเบียนคันไหน (overlay ทับทั้งหน้า)
+                _pick_car_regno_dialog(driver, inj.get("car_regno", ""),
+                                       f"(ผู้บาดเจ็บ {n + 1})")
                 log(f"   ✓ ประเภทบุคคล (value {pt})")
             except Exception:
                 log(f"   ⚠️ เลือกประเภทบุคคล {n + 1} ไม่ได้")
@@ -841,6 +885,7 @@ def fill_injuries(driver, data: ClaimData):
             _select_code_or_label(driver, p + "ddlDri_Relation_ID", rel,
                                   f"ความสัมพันธ์ผู้บาดเจ็บ {n + 1}")
 
+    _pick_car_regno_dialog(driver, "", "(ก่อนบันทึก)")   # กันค้างจากคนสุดท้าย
     _save_section(driver, "btnSave_InjurePerson", "ผู้บาดเจ็บ")
 
 
