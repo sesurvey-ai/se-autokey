@@ -305,6 +305,47 @@ def _select_index(driver, select_id, index: int, label: str = "", timeout=10):
         return None
 
 
+#: ตัวเลือกแรกของ ddl*_Count = "ไม่มีแถวเลย" (ค่า "0")
+NO_ROWS_OPTION = "-- ไม่ระบุ --"
+
+
+def _clear_rows_if_any(driver, count_id: str, save_id: str, name: str,
+                       open_menu_id: str = "") -> None:
+    """ข้อมูลใหม่ไม่มีแถวเลย → ตั้งจำนวนเป็น "-- ไม่ระบุ --" แล้วบันทึก = ลบของเดิมทิ้ง
+
+    ⛔ **เดิม fill_* คืนค่าทันทีเมื่อไม่มีข้อมูล** ซึ่งถูกกับเรื่องใหม่ (ไม่มีอะไรให้ลบ) แต่
+    **ผิดกับเรื่องที่เคยกรอกไว้แล้ว**: ผู้ตรวจตีกลับ → ช่างแก้แล้วลบผู้บาดเจ็บออกหมด →
+    บอทไม่แตะช่องจำนวนเลย แถวเดิมค้างอยู่บน EMCS = สำนวนของบริษัทประกันมีคนที่ไม่เกี่ยวข้อง
+    ติดอยู่ **โดยไม่มีอะไรฟ้อง** (เจอตอนเทสครบวงจร 28/08/69 — user ยกเคสนี้ขึ้นมาเอง)
+
+    EMCS ไม่มีปุ่มลบรายแถว จำนวนแถวคุมด้วย `ddl*_Count` และ **ลดจำนวนแล้วกดบันทึก =
+    ลบออกจากฐานข้อมูลจริง** (พิสูจน์สดบน draft ทดสอบ S68426087785 28/08/69:
+    เพิ่มผู้บาดเจ็บ 1→2 บันทึก แล้วลด 2→1 บันทึก → โหลดหน้าใหม่ คนที่ 2 หายจริง)
+
+    ⛔ ไม่มีของเดิมอยู่แล้ว = ออกเลย ไม่กดบันทึกให้เปลืองรอบและเปลืองความเสี่ยง
+    """
+    if open_menu_id:
+        click_retry(driver, By.ID, open_menu_id)
+    try:
+        wait_present(driver, By.ID, count_id, 20)
+    except TimeoutException:
+        log(f"   ⚠️ ส่วน{name}ไม่ปลดล็อก ({count_id} ไม่โผล่) — ข้าม ลบเองถ้าจำเป็น")
+        return
+
+    sel = Select(driver.find_element(By.ID, count_id))
+    cur = (sel.first_selected_option.text or "").strip()
+    if cur in ("", "0", NO_ROWS_OPTION):
+        return          # เรื่องนี้ไม่เคยมีแถว — ไม่ต้องทำอะไร
+
+    log(f"EMCS: ข้อมูลใหม่ไม่มี{name}เลย แต่ของเดิมมี {cur} → ตั้งเป็น '{NO_ROWS_OPTION}' เพื่อลบ")
+    try:
+        sel.select_by_visible_text(NO_ROWS_OPTION)
+    except Exception:
+        sel.select_by_index(0)
+    time.sleep(1.5)     # JS ปิดบล็อก
+    _save_section(driver, save_id, name)
+
+
 def fill_third_parties(driver, data: ClaimData):
     """กรอกข้อมูลรถคู่กรณีทุกคันจากข้อมูล XML ของ ISURVEY แล้วกดบันทึกรถคู่กรณี
 
@@ -314,6 +355,8 @@ def fill_third_parties(driver, data: ClaimData):
     ทันทีที่เลือกจำนวน"""
     tps = data.third_parties
     if not tps:
+        # ไม่ใช่ "ไม่มีอะไรให้ทำ" — ถ้าเรื่องเดิมมีคู่กรณีอยู่ ต้องลบออกให้ตรงข้อมูลใหม่
+        _clear_rows_if_any(driver, "ddlOpo_Count", "btnSave_Opponent", "รถคู่กรณี")
         return
     main_window = driver.current_window_handle
 
@@ -720,6 +763,8 @@ def fill_injuries(driver, data: ClaimData):
     (รูปแบบเดียวกับคู่กรณี; ปลดล็อกหลังบันทึกหน้าหลัก) — เรียกหลัง save_main_form"""
     injs = data.injuries
     if not injs:
+        _clear_rows_if_any(driver, "ddlInj_Count", "btnSave_InjurePerson", "ผู้บาดเจ็บ",
+                           open_menu_id="wuMenuPage1_imbInjure_Person")
         return
     log(f"EMCS: กรอกผู้บาดเจ็บ {len(injs)} คน")
 
@@ -895,6 +940,8 @@ def fill_assets(driver, data: ClaimData):
     (รูปแบบเดียวกับคู่กรณี) — เรียกหลัง save_main_form"""
     assets = data.assets
     if not assets:
+        _clear_rows_if_any(driver, "ddlAsset_Count", "btnSave_Asset", "ทรัพย์สิน",
+                           open_menu_id="wuMenuPage1_imbAsset")
         return
     log(f"EMCS: กรอกทรัพย์สิน {len(assets)} รายการ")
     click_retry(driver, By.ID, "wuMenuPage1_imbAsset")

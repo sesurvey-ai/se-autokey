@@ -3269,5 +3269,67 @@ _r2 = emcs._rename_clean_files(_g2, "กลุ่มบี_{seq}", 1)
 check("rename: 2 กลุ่มในโฟลเดอร์เดียว ไม่ทับกัน",
       all(p.exists() for p in _r1 + _r2) and len(set(p.name for p in _r1 + _r2)) == 4)
 
+# ---- 33. ข้อมูลใหม่ไม่มีแถวเลย = ต้อง "ลบของเดิม" ไม่ใช่ return เงียบ ๆ ----
+#
+# ⛔ เคสจริงที่ user ยกมา 28/08/69: ผู้ตรวจตีกลับ → ช่างแก้แล้ว **ลบผู้บาดเจ็บออกหมด**
+#    เดิม fill_injuries ขึ้นต้นด้วย `if not injs: return` → บอทไม่แตะ ddlInj_Count เลย
+#    แถวเดิมค้างบน EMCS = สำนวนประกันมีคนที่ไม่เกี่ยวข้องติดอยู่ โดยไม่มีอะไรฟ้อง
+#
+# EMCS ไม่มีปุ่มลบรายแถว — ลดจำนวนใน ddl*_Count แล้วกดบันทึก = ลบจริง
+# (พิสูจน์สดบน draft ทดสอบ S68426087785 28/08/69)
+class _FakeSel:
+    """เลียนแบบ Select ของ selenium — จำว่าถูกสั่งเลือกอะไร"""
+    def __init__(self, cur):
+        self.first_selected_option = type("O", (), {"text": cur})()
+        self.picked = None
+
+    def select_by_visible_text(self, t):
+        self.picked = t
+
+    def select_by_index(self, i):
+        self.picked = f"index:{i}"
+
+
+class _DrvWithFind:
+    """คนละตัวกับ _FakeDriver ด้านบน (ชื่อนั้นถูกนิยามซ้ำทีหลังจนทับกันไปแล้ว)"""
+    def find_element(self, _by, _value):
+        return _FakeEl()
+
+
+def _run_clear(current_count):
+    """เรียก _clear_rows_if_any โดยสวม Select/บันทึก/รอ ด้วยของปลอม → (ค่าที่เลือก, ปุ่มที่กดบันทึก)"""
+    sel = _FakeSel(current_count)
+    saved = []
+    orig = (emcs.Select, emcs.wait_present, emcs.click_retry, emcs._save_section)
+    emcs.Select = lambda el: sel
+    emcs.wait_present = lambda *a, **k: _FakeEl()
+    emcs.click_retry = lambda *a, **k: None
+    emcs._save_section = lambda d, b, n, *a, **k: (saved.append(b), True)[1]
+    try:
+        emcs._clear_rows_if_any(_DrvWithFind(),
+                                "ddlInj_Count", "btnSave_InjurePerson", "ผู้บาดเจ็บ")
+    finally:
+        (emcs.Select, emcs.wait_present, emcs.click_retry, emcs._save_section) = orig
+    return sel.picked, saved
+
+
+_picked, _saved = _run_clear("2")
+check("ของเดิมมี 2 แถว + ข้อมูลใหม่ว่าง → ตั้ง '-- ไม่ระบุ --' แล้วกดบันทึก (= ลบ)",
+      _picked == emcs.NO_ROWS_OPTION and _saved == ["btnSave_InjurePerson"],
+      f"picked={_picked} saved={_saved}")
+
+# ⛔ เรื่องที่ไม่เคยมีแถว = ห้ามกดบันทึกให้เปลืองรอบ (และเปลืองความเสี่ยงบนระบบประกัน)
+for _cur in (emcs.NO_ROWS_OPTION, "0", ""):
+    _picked, _saved = _run_clear(_cur)
+    check(f"ของเดิมว่างอยู่แล้ว ('{_cur}') → ไม่แตะอะไรเลย",
+          _picked is None and _saved == [], f"picked={_picked} saved={_saved}")
+
+# ⛔ การ์ดกันถอยหลัง: ทั้ง 3 บล็อกต้องเรียกตัวลบ ไม่ใช่ return เปล่า
+_emcs_src = (pathlib.Path(__file__).parent / "autokey" / "emcs.py").read_text(encoding="utf-8")
+for _blk, _cid in (("รถคู่กรณี", "ddlOpo_Count"), ("ผู้บาดเจ็บ", "ddlInj_Count"),
+                   ("ทรัพย์สิน", "ddlAsset_Count")):
+    check(f"บล็อก{_blk}: ข้อมูลว่างแล้วยังไปลบของเดิม",
+          f'_clear_rows_if_any(driver, "{_cid}"' in _emcs_src)
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
