@@ -3291,25 +3291,44 @@ class _FakeSel:
 
 
 class _DrvWithFind:
-    """คนละตัวกับ _FakeDriver ด้านบน (ชื่อนั้นถูกนิยามซ้ำทีหลังจนทับกันไปแล้ว)"""
+    """คนละตัวกับ _FakeDriver ด้านบน (ชื่อนั้นถูกนิยามซ้ำทีหลังจนทับกันไปแล้ว)
+
+    enabled=False = ช่องโผล่แล้วแต่ยังกดไม่ได้ (ddlOpo_Count ก่อนบันทึกหน้าหลัก)"""
+    def __init__(self, enabled=True):
+        self._enabled = enabled
+
     def find_element(self, _by, _value):
-        return _FakeEl()
+        el = _FakeEl()
+        el.is_enabled = lambda: self._enabled
+        return el
 
 
-def _run_clear(current_count):
+def _run_clear(current_count, enabled=True):
     """เรียก _clear_rows_if_any โดยสวม Select/บันทึก/รอ ด้วยของปลอม → (ค่าที่เลือก, ปุ่มที่กดบันทึก)"""
     sel = _FakeSel(current_count)
     saved = []
-    orig = (emcs.Select, emcs.wait_present, emcs.click_retry, emcs._save_section)
+    orig = (emcs.Select, emcs.wait_present, emcs.click_retry, emcs._save_section,
+            emcs.WebDriverWait)
     emcs.Select = lambda el: sel
     emcs.wait_present = lambda *a, **k: _FakeEl()
     emcs.click_retry = lambda *a, **k: None
     emcs._save_section = lambda d, b, n, *a, **k: (saved.append(b), True)[1]
+    # WebDriverWait ปลอม: until(fn) เรียก fn ครั้งเดียว — คืน False แล้วโยนเหมือนของจริง
+    class _W:
+        def __init__(self, drv, _t):
+            self.drv = drv
+
+        def until(self, fn):
+            if not fn(self.drv):
+                raise _sel_exc.TimeoutException()
+            return True
+    emcs.WebDriverWait = _W
     try:
-        emcs._clear_rows_if_any(_DrvWithFind(),
+        emcs._clear_rows_if_any(_DrvWithFind(enabled),
                                 "ddlInj_Count", "btnSave_InjurePerson", "ผู้บาดเจ็บ")
     finally:
-        (emcs.Select, emcs.wait_present, emcs.click_retry, emcs._save_section) = orig
+        (emcs.Select, emcs.wait_present, emcs.click_retry, emcs._save_section,
+         emcs.WebDriverWait) = orig
     return sel.picked, saved
 
 
@@ -3323,6 +3342,11 @@ for _cur in (emcs.NO_ROWS_OPTION, "0", ""):
     _picked, _saved = _run_clear(_cur)
     check(f"ของเดิมว่างอยู่แล้ว ('{_cur}') → ไม่แตะอะไรเลย",
           _picked is None and _saved == [], f"picked={_picked} saved={_saved}")
+
+# ⛔ ช่องโผล่แล้วแต่ยังกดไม่ได้ (ddlOpo_Count ก่อนบันทึกหน้าหลัก) = ห้ามรายงานว่าลบแล้ว
+_picked, _saved = _run_clear("2", enabled=False)
+check("ช่องจำนวนยังถูกล็อก → ไม่แตะ ไม่กดบันทึก (กันรายงานว่าลบทั้งที่แถวยังอยู่)",
+      _picked is None and _saved == [], f"picked={_picked} saved={_saved}")
 
 # ⛔ การ์ดกันถอยหลัง: ทั้ง 3 บล็อกต้องเรียกตัวลบ ไม่ใช่ return เปล่า
 _emcs_src = (pathlib.Path(__file__).parent / "autokey" / "emcs.py").read_text(encoding="utf-8")

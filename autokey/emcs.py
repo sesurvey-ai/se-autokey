@@ -328,8 +328,15 @@ def _clear_rows_if_any(driver, count_id: str, save_id: str, name: str,
         click_retry(driver, By.ID, open_menu_id)
     try:
         wait_present(driver, By.ID, count_id, 20)
-    except TimeoutException:
-        log(f"   ⚠️ ส่วน{name}ไม่ปลดล็อก ({count_id} ไม่โผล่) — ข้าม ลบเองถ้าจำเป็น")
+        # ⛔ "โผล่แล้ว" ยังไม่พอ ต้อง **กดได้จริง** — ddlOpo_Count อยู่บนหน้าหลักและ server
+        #    ปลดล็อกให้หลังบันทึกหน้าหลักเท่านั้น · เลือกค่าใส่ช่องที่ยัง disabled = ไม่มีผล
+        #    เงียบ ๆ แล้วเราจะรายงานว่า "ลบแล้ว" ทั้งที่แถวยังอยู่ (แย่กว่าไม่ทำเลย)
+        WebDriverWait(driver, 30).until(
+            lambda d: d.find_element(By.ID, count_id).is_enabled()
+        )
+    except Exception:   # timeout หรือหา element ไม่เจอระหว่างรอ — ผลเหมือนกันคือทำไม่ได้
+        log(f"   ⚠️ ส่วน{name}ยังไม่ปลดล็อก ({count_id} ไม่โผล่/กดไม่ได้) — "
+            "ข้าม ลบเองบนหน้า EMCS ถ้าจำเป็น")
         return
 
     sel = Select(driver.find_element(By.ID, count_id))
