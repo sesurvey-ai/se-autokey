@@ -3393,6 +3393,15 @@ check("รูป: ลบไม่สำเร็จ → กลับไปโห
 # ⛔ ชื่อไฟล์ซ้ำข้ามครั้งได้ → ตรวจผลลบต้องใช้ IMAGEID ไม่ใช่ชื่อ
 check("รูป: ตรวจผลลบด้วย IMAGEID (ชื่อซ้ำข้ามครั้งได้)",
       'gone = {_id(r) for r in before} - {_id(r) for r in after}' in _emcs_src)
+# ⛔ ลบ "ทุกแถว" จบที่ตารางว่าง — ตัวตรวจเดิมอ่านว่า "อ่านตารางไม่ได้" แล้วรายงานว่าลบไม่สำเร็จ
+#    ทั้งที่ลบถูกครบ (เจอจริง 28/08/69 บน S68426084815 — โหมดแทนที่ลบทุกแถวเป็นปกติ)
+check("รูป: ลบหมดทั้งตาราง = สำเร็จ ไม่ใช่ 'อ่านตารางไม่ได้'",
+      "deleting_all = len(targets) == len(before)" in _emcs_src
+      and "if (not after) if deleting_all else bool(after):" in _emcs_src)
+# ...แต่ตารางว่างจะเชื่อได้ต่อเมื่อยังอยู่หน้ารูปจริง (หลุดไปหน้าอื่นก็อ่านได้ [] เหมือนกัน)
+check("รูป: ตารางว่างต้องยืนยันว่ายังอยู่หน้ารูป ก่อนสรุปว่าลบหมด",
+      "still_on_page" in _emcs_src
+      and "not (deleting_all and still_on_page)" in _emcs_src)
 
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

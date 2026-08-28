@@ -3743,11 +3743,16 @@ def _delete_image_rows(driver, targets, before=None) -> list:
         pass
 
     # หลัง postback ตารางถูก render ใหม่ — อ่านเร็วไปจะเจอ StaleElementReference/แถวยังไม่ครบ
-    after = []
+    # ⚠️ "ตารางว่าง" มี 2 ความหมาย: อ่านไม่ทัน (ผิด) กับ ลบหมดจริง ๆ (ถูก) —
+    #    โหมดแทนที่รูปของครั้งนี้ลบ *ทุกแถว* จึงจบที่ตารางว่างเป็นปกติ ต้องแยกให้ออก
+    #    ไม่งั้นรายงานว่า "ลบไม่สำเร็จ" ทั้งที่ลบถูกครบ (เจอจริง 28/08/69 บน S68426084815)
+    deleting_all = len(targets) == len(before)
+    after = None
     for attempt in range(5):
         try:
             after = list_report_images(driver)
-            if after:
+            # ลบหมด = รอจนตารางว่างจริง / ลบบางส่วน = รอจนอ่านได้อย่างน้อย 1 แถว
+            if (not after) if deleting_all else bool(after):
                 break
         except (StaleElementReferenceException, UnexpectedAlertPresentException):
             try:
@@ -3755,7 +3760,11 @@ def _delete_image_rows(driver, targets, before=None) -> list:
             except Exception:
                 pass
         time.sleep(1)
-    if not after:
+    # ตารางว่างจะเชื่อได้ ต่อเมื่อยังอยู่หน้ารูปจริง (ปุ่มลบยังอยู่) — กันกรณีหลุดไปหน้าอื่น
+    # แล้วอ่านได้ [] ซึ่งจะแปลว่า "ลบหมดแล้ว" ทั้งที่รูปยังอยู่ครบ
+    still_on_page = bool(driver.find_elements(By.ID, "btnDelete_Image2")
+                         or driver.find_elements(By.ID, "btnDelete_Image"))
+    if after is None or (not after and not (deleting_all and still_on_page)):
         raise RuntimeError(
             "ลบไปแล้วแต่อ่านตารางรูปหลังลบไม่ได้ — เปิด EMCS ตรวจด้วยตาว่าลบถูกใบไหม")
     gone = {_id(r) for r in before} - {_id(r) for r in after}
