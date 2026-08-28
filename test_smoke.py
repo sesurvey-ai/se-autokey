@@ -3370,5 +3370,29 @@ check("คู่กรณี: ไม่เปลี่ยน = ไม่กด�
 check("คู่กรณี: ยี่ห้อใช้ _select_car_brand ตัวเดียวกับรถประกัน (ทน cascade race)",
       'brand_id=p + "ddlCmfg"' in _emcs_src)
 
+# ---- 34. รูป: งานครั้งเดิม = แทนที่ทั้งครั้ง ไม่ใช่กันชื่อซ้ำอย่างเดียว ----
+#
+# ⛔ dedupe เทียบ **ชื่อไฟล์** และบอท rename เป็น 'หมวด_ลำดับ' ทุกรอบ → ชื่อชนโดยธรรมชาติ
+#    ช่างถ่ายรูปใหม่แทนใบเดิม = ข้ามหมด EMCS ยังเป็นรูปเก่า / เพิ่มรูปแล้วลำดับขยับ = ชุดปนเก่าใหม่
+#    (user ตั้งข้อสังเกตเอง 28/08/69 — ทั้งสองแบบไม่มีอะไรฟ้อง)
+check("รูป: โหมดเติม draft เดิม (fill_existing) แทนที่รูปของครั้งนี้",
+      _emcs_src.count("replace_round=True") == 2)
+check("รูป: มีตัวแทนที่รูปเฉพาะครั้งล่าสุด",
+      "def _replace_current_round_images(driver)" in _emcs_src)
+# ⛔ ห้ามลบข้ามครั้ง — งานครั้งที่ 2 เก็บรูปครั้งก่อนไว้ในเรื่องเดียวกัน = หลักฐานงานที่เบิกเงินแล้ว
+check("รูป: ลบเฉพาะ 'ครั้งที่' ล่าสุด ไม่แตะครั้งก่อน",
+      'targets = [r for r in rows if _num(r["round"]) == cur]' in _emcs_src)
+# ⛔ งานต่อเนื่องอัปเข้าครั้งใหม่ (ยังไม่มีในตาราง) → max(ครั้งที่) จะเป็นของครั้งก่อน ลบผิดครั้ง
+check("รูป: งานต่อเนื่องต้องไม่แทนที่ (ใช้ dedupe=False เหมือนเดิม)",
+      "single_type=_EMCS_DEFAULT_IMAGE_TYPE, dedupe=False)" in _emcs_src
+      and "dedupe=False, replace_round=True" not in _emcs_src)
+# ⛔ ลบไม่สำเร็จ/ยังเหลือ = ต้องกลับไปกันชื่อซ้ำ ห้ามอัปทับซ้อน
+check("รูป: ลบไม่สำเร็จ → กลับไปโหมดกันชื่อซ้ำ ไม่อัปซ้ำซ้อน",
+      "if replace_round and _replace_current_round_images(driver):" in _emcs_src
+      and "อัปแบบกันชื่อซ้ำแทน" in _emcs_src)
+# ⛔ ชื่อไฟล์ซ้ำข้ามครั้งได้ → ตรวจผลลบต้องใช้ IMAGEID ไม่ใช่ชื่อ
+check("รูป: ตรวจผลลบด้วย IMAGEID (ชื่อซ้ำข้ามครั้งได้)",
+      'gone = {_id(r) for r in before} - {_id(r) for r in after}' in _emcs_src)
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

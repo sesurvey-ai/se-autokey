@@ -3449,9 +3449,59 @@ def _group_flat_by_category(folder, file_names, fallback_type):
     return out
 
 
+def _replace_current_round_images(driver) -> bool:
+    """ลบรูป **เฉพาะครั้งล่าสุด** ออกก่อนอัปชุดใหม่ — คืน True เมื่อครั้งนั้นว่างจริง
+
+    ทำไมต้องมี: dedupe เทียบ **ชื่อไฟล์** อย่างเดียว และบอท rename เป็น 'หมวด_ลำดับ'
+    ทุกรอบ → ชื่อชนกันโดยธรรมชาติ ผลคือ
+      - ช่างถ่ายรูปใหม่แทนใบเดิม (จำนวนเท่าเดิม) → ข้ามหมด **EMCS ยังเป็นรูปเก่า**
+      - ช่างเพิ่มรูป 3→4 ใบ → ลำดับขยับ ใบ 1-3 ถูกข้ามทั้งที่เนื้อเปลี่ยน → ชุดปนเก่า/ใหม่
+    ทั้งสองแบบไม่มีอะไรฟ้องเลย (user ตั้งข้อสังเกตเอง 28/08/69)
+
+    ⛔ **ลบเฉพาะ "ครั้งที่" ล่าสุดเท่านั้น** — งานครั้งที่ 2 (ติดตาม) เก็บรูปของครั้งก่อน
+    ไว้ในเรื่องเดียวกัน นั่นคือหลักฐานของงานที่จบและเบิกเงินไปแล้ว ห้ามแตะข้ามครั้ง
+    ⛔ ห้ามใช้กับ flow "งานต่อเนื่อง" ที่กำลังจะอัปเข้า**ครั้งใหม่** — ครั้งใหม่ยังไม่มีในตาราง
+       max(ครั้งที่) จะกลายเป็นของครั้งก่อน แล้วลบผิดครั้ง (flow นั้นใช้ dedupe=False อยู่แล้ว)
+    """
+    try:
+        rows = list_report_images(driver)
+    except Exception as e:
+        log(f"   ⚠️ อ่านรายการรูปไม่ได้ ({type(e).__name__}) — ข้ามการแทนที่ อัปแบบกันชื่อซ้ำแทน")
+        return False
+    if not rows:
+        return True          # ยังไม่มีรูปเลย = ครั้งนี้ว่างอยู่แล้ว อัปได้ตรง ๆ
+
+    def _num(v):
+        try:
+            return int(str(v).strip() or 0)
+        except ValueError:
+            return 0
+
+    cur = max((_num(r["round"]) for r in rows), default=0)
+    targets = [r for r in rows if _num(r["round"]) == cur]
+    others = len(rows) - len(targets)
+    log(f"EMCS: แทนที่รูปของครั้งที่ {cur} — จะลบ {len(targets)} ใบ"
+        + (f" (เก็บของครั้งก่อนไว้ {others} ใบ)" if others else ""))
+    try:
+        _delete_image_rows(driver, targets, rows)
+    except Exception as e:
+        log(f"   ⚠️ ลบรูปครั้งที่ {cur} ไม่สำเร็จ ({e}) — อัปแบบกันชื่อซ้ำแทน")
+        return False
+    # ยืนยันว่าครั้งนี้ว่างจริง ถึงจะยอมปิด dedupe (ไม่งั้นเสี่ยงอัปซ้ำทับของเดิม)
+    try:
+        left = [r for r in list_report_images(driver) if _num(r["round"]) == cur]
+    except Exception:
+        return False
+    if left:
+        log(f"   ⚠️ ครั้งที่ {cur} ยังเหลือ {len(left)} ใบ — อัปแบบกันชื่อซ้ำแทน")
+        return False
+    return True
+
+
 def upload_images(driver, folder, image_type: str = "รูปรถประกัน", only=None,
                   n_opponents: int = 0, n_injuries: int = 0, n_assets: int = 0,
-                  single_type: str = "", dedupe: bool = True):
+                  single_type: str = "", dedupe: bool = True,
+                  replace_round: bool = False):
     """อัปโหลดรูปทั้งหมด: รูปรถประกัน (หลัก) + บุคคลที่สาม (tp_veh/tp_person/tp_prop)
 
     - รูปรถประกัน: เลือกประเภท image_type ('รูปรถประกัน') — only คุมว่าจะอัปรูปไหน
@@ -3540,6 +3590,11 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
     #    ตามธรรมชาติ (btnUpdate ล้มบ่อย) → เดิมรัน 3 รอบ รูป 5 ใบกลายเป็น 20 ใบ
     #    (เจอจริง 19/08/69 บน S68426084815) → ตัดใบที่แนบไว้แล้วออกก่อนเสมอ
     #    dedupe=False เฉพาะ "งานต่อเนื่อง" ซึ่งตั้งใจอัปไฟล์ชื่อเดิมซ้ำเข้าครั้งใหม่
+    # แทนที่รูปของครั้งนี้: ลบให้ว่างก่อน แล้วอัปทั้งชุด (ไม่ต้อง dedupe เพราะเพิ่งล้าง
+    # — และ **ต้องไม่ dedupe** ด้วย ไม่งั้นชื่อที่ชนกับ "ครั้งก่อน" จะทำให้ข้ามรูปครั้งนี้ทิ้ง)
+    if replace_round and _replace_current_round_images(driver):
+        dedupe = False
+
     if dedupe:
         # ⚠️ EMCS เก็บชื่อไฟล์แบบ "ตัดช่องว่างทิ้ง" — ไฟล์ 'รูปรถคู่กรณี คันที่ 1_1.jpg'
         #    ขึ้นในตารางเป็น 'รูปรถคู่กรณีคันที่1_1.jpg' → เทียบชื่อดิบจะไม่มีวันตรง
@@ -3631,6 +3686,26 @@ def delete_report_images(driver, names) -> list:
                 f"หยุด: ชื่อไฟล์ '{n}' เจอ {len(hit)} แถว (ต้องเจอพอดี 1) — "
                 f"รูปในเรื่องนี้: {[r['name'] for r in before]}")
         targets.append(hit[0])
+    return _delete_image_rows(driver, targets, before)
+
+
+def _delete_image_rows(driver, targets, before=None) -> list:
+    """แกนของการลบรูป — รับ "แถว" ที่เลือกมาแล้ว (จาก list_report_images) ไม่ใช่ชื่อไฟล์
+
+    แยกออกมาเพื่อให้โหมด "แทนที่รูปของครั้งนี้" ใช้ร่วมได้ — โหมดนั้นเลือกแถวด้วย
+    **ครั้งที่** ซึ่งชื่อไฟล์ซ้ำข้ามครั้งได้ (บอท rename เป็น 'หมวด_ลำดับ' ทุกรอบ)
+    จึงระบุตัวด้วยชื่อไม่ได้
+
+    ⛔ ตรวจผลด้วย **IMAGEID** (ไม่ซ้ำ) ไม่ใช่ชื่อไฟล์ — เทียบด้วยชื่อจะสับสนเมื่อ
+    ครั้งก่อนมีไฟล์ชื่อเดียวกันอยู่ แล้วสรุปผิดว่า "ลบไม่ตรงที่สั่ง"
+    """
+    if not targets:
+        return []
+    if before is None:
+        before = list_report_images(driver)
+
+    def _id(r):
+        return r.get("image_id") or r.get("name")
 
     for r in targets:
         log(f"   จะลบ: [{r['seq']}] {r['name']}  (ประเภท '{r['type']}', "
@@ -3638,12 +3713,12 @@ def delete_report_images(driver, names) -> list:
         if not r["chk"].is_selected():
             r["chk"].click()
 
-    # ตรวจซ้ำหน้างาน: ที่ติ๊กอยู่จริง ต้องเท่ากับเป้าหมายเป๊ะ ๆ
-    ticked = [r["name"] for r in list_report_images(driver) if r["chk"].is_selected()]
-    if sorted(ticked) != sorted(r["name"] for r in targets):
+    # ตรวจซ้ำหน้างาน: ที่ติ๊กอยู่จริง ต้องเท่ากับเป้าหมายเป๊ะ ๆ (เทียบด้วย IMAGEID)
+    ticked = [_id(r) for r in list_report_images(driver) if r["chk"].is_selected()]
+    if sorted(ticked) != sorted(_id(r) for r in targets):
         raise RuntimeError(
             f"หยุด: ติ๊กไม่ตรงเป้า — ติ๊กอยู่ {ticked} แต่ตั้งใจลบ "
-            f"{[r['name'] for r in targets]}")
+            f"{[_id(r) for r in targets]}")
 
     log(f"EMCS: ลบรูป {len(targets)} ใบ (จากทั้งหมด {len(before)} ใบ)")
     # ปุ่มลบตัวจริง (submit id=btnDelete_Image) อยู่ในตาราง #oldBtn ที่ display:none →
@@ -3683,8 +3758,8 @@ def delete_report_images(driver, names) -> list:
     if not after:
         raise RuntimeError(
             "ลบไปแล้วแต่อ่านตารางรูปหลังลบไม่ได้ — เปิด EMCS ตรวจด้วยตาว่าลบถูกใบไหม")
-    gone = {r["name"] for r in before} - {r["name"] for r in after}
-    want_set = {r["name"] for r in targets}
+    gone = {_id(r) for r in before} - {_id(r) for r in after}
+    want_set = {_id(r) for r in targets}
     if gone != want_set:
         raise RuntimeError(
             f"⚠️ ผลลบไม่ตรงที่สั่ง: หายไป {sorted(gone)} แต่สั่งลบ {sorted(want_set)} "
@@ -3761,11 +3836,13 @@ def add_images_only(driver, cfg, data: ClaimData, images_folder,
     log(f"EMCS: เปิดเรื่องเดิม {target} เพื่อเติมรูป "
         f"({'รูปรถประกัน+บุคคลที่สาม' if include_main else 'เฉพาะรูปบุคคลที่สาม'})")
     open_report_images(driver, data.claim_value, target)
+    # ซ่อมรูปของเรื่องเดิม = ครั้งเดิม → แทนที่ทั้งครั้ง (ดู _replace_current_round_images)
     upload_images(driver, images_folder, image_type=image_type,
                   only=(None if include_main else []),
                   n_opponents=len(data.third_parties or []),
                   n_injuries=len(data.injuries or []),
-                  n_assets=len(data.assets or []))
+                  n_assets=len(data.assets or []),
+                  replace_round=True)
     return target
 
 
@@ -4936,10 +5013,13 @@ def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",
         fill_injuries(driver, data)
         fill_assets(driver, data)
         if images_folder is not None:
+            # โหมดเติม draft เดิม = งานครั้งเดิม → ชุดรูปต้องตรงกับ se-survey เป๊ะ
+            # (ไม่ใช่สะสมทับกันไปเรื่อย ๆ) ⛔ ไม่ใช้กับงานต่อเนื่องซึ่งอัปเข้าครั้งใหม่
             upload_images(driver, images_folder, image_type=image_type,
                           n_opponents=len(data.third_parties or []),
                           n_injuries=len(data.injuries or []),
-                          n_assets=len(data.assets or []))
+                          n_assets=len(data.assets or []),
+                          replace_round=True)
         fill_billing(driver, data, full_billing=full_billing, leave=False)
     finally:
         set_skip_unchanged(False)   # ธงเป็น global — ห้ามค้างไปถึงงานถัดไปในโปรเซสเดียวกัน
