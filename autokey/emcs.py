@@ -366,6 +366,9 @@ def fill_third_parties(driver, data: ClaimData):
         _clear_rows_if_any(driver, "ddlOpo_Count", "btnSave_Opponent", "รถคู่กรณี")
         return
     main_window = driver.current_window_handle
+    # "ประเภทรถคู่กรณี" เป็นช่องของ**หน้าหลัก** ไม่ใช่ของบล็อกคู่กรณี — ปุ่ม 'บันทึกรถคู่กรณี'
+    # ไม่ commit ให้ ต้องกด 'แก้ไข' (btnUpdate) ของหน้าหลักอีกที (ดูตอนท้ายฟังก์ชัน)
+    _ctype_changed = False
 
     log(f"EMCS: กรอกรถคู่กรณี {len(tps)} คัน")
     if len(tps) > MAX_OPPONENTS:
@@ -407,18 +410,23 @@ def fill_third_parties(driver, data: ClaimData):
         # ว่างก็ต้องถาม ไม่ใช่ข้าม — เดิมข้ามเงียบ ๆ แล้วไปโดน validation ตอนกดบันทึก
         # ซึ่งตอนนั้นบอทไม่รู้ว่าเป็น dropdown ตัวไหน เลยเสนอตัวเลือกให้เลือกบนหน้าเว็บไม่ได้
         # ต้องไปเลือกเองใน Chrome (เจอจริง เคลม 2026013059072 — ISURVEY ไม่มี vehTID)
+        # จำค่าก่อนเลือก — ถ้าเปลี่ยนจริงต้องกด "แก้ไข" หน้าหลักซ้ำตอนท้าย (ดู _needs_main_resave)
+        _ctype_before = _current_select_text(driver, p + "ddlCType")
         fuzzy_select(driver, p + "ddlCType", tp.get("veh_type", ""), presleep=0.5,
                      label=f"ประเภทรถคู่กรณี {n + 1}", required=True)
-        time.sleep(2)   # รอ postback โหลดตัวเลือกยี่ห้อ + ให้ค่าประเภทรถนิ่ง
-        # ยี่ห้อ — มีตัวเลือกหลังเลือกประเภทรถ; ถ้ายังว่าง (ไม่มี veh_type) ข้าม
-        if _select_has_options(driver, p + "ddlCmfg"):
-            # ไทย→อังกฤษ: ตัวเลือกยี่ห้อของ EMCS เป็นอังกฤษล้วน แต่ se-survey ส่งไทยมา
-            fuzzy_select(driver, p + "ddlCmfg",
-                         normalize_brand(tp.get("car_brand", "")),
-                         label=f"ยี่ห้อรถคู่กรณี {n + 1}", timeout=5,
-                         min_score=BRAND_MIN_SCORE)
-        else:
-            log(f"   - ข้ามยี่ห้อรถคู่กรณี {n + 1} (เลือกประเภทรถก่อน ตัวเลือกยี่ห้อถึงจะขึ้น)")
+        if _current_select_text(driver, p + "ddlCType") != _ctype_before:
+            _ctype_changed = True
+        # ⛔ ยี่ห้อคู่กรณีใช้ตัวเดียวกับฝั่งรถประกัน (_select_car_brand) — เดิมเป็น
+        #    `sleep(2)` แล้วเช็คครั้งเดียว ถ้าตัวเลือกยังไม่มาก็ "ข้าม" เงียบ ๆ
+        #    ปัญหาคือ postback ตัวที่โหลดตัวเลือกยี่ห้อ **เป็นตัวเดียวกับที่บันทึกประเภทรถ**
+        #    → ข้ามยี่ห้อ = ประเภทรถไม่ติดด้วย แล้ว EMCS ฟ้อง "ประเภทรถ ขาด" ตอนกดบันทึก
+        #    ทั้งที่ log บอกว่าเลือกแล้ว (เจอจริง 28/08/69 ตอนเติมคู่กรณีกลับเข้าบล็อกที่
+        #    เพิ่งถูกลบ — บล็อกสร้างใหม่ใช้เวลาโหลดนานกว่า 2 วิ)
+        #    ฝั่งรถประกันแก้ไปแล้วตั้งแต่ f81f766 (ยิง __doPostBack ซ้ำ + รอจริง 12 วิ)
+        #    แต่ฝั่งคู่กรณีตกหล่น — ตอนนี้ใช้ตัวเดียวกันแล้ว
+        _select_car_brand(driver, tp.get("car_brand", ""),
+                          label=f"ยี่ห้อรถคู่กรณี {n + 1}",
+                          type_id=p + "ddlCType", brand_id=p + "ddlCmfg")
         set_text(driver, p + "txtCModel", tp.get("car_model", ""))
         # สีรถคู่กรณี — เดิมไม่เคยแตะช่องนี้ (มีแต่ฝั่งรถประกัน) ทั้งที่มือถือเก็บให้แล้ว
         if str(tp.get("car_color") or "").strip():
@@ -563,6 +571,17 @@ def fill_third_parties(driver, data: ClaimData):
     # บันทึกส่วนรถคู่กรณี — ตรวจ validation จริง (ฟอร์มคู่กรณีมีช่อง * เยอะที่ ISURVEY
     # มักไม่มี เช่น ประเภทรถ/มีประกันภัยที่/อายุ) → ฟ้องช่องขาด = หยุดรอให้คนเติมแล้วลองใหม่
     saved = _save_opponents(driver)
+
+    # ⛔ **"ประเภทรถคู่กรณี" ไม่ได้ถูกบันทึกด้วยปุ่ม 'บันทึกรถคู่กรณี'** — เป็นช่องของหน้าหลัก
+    #    EMCS บอกเองตอนจะออกจากหน้า: "ข้อมูลดังต่อไปนี้ ยังไม่ถูกบันทึกข้อมูล, กรุณากดปุ่ม
+    #    [แก้ไข] เพื่อบันทึกข้อมูล — ประเภทรถคู่กรณี คันที่ 1" (เจอจริง 28/08/69)
+    #    บอทบันทึกหน้าหลัก *ก่อน* กรอกคู่กรณีเสมอ ค่าที่เปลี่ยนทีหลังจึงค้างไม่ commit
+    #    → เปลี่ยนจริงเมื่อไหร่ ต้องกด 'แก้ไข' ซ้ำตอนท้าย
+    #    เดิมไม่เจอเพราะเคสส่วนใหญ่ประเภทรถตรงอยู่แล้ว (ไม่มีอะไรเปลี่ยน) — โผล่ตอน
+    #    บล็อกคู่กรณีถูกสร้างใหม่ (import ครั้งแรก / เติมกลับหลังลบ)
+    if _ctype_changed:
+        log("EMCS: ประเภทรถคู่กรณีเปลี่ยน → บันทึกหน้าหลักซ้ำเพื่อ commit ค่า")
+        save_main_form(driver, data, button_id="btnUpdate", is_new=False)
 
     # ความเสียหายคู่กรณี — popup เดียวกับรถประกัน (ช่อง free-text dgvOtherDamage_List)
     # ทำหลังบันทึกคู่กรณีสำเร็จ (เหมือน flow รถประกัน: save แล้วค่อยกรอกความเสียหาย)
@@ -1743,7 +1762,8 @@ def _set_ctype_via_postback(driver, label: str) -> bool:
     return False
 
 
-def _select_car_brand(driver, car_brand, label="ยี่ห้อรถ"):
+def _select_car_brand(driver, car_brand, label="ยี่ห้อรถ",
+                      type_id="ddlCType", brand_id="ddlCMFG"):
     """เลือก 'ยี่ห้อรถ' (ddlCMFG) ให้ทน race ของ cascade ประเภทรถ→ยี่ห้อ:
     ตัวเลือกยี่ห้อถูกโหลดจาก onchange postback ของ ddlCType ซึ่งบางครั้ง commit ไม่ทัน
     presleep เดิม → ddlCMFG ว่าง (มีแต่ '-- ระบุ --'). แก้แบบเดียวกับที่คนต้องกดประเภทรถ
@@ -1754,28 +1774,28 @@ def _select_car_brand(driver, car_brand, label="ยี่ห้อรถ"):
     ลิสต์นั้นจะไป "เกาะ" ยี่ห้ออื่นแบบเงียบ ๆ ได้ (TRIUMPH→TRUMPCHI 80) — ค่าที่ถูกต้อง
     ได้ ≥90 เสมอ (TOYOTA 100 / 'MG 3'→MG 90) จึงตัดที่ 90 แล้วให้คนเลือกเองถ้าไม่ถึง"""
     car_brand = normalize_brand(car_brand)   # ไทย→อังกฤษ: ตัวเลือก EMCS เป็นอังกฤษล้วน
-    time.sleep(2)   # รอ postback ประเภทรถ โหลดตัวเลือกยี่ห้อ (เท่าจังหวะฝั่งคู่กรณี)
-    if not _select_has_options(driver, "ddlCMFG"):
+    time.sleep(2)   # รอ postback ประเภทรถ โหลดตัวเลือกยี่ห้อ
+    if not _select_has_options(driver, brand_id):
         # repopulate ยี่ห้อ: ยิง __doPostBack ของ ddlCType ตรง ๆ ด้วยค่าที่เลือกอยู่
         # (เดิม dispatchEvent('change') → วิ่งผ่าน checkChangeCType = เด้ง popup ทำลายข้อมูล
         #  แล้วบอทค้าง; postback ตรงให้ผลเดียวกันแต่ไม่มี popup — ยืนยันบน draft จริง)
         try:
             driver.execute_script(
-                "setTimeout(function(){__doPostBack('ddlCType','');},50);")
+                "setTimeout(function(){__doPostBack(arguments[0],'');},50);", type_id)
         except Exception:
             pass
         try:
             WebDriverWait(driver, 12).until(
-                lambda d: _select_has_options(d, "ddlCMFG"))
+                lambda d: _select_has_options(d, brand_id))
         except TimeoutException:
             pass
-    if _select_has_options(driver, "ddlCMFG"):
-        fuzzy_select(driver, "ddlCMFG", car_brand, label=label,
+    if _select_has_options(driver, brand_id):
+        fuzzy_select(driver, brand_id, car_brand, label=label,
                      required=True, timeout=5, min_score=BRAND_MIN_SCORE)
     else:
         wait_for_manual_fill(
             label, "ตัวเลือกยี่ห้อยังไม่โหลด (postback ประเภทรถ ไม่สมบูรณ์)",
-            select_id="ddlCMFG", driver=driver)
+            select_id=brand_id, driver=driver)
 
 
 def fill_car(driver, data: ClaimData):

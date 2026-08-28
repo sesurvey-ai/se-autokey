@@ -3355,5 +3355,20 @@ for _blk, _cid in (("รถคู่กรณี", "ddlOpo_Count"), ("ผู้�
     check(f"บล็อก{_blk}: ข้อมูลว่างแล้วยังไปลบของเดิม",
           f'_clear_rows_if_any(driver, "{_cid}"' in _emcs_src)
 
+# ⛔ "ประเภทรถคู่กรณี" เป็นช่องของหน้าหลัก ปุ่ม 'บันทึกรถคู่กรณี' ไม่ commit ให้
+#    (EMCS บอกเอง: "ยังไม่ถูกบันทึกข้อมูล, กรุณากดปุ่ม [แก้ไข]" — เจอจริง 28/08/69
+#     ตอนเติมคู่กรณีกลับเข้าบล็อกที่เพิ่งถูกลบ) เปลี่ยนจริงเมื่อไหร่ต้องกด btnUpdate ซ้ำ
+check("คู่กรณี: ประเภทรถเปลี่ยน → บันทึกหน้าหลักซ้ำ (btnUpdate)",
+      "if _ctype_changed:" in _emcs_src
+      and 'save_main_form(driver, data, button_id="btnUpdate", is_new=False)' in _emcs_src)
+# ⛔ ห้ามกดซ้ำทุกครั้ง — เคสส่วนใหญ่ประเภทรถตรงอยู่แล้ว กดเปล่าเปลืองรอบ postback
+check("คู่กรณี: ไม่เปลี่ยน = ไม่กดบันทึกหน้าหลักซ้ำ",
+      "_ctype_changed = False" in _emcs_src
+      and '_current_select_text(driver, p + "ddlCType")' in _emcs_src)
+# ⛔ ยี่ห้อคู่กรณีต้องใช้ตัวเดียวกับรถประกัน (ทน race cascade ประเภทรถ→ยี่ห้อ)
+#    postback ที่โหลดตัวเลือกยี่ห้อ = ตัวเดียวกับที่บันทึกประเภทรถ → ข้ามยี่ห้อ = ประเภทรถไม่ติด
+check("คู่กรณี: ยี่ห้อใช้ _select_car_brand ตัวเดียวกับรถประกัน (ทน cascade race)",
+      'brand_id=p + "ddlCmfg"' in _emcs_src)
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
