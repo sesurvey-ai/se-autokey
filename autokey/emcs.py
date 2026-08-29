@@ -39,6 +39,7 @@ from .browser import (
     wait_for_image_select,
     wait_for_injury_inputs,
     wait_for_manual_fill,
+    record_filled,
     reset_filled,
     set_rule_context,
     verify_filled,
@@ -114,12 +115,17 @@ OPPONENT_FAULT_RADIO = "rdoAcc_Cause01"   # 'รถคู่กรณีเป�
 last_verify_mismatches = []
 
 
-def _verify_after_save(driver, data, page_label: str):
+def _verify_after_save(driver, data, page_label: str, reset: bool = True):
     """อ่านค่าจากหน้า EMCS กลับมาเทียบกับที่บอทกรอก แล้วรายงาน (ไม่ล้มงาน)
 
     เรียกทันทีหลังบันทึกสำเร็จ ขณะยังอยู่หน้าเดิม — ย้ายหน้าไปแล้วอ่านกลับไม่ได้
     ไม่ raise เพราะตอนถึงบรรทัดนี้ draft เกิดบน EMCS ไปแล้ว ล้มไปก็ไม่ได้ทำให้ draft หาย
     มีแต่ทำให้ไม่มีใครรู้ว่าเพี้ยนตรงไหน — หน้าที่ของมันคือ "บอกให้รู้" และกันเฟส 3
+
+    reset=True (หน้าหลัก = หน้าแรกของเคส) → เริ่มนับใหม่
+    reset=False (หน้าถัดมาในเคสเดียวกัน เช่นหน้าค่าใช้จ่าย) → **ต่อท้าย**
+    ⛔ ห้ามให้หน้าหลังเขียนทับหน้าหน้า ไม่งั้นผลตรวจหน้าหลักหายไป แล้วประตูเฟส 3
+       (main.py อ่าน last_verify_mismatches) จะเปิดทั้งที่หน้าหลักเพี้ยนอยู่
     """
     global last_verify_mismatches
     try:
@@ -127,11 +133,17 @@ def _verify_after_save(driver, data, page_label: str):
     except Exception as e:
         log(f"   ⚠️ ตรวจค่าที่กรอกไม่สำเร็จ ({type(e).__name__}) — ถือว่ายังไม่ได้ตรวจ")
         bad = [{"id": "-", "intended": "", "actual": None, "reason": "ตรวจไม่สำเร็จ"}]
-    last_verify_mismatches = [b for b in bad if b["reason"] != "อ่านไม่ได้"]
-    for b in last_verify_mismatches:
+    found = [b for b in bad if b["reason"] != "อ่านไม่ได้"]
+    if reset:
+        last_verify_mismatches = list(found)
+    else:
+        seen = {(b.get("id"), b.get("intended")) for b in last_verify_mismatches}
+        last_verify_mismatches = last_verify_mismatches + [
+            b for b in found if (b.get("id"), b.get("intended")) not in seen]
+    for b in found:
         _review_note(data, f"{page_label}: {b['id']} กรอก {b['intended']!r} "
                            f"แต่บนหน้าเป็น {b['actual']!r} — ตรวจก่อนส่งงาน")
-    return last_verify_mismatches
+    return found
 
 
 def _review_note(data, msg: str):
@@ -3866,10 +3878,15 @@ def _money(value) -> float:
 
 
 def _type_fee(driver, elem_id: str, value, label: str):
-    """พิมพ์ค่าลงช่องราคา แล้วกด Tab ให้ JS ของหน้าคำนวณยอดรวม"""
+    """พิมพ์ค่าลงช่องราคา แล้วกด Tab ให้ JS ของหน้าคำนวณยอดรวม
+
+    ใช้ send_keys ตรง ๆ (ไม่ผ่าน set_text) เพราะต้องกด Tab ให้หน้าคำนวณ →
+    ต้อง record_filled เองด้วย ไม่งั้น **ตัวเลขเงินจะเป็นส่วนเดียวของหน้านี้ที่ไม่มีใครตรวจ**
+    (_cmp_value ผ่อนรูปแบบตัวเลขให้อยู่แล้ว: 500 = 500.00 = 1,000.00)"""
     el = driver.find_element(By.ID, elem_id)
     el.clear()
     el.send_keys(str(value), Keys.TAB)
+    record_filled(elem_id, value)
     log(f"   ✓ {label} = {value}")
 
 
@@ -4026,7 +4043,7 @@ def leave_report(driver) -> bool:
         return False
 
 
-def _save_and_exit_billing(driver, leave: bool = True):
+def _save_and_exit_billing(driver, leave: bool = True, data=None):
     """โหมด draft-park (se-survey ⚡ นำเข้า / เติม draft เดิม): บันทึกหัวบิล
     (เลขที่ใบแจ้งหนี้ + วันที่วางบิล) ด้วยปุ่ม 'บันทึกราคา' — id ต่างกันตามสถานะงาน
     (`btnSurveySave` draft ใหม่ / `btnSurvey_Update` เปิดมาแก้, ดู _PRICE_SAVE_BUTTONS)
@@ -4063,6 +4080,12 @@ def _save_and_exit_billing(driver, leave: bool = True):
         log(f"   ⚠️ กดปุ่มบันทึกราคาไม่ได้ ({type(e).__name__}) — "
             "บันทึก + ออกจากเรื่องเองบนหน้าจอ (ยังไม่กดกลับ Inbox กันข้อมูลหาย)")
         return
+    # (1.5) อ่านค่ากลับมาเทียบ **ขณะยังอยู่หน้านี้** — ออกจากเรื่องไปแล้วอ่านไม่ได้
+    #    เดิมหน้านี้ไม่เคยถูกตรวจเลย (ตรวจแต่หน้าหลัก) ทั้งที่ 3 ช่องความเห็นอยู่ในชุด
+    #    ที่ EMCS กลืนอักขระ + ตารางราคาคือตัวเลขเงิน · ที่ log '✓ ผลการดำเนินงาน = ...'
+    #    ไว้ก่อนหน้าเป็นการอ่าน **ก่อนกดบันทึก** จับของที่หายตอนบันทึกไม่ได้
+    if data is not None:
+        _verify_after_save(driver, data, "หน้าค่าใช้จ่าย", reset=False)
     # (2) กลับหน้า Inbox/Outbox = ออกจากเรื่องที่ทำเสร็จ → ปลดล็อกให้คนอื่นเข้าต่อได้
     #     แต่ถ้ายังจะเสนอให้คนสั่งส่ง ต้อง **ค้างอยู่ในเรื่อง** ไม่งั้นหาปุ่มส่งไม่เจอ
     if leave:
@@ -4133,6 +4156,10 @@ def fill_billing(driver, data: ClaimData, full_billing: bool = True,
         except TimeoutException:
             log("   ⚠️ หน้าค่าใช้จ่ายไม่โหลด (txtBill_No ไม่โผล่) — ข้าม กรอกเอง")
             return
+    # เริ่มจำค่าที่กรอกของ "หน้าค่าใช้จ่าย" (เฟส 2 — อ่านกลับมาเทียบหลังบันทึก)
+    # วางตรงนี้เพราะหน้าโหลดแล้วแน่ ๆ และครอบหัวบิลด้วย (เลขที่ใบแจ้งหนี้ = เลขอ้างอิงเบิกเงิน)
+    # ของหน้าหลักถูกตรวจไปแล้วตั้งแต่บันทึกหน้าหลัก — ผลเก็บไว้ใน last_verify_mismatches
+    reset_filled()
     # เคลียร์ก่อนกรอก — งานต่อเนื่องช่องอาจมีค่าครั้งก่อนค้าง (set_text ต่อท้ายไม่ทับ)
     for fid in ("txtBill_No", "wuCale_Bill_Date_txtCalendar"):
         try:
@@ -4158,7 +4185,7 @@ def fill_billing(driver, data: ClaimData, full_billing: bool = True,
         log("EMCS: หน้าค่าใช้จ่าย — กรอกแค่เลขที่ใบแจ้งหนี้ + วันที่วางบิล "
             "(งานจาก se-survey: ความเห็น/เรทราคา หัวหน้ากรอกเองใน EMCS); "
             "บันทึกด้วยปุ่ม 'บันทึกราคา' ไม่กด 'ส่งงานใหม่'")
-        _save_and_exit_billing(driver, leave=leave)
+        _save_and_exit_billing(driver, leave=leave, data=data)
         return
 
     # ---- ต้นทาง ISURVEY: หัวหน้ากรอกความเห็น+เรทราคาไว้ในระบบเดิมแล้ว → ยกมาทั้งหน้า ----
@@ -4189,7 +4216,7 @@ def fill_billing(driver, data: ClaimData, full_billing: bool = True,
     # ปุ่มบันทึกบนจอมีปุ่มเดียว value='บันทึกราคา' แต่ id มี 2 แบบ (ยังไม่เคยบันทึกบิล =
     # btnSurveySave / เคยบันทึกแล้ว = btnSurvey_Update) — _save_and_exit_billing ลองทั้งคู่
     # ⛔ 'ส่งงานใหม่' (wuFlow1_cmdSendNew) ยังห้ามแตะเด็ดขาดเหมือนเดิม
-    _save_and_exit_billing(driver, leave=leave)
+    _save_and_exit_billing(driver, leave=leave, data=data)
     log("EMCS: บันทึกหน้าค่าใช้จ่ายแล้ว — ตรวจ/แก้ราคา แล้วกด 'ส่งงานใหม่' เอง "
         "(สคริปต์ไม่กดส่งให้)")
 

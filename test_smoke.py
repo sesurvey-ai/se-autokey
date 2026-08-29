@@ -1621,7 +1621,7 @@ check("ค่าใช้จ่าย (โหมด draft-park): ไม่แต
 check("ค่าใช้จ่าย (โหมด draft-park): ไม่แตะตารางราคา",
       _fb.index("fill_fee_table(driver, data.bill)") > _cut)
 check("ค่าใช้จ่าย (โหมด draft-park): ยังกด 'บันทึกราคา' ก่อน return (ไม่งั้นหัวบิลไม่ติด)",
-      _cut < _fb.index("_save_and_exit_billing(driver, leave=leave)")
+      _cut < _fb.index("_save_and_exit_billing(driver, leave=leave, data=data)")
       < _fb.index("return", _cut))
 # call site: ไม่ควรเหลือเส้นไหนที่ปิดการกรอกยอด/ความเห็นอีก
 _main_src = _insp.getsource(_main) if hasattr(_main, "__file__") else open(
@@ -3105,10 +3105,11 @@ check("XML: อ่าน DRI_RELATION ของคู่กรณีเข้า
       '"relation_id": _text(car, "DRI_RELATION")' in _insp.getsource(surv_xml))
 
 
-# ---- 26. + หายตอน EMCS บันทึก -> แปลงเป็น "พลัส" เฉพาะช่องที่ระบุ ----
+# ---- 26. อักขระที่ EMCS กลืนตอนบันทึก -> แปลงเป็นตัวที่รอด เฉพาะช่องที่ระบุ ----
 # ฟอร์ม EMCS ส่งแบบ urlencoded (+ = เว้นวรรค) แล้วฝั่งเขา decode ซ้ำ -> + หายเงียบ
 # 15/08/69 เพิ่ม txtPolicy_Type เพราะ "ประเภท 2+" กลายเป็น "ประเภท 2" = ผิดความคุ้มครอง
-_PS = browser._plus_safe
+# 29/08/69 เพิ่ม % และ em-dash (เจอสดบน S68426084815: '0 mg%' -> '0 mg')
+_PS = browser._emcs_safe
 check("+ ในความเห็นผู้ตรวจสอบ -> พลัส",
       _PS("txtAcc_Comment", "รถประกันประเภท 2+ ตรวจแล้ว") == "รถประกันประเภท 2พลัส ตรวจแล้ว")
 check("+ ในรายละเอียดการเกิดเหตุ -> พลัส",
@@ -3124,6 +3125,70 @@ check("ไม่มี + = คืนค่าเดิม",
       _PS("txtAcc_Comment", "ปกติ") == "ปกติ")
 check("แปลงทุกจุดในข้อความเดียว",
       _PS("txtAcc_Comment", "2+ และ 3+") == "2พลัส และ 3พลัส")
+# % หายเกลี้ยงตอนบันทึก — ผลตรวจแอลกอฮอล์ '35 mg%' เสียหน่วยวัด (เจอสด 29/08/69)
+check("% ในผลตรวจแอลกอฮอล์ -> เปอร์เซ็นต์ (เว้นวรรคเดียว)",
+      _PS("txtAlc_Result", "0 mg%") == "0 mg เปอร์เซ็นต์")
+check("% ที่ติดตัวเลข -> เว้นวรรคเดียวเหมือนกัน",
+      _PS("txtAcc_Comment", "ลด 50% แล้ว") == "ลด 50 เปอร์เซ็นต์ แล้ว")
+# em-dash หายทั้งตัว เหลือเว้นวรรคคู่ -> แปลงเป็นยัติภังค์ซึ่ง EMCS รับ
+check("em-dash -> ยัติภังค์",
+      _PS("txtAcc_Detail", "ก — ข") == "ก - ข")
+check("ช่องนอกชุดไม่ถูกแตะ (% / em-dash)",
+      _PS("txtDri_Name", "0 mg%") == "0 mg%"
+      and _PS("txtDri_Name", "ก — ข") == "ก — ข")
+# ⛔ ห้ามเดาเผื่อ — en-dash / curly quote ยังไม่เคยเจอของจริง ใส่มั่ว = แก้ของที่ไม่ได้พัง
+check("ไม่เดาเผื่ออักขระที่ยังไม่เคยเจอสด (en-dash คงเดิม)",
+      _PS("txtAcc_Detail", "ก – ข") == "ก – ข")
+
+
+# ---- 26b. หน้าค่าใช้จ่ายต้องถูกตรวจกลับด้วย (เดิมตรวจแต่หน้าหลัก) ----
+# 3 ช่องความเห็นอยู่ในชุดที่ EMCS กลืนอักขระ + ตารางราคาคือตัวเลขเงิน แต่ไม่เคยมีตัวตรวจ
+# ส่วน log '✓ ผลการดำเนินงาน = ...' เดิมอ่าน **ก่อนกดบันทึก** จับของที่หายตอนบันทึกไม่ได้
+_emcs_src2 = _insp.getsource(emcs)
+_bill_src = _insp.getsource(emcs.fill_billing)
+_save_src = _insp.getsource(emcs._save_and_exit_billing)
+check("หน้าค่าใช้จ่าย: เริ่มจำค่าที่กรอก (reset_filled) ก่อนกรอก",
+      "reset_filled()" in _bill_src)
+check("หน้าค่าใช้จ่าย: ตรวจกลับหลังบันทึก ขณะยังอยู่หน้านั้น",
+      '_verify_after_save(driver, data, "หน้าค่าใช้จ่าย", reset=False)' in _save_src
+      and "leave: bool = True, data=None" in _save_src
+      # ⛔ ต้องอยู่ "ก่อน" leave_report — ออกจากเรื่องไปแล้วอ่านค่ากลับไม่ได้
+      and _save_src.index("_verify_after_save") < _save_src.index("leave_report(driver)"))
+check("หน้าค่าใช้จ่าย: ทั้ง 2 ทางเรียก (draft-park + เต็มหน้า) ส่ง data เข้าไปด้วย",
+      _emcs_src2.count("_save_and_exit_billing(driver, leave=leave, data=data)") == 2)
+# ⛔ ตารางราคา = ตัวเลขเงินที่กลายเป็นใบวางบิล ห้ามเป็นส่วนเดียวของหน้าที่ไม่มีใครตรวจ
+#    _type_fee ใช้ send_keys+Tab (ไม่ผ่าน set_text) จึงต้องจำค่าเอง
+check("หน้าค่าใช้จ่าย: ตารางราคาถูกจำไว้ตรวจกลับด้วย",
+      "record_filled(elem_id, value)" in _insp.getsource(emcs._type_fee))
+# ⛔ ผลตรวจหน้าหลังต้องไม่ลบผลหน้าหน้า ไม่งั้นประตูเฟส 3 เปิดทั้งที่หน้าหลักเพี้ยน
+class _FakeData:
+    def __init__(self): self.review_notes = []
+_saved_vf = emcs.verify_filled
+try:
+    emcs.last_verify_mismatches = []
+    emcs.verify_filled = lambda d, label="": [
+        {"id": "txtAcc_Detail", "intended": "ก", "actual": "ข", "reason": "ต่าง"}]
+    emcs._verify_after_save(None, _FakeData(), "หน้าหลัก")
+    _after_main = list(emcs.last_verify_mismatches)
+    emcs.verify_filled = lambda d, label="": []      # หน้าค่าใช้จ่ายไม่เจออะไร
+    emcs._verify_after_save(None, _FakeData(), "หน้าค่าใช้จ่าย", reset=False)
+    _after_bill = list(emcs.last_verify_mismatches)
+    emcs.verify_filled = lambda d, label="": [
+        {"id": "txtAcc_result", "intended": "ค", "actual": "ง", "reason": "ต่าง"}]
+    emcs._verify_after_save(None, _FakeData(), "หน้าค่าใช้จ่าย", reset=False)
+    _both = list(emcs.last_verify_mismatches)
+    emcs._verify_after_save(None, _FakeData(), "หน้าหลัก")   # เคสถัดไป = เริ่มใหม่
+    _reset = list(emcs.last_verify_mismatches)
+finally:
+    emcs.verify_filled = _saved_vf
+    emcs.last_verify_mismatches = []
+check("ตรวจหน้าค่าใช้จ่ายแล้วผลของหน้าหลักต้องไม่หาย",
+      len(_after_main) == 1 and len(_after_bill) == 1
+      and _after_bill[0]["id"] == "txtAcc_Detail")
+check("เจอทั้ง 2 หน้า = สะสมทั้งคู่ (ประตูเฟส 3 เห็นครบ)",
+      sorted(b["id"] for b in _both) == ["txtAcc_Detail", "txtAcc_result"])
+check("reset=True (เคสถัดไป) = เริ่มนับใหม่ ไม่ค้างข้ามเคส",
+      len(_reset) == 1 and _reset[0]["id"] == "txtAcc_result")
 
 
 # ---- 27. บริษัทประกันของงาน = ดูจาก prefix เลขเซอร์เวย์ (ไม่ hardcode) ----

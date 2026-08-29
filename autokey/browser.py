@@ -248,18 +248,26 @@ def accept_alert(driver, timeout=30) -> str:
 
 # ---------------------------------------------------------------- อ่าน/กรอกค่า
 
-# ── เครื่องหมาย + หายตอน EMCS บันทึก ────────────────────────────────────────
+# ── อักขระที่ EMCS "กลืน" ตอนบันทึก ─────────────────────────────────────────
 # ฟอร์มของ EMCS ส่งแบบ application/x-www-form-urlencoded ซึ่ง "+" แปลว่าเว้นวรรค
 # (บวกจริงต้องเป็น %2B) ฝั่งเซิร์ฟเวอร์ถอดรหัสค่าที่ถอดมาแล้วซ้ำอีกรอบ → "+" กลายเป็น
 # ช่องว่างเงียบ ๆ · ยืนยันจากหน้าจริง 13/08/69: พิมพ์ "ประเภท 2+" ลง txtAcc_Detail
 # แล้วกด "แก้ไข" เครื่องหมายบวกหายไป ส่วน : / ( ) . - รอดครบ (จึงไม่ใช่ตัวกรองอักขระ)
 #
-# แก้ที่ EMCS ไม่ได้ → แปลงเป็นคำก่อนพิมพ์ "เฉพาะช่องที่ระบุไว้" (user เลือกเอง 13/08/69)
-# ข้อมูลต้นทางใน se-survey ไม่ถูกแตะ — คนเปิดดูบนเว็บ/แอปยังเห็น "2+" เหมือนเดิม
+# 29/08/69 รันสดบน S68426084815 เจอเพิ่มอีก 2 ตัว **ที่ไม่ใช่ช่อง noTyping** จึงไม่มี
+# อะไรฟ้องตอนพิมพ์ — บอทพิมพ์เข้าไปเต็ม ๆ แล้วหายตอนบันทึก:
+#   '0 mg%' → '0 mg'                    (% หายเกลี้ยง — ผลตรวจแอลกอฮอล์เสียหน่วย)
+#   '...การ — ชนท้าย' → '...การ  ชนท้าย' (em-dash หายทั้งตัว เว้นวรรครอบข้างยังอยู่)
 #
+# แก้ที่ EMCS ไม่ได้ → แปลงเป็นตัวที่ "รอด" ก่อนพิมพ์ "เฉพาะช่องที่ระบุไว้"
+# (user เลือกเอง 13/08/69) · ข้อมูลต้นทางใน se-survey ไม่ถูกแตะ — คนเปิดดูบนเว็บ/แอป
+# ยังเห็น "2+" เหมือนเดิม
+#
+# ⛔ ใส่เฉพาะตัวที่ **เทสสดแล้วว่าหายจริง** — ไม่เดาเผื่อ (– en-dash, ' ' curly quote,
+#    … ellipsis ยังไม่เคยเจอของจริง) ใส่มั่ว = ไปแก้ข้อมูลที่ไม่ได้พัง
 # ⛔ ห้ามใส่ช่องชื่อคน (txtDri_Name / txtOpo_Name / txtAcc_Surv …) — พวกนั้นมี noTyping
 #    ของ EMCS กรองอักขระอยู่แล้ว และ set_text ด้านล่าง normalize ให้ตรงกติกานั้นต่างหาก
-PLUS_TO_WORD_FIELDS = {
+EMCS_EATS_FIELDS = {
     "txtAcc_Detail",     # รายละเอียดการเกิดเหตุ (หน้าข้อมูลทั่วไป)
     "txtAcc_result",     # ผลการดำเนินงาน (หน้าค่าใช้จ่าย)
     "txtAcc_Comment",    # ความเห็นของผู้ตรวจสอบ (หน้าค่าใช้จ่าย)
@@ -268,25 +276,40 @@ PLUS_TO_WORD_FIELDS = {
     # ⚠️ ช่องนี้ต่างจาก 4 ช่องบน: ที่นั่น + หายแล้วอ่านสะดุด แต่ที่นี่ "ประเภท 2+"
     #    กลายเป็น "ประเภท 2" = **ผิดความคุ้มครอง** ไม่ใช่แค่อักขระหาย
     "txtPolicy_Type",
+    # ผลตรวจแอลกอฮอล์ — เพิ่ม 29/08/69 ('35 mg%' เสีย % = เสียหน่วยวัด)
+    "txtAlc_Result",
 }
 PLUS_WORD = "พลัส"
+PCT_WORD = "เปอร์เซ็นต์"
+EM_DASH = "—"
 
 
-def _plus_safe(elem_id, value: str) -> str:
-    """แปลง + เป็นคำ เฉพาะช่องใน PLUS_TO_WORD_FIELDS (ช่องอื่นคืนค่าเดิม)
+def _emcs_safe(elem_id, value: str) -> str:
+    """แปลงอักขระที่ EMCS กลืน เฉพาะช่องใน EMCS_EATS_FIELDS (ช่องอื่นคืนค่าเดิม)
 
     เทียบแบบ "ลงท้ายด้วย _<ชื่อช่อง>" ด้วย เพราะบล็อกคู่กรณีของ EMCS อยู่ใน
     naming container ของ ASP.NET → id จริงเป็น wuOpoCar1_txtPolicy_Type
     (เทียบตรงตัวอย่างเดียวจะพลาดคู่กรณีทั้งหมด ซึ่งเป็นที่ที่ "2+" โผล่บ่อยที่สุด)
     """
     eid = str(elem_id or "")
-    if "+" not in value:
+    if not any(c in value for c in ("+", "%", EM_DASH)):
         return value
-    if not any(eid == f or eid.endswith("_" + f) for f in PLUS_TO_WORD_FIELDS):
+    if not any(eid == f or eid.endswith("_" + f) for f in EMCS_EATS_FIELDS):
         return value
-    out = value.replace("+", PLUS_WORD)
-    log(f"   ~ {elem_id}: แปลง + เป็น '{PLUS_WORD}' {value.count('+')} จุด "
-        f"(EMCS กลืนเครื่องหมายบวกตอนบันทึก)")
+    out, changed = value, []
+    if "+" in out:
+        changed.append(f"+ → '{PLUS_WORD}' {out.count('+')} จุด")
+        out = out.replace("+", PLUS_WORD)
+    if "%" in out:
+        # กินเว้นวรรคหน้า % ไปด้วย ไม่งั้น '0 mg%' จะกลายเป็น '0 mg เปอร์เซ็นต์' บ้าง
+        # '50%' → '50เปอร์เซ็นต์' บ้าง — ให้ออกมาเว้นวรรคเดียวเสมอ
+        changed.append(f"% → '{PCT_WORD}' {out.count('%')} จุด")
+        out = re.sub(r"\s*%", " " + PCT_WORD, out)
+    if EM_DASH in out:
+        # em-dash → ยัติภังค์ (อยู่ในชุดที่ EMCS รับ) — คงความหมายเดิม ไม่เหลือช่องว่างคู่
+        changed.append(f"em-dash → '-' {out.count(EM_DASH)} จุด")
+        out = out.replace(EM_DASH, "-")
+    log(f"   ~ {elem_id}: {' · '.join(changed)} (EMCS กลืนอักขระพวกนี้ตอนบันทึก)")
     return out
 
 
@@ -309,6 +332,12 @@ def reset_filled():
 
 def _record_filled(elem_id, value):
     _FILLED[str(elem_id)] = str(value)
+
+
+def record_filled(elem_id, value):
+    """จำค่าที่กรอกด้วยเส้นอื่นที่ไม่ผ่าน set_text/set_textarea (เช่นช่องราคาที่ต้องกด Tab
+    ให้ JS คำนวณ) — ไม่งั้นช่องนั้นจะรอดจากการตรวจกลับไปเงียบ ๆ"""
+    _record_filled(elem_id, value)
 
 
 def _cmp_value(intended: str, actual: str) -> bool:
@@ -418,7 +447,7 @@ def set_textarea(driver, elem_id, value):
     if value is None or str(value) == "":
         log(f"   - ข้าม {elem_id} (ค่าว่าง)")
         return
-    value = _plus_safe(elem_id, str(value))
+    value = _emcs_safe(elem_id, str(value))
     try:
         el = driver.find_element(By.ID, elem_id)
     except Exception:
@@ -449,7 +478,7 @@ def set_text(driver, elem_id, value):
     if value is None or str(value) == "":
         log(f"   - ข้าม {elem_id} (ค่าว่าง)")
         return
-    value = _plus_safe(elem_id, str(value))
+    value = _emcs_safe(elem_id, str(value))
     el = driver.find_element(By.ID, elem_id)
     # ช่องที่มี onkeypress="noTyping" ของ EMCS ยอมเฉพาะ [เว้นวรรค a-zA-Z0-9 ก-์ . -]
     # เส้นพิมพ์ (send_keys) จะโดนตัดอักขระอื่นทิ้ง "เงียบ ๆ" ส่วนเส้น JS fallback ยัดเข้าได้
@@ -472,7 +501,7 @@ def set_text(driver, elem_id, value):
                 return
         except Exception:
             pass
-    # จำค่า "สุดท้ายหลังแปลงแล้ว" ไว้ตรวจกลับ (ผ่าน _plus_safe + noTyping มาแล้ว)
+    # จำค่า "สุดท้ายหลังแปลงแล้ว" ไว้ตรวจกลับ (ผ่าน _emcs_safe + noTyping มาแล้ว)
     _record_filled(elem_id, value)
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
