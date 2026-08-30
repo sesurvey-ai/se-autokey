@@ -947,6 +947,49 @@ with tempfile.TemporaryDirectory() as _xd:
     check("surv_xml: คู่กรณี (CAR TYPE!=0) = 1", len(_parsed["third_parties"]) == 1)
     check("surv_xml: ทรัพย์สิน = 1", len(_parsed["assets"]) == 1)
 
+# ---- 20b. ประเภทกรมธรรม์ = "รหัส" จาก XML ไม่ใช่คำอ่านจาก report ----
+# EMCS เก็บช่องนี้เป็นรหัส (เคสจริง 000098: <POLICY_TYPE>01</POLICY_TYPE> และช่องบนหน้า = '01')
+# ฝั่ง se-survey แปลงให้แล้วด้วย policyTypeCode() ('ชั้น 2+' → '52' ยืนยันจากใบจริง
+# เคส 21BR10AVD-6905-001860) แต่เส้นบอทกรอกตรงเคยอ่านคำอ่านดิบจาก report → ได้ 'ชั้น 2พลัส'
+_xml_pt = """<TXN_SURV_REPORT><POLICY_TYPE>52</POLICY_TYPE>
+ <TXN_SURV_CAR><TYPE>0</TYPE><POLICY_TYPE> </POLICY_TYPE><DRI_GENDER>M</DRI_GENDER></TXN_SURV_CAR>
+ <TXN_SURV_CAR><TYPE>1</TYPE><CAR_REGNO>8ขข8888</CAR_REGNO><POLICY_TYPE>03</POLICY_TYPE></TXN_SURV_CAR>
+</TXN_SURV_REPORT>"""
+with tempfile.TemporaryDirectory() as _xd2:
+    _xp2 = pathlib.Path(_xd2) / "SURV_REPORT_pt.txt"
+    _xp2.write_text(_xml_pt, encoding="utf-8")
+    _pt = surv_xml.parse_surv_report(_xp2)
+    # ⛔ ของรถประกันอยู่ระดับ "รายงาน" ไม่ใช่ในบล็อกรถ (ตรงนั้นว่างเสมอ) — อ่านผิดที่ = ได้ค่าว่าง
+    check("ประเภทกรมธรรม์รถประกัน: อ่านจากระดับรายงาน ไม่ใช่บล็อกรถ",
+          _pt["insured"].get("policy_type") == "52")
+    check("ประเภทกรมธรรม์คู่กรณี: อ่านจากบล็อกรถของคันนั้น",
+          _pt["third_parties"][0].get("insure_type") == "03")
+
+    class _PTData:
+        def __init__(self, it=""):
+            self.insure_type = it
+            self.third_parties = []; self.injuries = []; self.assets = []
+            self.driver_gender = ""; self.bill = {}; self.xml_file = ""
+    _d1 = _PTData()
+    surv_xml.enrich_claim_from_xml(_d1, _xp2)
+    check("เส้น se-survey: ช่องว่างอยู่ → เติมรหัสจาก XML",
+          _d1.insure_type == "52")
+    # ⛔ เส้น ISURVEY อ่านจาก tab-7 มาแล้ว (คำอ่าน) — XML ห้ามทับ ไม่งั้นไปเปลี่ยนเส้นที่ไม่ได้พัง
+    _d2 = _PTData("ประเภท 1")
+    surv_xml.enrich_claim_from_xml(_d2, _xp2)
+    check("เส้น ISURVEY: มีค่าอยู่แล้ว → XML ไม่ทับ",
+          _d2.insure_type == "ประเภท 1")
+
+# call site: คู่กรณีต้องคงรหัสจาก XML ทับ label ที่ report ให้มา (เหมือนจังหวัด/อำเภอ/ใบขับขี่)
+_main_src_pt = pathlib.Path("main.py").read_text(encoding="utf-8")
+check("คู่กรณี: main.py คงประเภทกรมธรรม์จาก XML",
+      '("province_id", "district_id", "lic_type", "insure_type")' in _main_src_pt)
+# ⛔ โหมดซ่อมเดิมไม่แตะช่องนี้เลย → ส่งกลับไปแก้แล้วเปลี่ยนประเภทกรมธรรม์ = EMCS ค้างค่าเก่า
+#    (เจอสด draft S68426084815 ค้าง '01' ทั้งที่ข้อมูลเป็น '52' แล้ว)
+check("รถประกัน: โหมดซ่อมเขียนประเภทกรมธรรม์ด้วย (ไม่ค้างค่าเก่าหลังส่งกลับไปแก้)",
+      '("txtPolicy_Type", data.insure_type)'
+      in __import__("inspect").getsource(emcs._fill_policy_extras))
+
 # ---- 21. emcs.continuation_esurvey: ตรวจงานต่อเนื่อง (มีเรื่องเดิม + invoice ใหม่) ----
 _exist = [{"esurvey": "S68426056403",
            "row": "S68426056403 SEABI-172260500053 2026013041465 ..."}]

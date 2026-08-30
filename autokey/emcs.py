@@ -4869,10 +4869,17 @@ def _fill_policy_extras(driver, data: ClaimData):
        3 ช่องนี้จะไม่เคยถูกเขียนเลย เงียบ ๆ · ที่เจ็บสุดคือ **ค่าเสียหายส่วนแรก** ซึ่งเป็นตัวเงิน
        (เจอจากการทดสอบสด 19/08/69 — เคสทดสอบทั้ง 2 ใบ import รอบแรกล้มทั้งคู่)
     ไม่ reuse fill_policy ทั้งก้อน เพราะห้ามแตะบล็อกกรมธรรม์/ประเภทเคลมที่ importer ตั้งไว้แล้ว
+
+    ⚠️ **ยกเว้นประเภทกรมธรรม์** (เพิ่ม 30/08/69) — ช่องนี้ importer ตั้งจาก XML ของเราเอง
+    ตอน import ครั้งแรก พอเคสถูกส่งกลับไปแก้แล้วประเภทกรมธรรม์เปลี่ยน โหมดซ่อมไม่เคยเขียน
+    ทับ → **EMCS ค้างค่าเก่าตลอดไปเงียบ ๆ** (เจอสด: draft S68426084815 ค้าง '01' ทั้งที่
+    ข้อมูลเป็น 'ชั้น 2+' = รหัส '52' แล้ว) · SKIP_UNCHANGED คุมอยู่ = เขียนเฉพาะตอนค่าต่างจริง
+    จึงไม่รบกวนเคสที่ importer เพิ่งตั้งค่าถูกอยู่แล้ว
     """
     for fid, val in (("txtAssured_Email", data.assured_email),
                      ("txtDeductible", data.deductible),
-                     ("txtDri_Order", data.driver_ticket)):
+                     ("txtDri_Order", data.driver_ticket),
+                     ("txtPolicy_Type", data.insure_type)):
         try:
             if str(val or "").strip():
                 set_text(driver, fid, val)

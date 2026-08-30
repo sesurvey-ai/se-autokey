@@ -690,9 +690,10 @@ def _populate_third_parties_from_report(data, rep):
             "has_kfk": "1" if o.get("kfk") is True else "",
         }
         # คงรหัสจากXML: จังหวัด/อำเภอ (ddlDri_*ID) + ประเภทใบขับขี่ (ddlEmcs_License_Type)
+        # + ประเภทกรมธรรม์ (POLICY_TYPE — 'ชั้น 2+' → '52' ผ่าน policyTypeCode() ฝั่ง se-survey)
         # — fill_third_parties เลือกด้วยรหัส ไม่ใช่ชื่อไทย; report ให้ label ตัดออก ต้องดึงจาก XML
         if i < len(xml_tps):
-            for _k in ("province_id", "district_id", "lic_type"):
+            for _k in ("province_id", "district_id", "lic_type", "insure_type"):
                 if str(xml_tps[i].get(_k) or "").strip():
                     tp[_k] = xml_tps[i][_k]
         tps.append(tp)

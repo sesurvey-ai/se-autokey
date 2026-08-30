@@ -38,6 +38,9 @@ def parse_surv_report(path) -> dict:
                 "gender": _text(car, "DRI_GENDER"),
                 "title_id": _text(car, "DRI_TITLE_ID"),
                 "idcard": _text(car, "DRI_CARDID"),
+                # ⚠️ ประเภทกรมธรรม์ของ "รถประกัน" ไม่ได้อยู่ในบล็อกรถ (ตรงนั้นว่างเสมอ)
+                #    แต่อยู่ระดับรายงาน — เติมทีหลังจาก TXN_SURV_REPORT ข้างล่าง
+                "policy_type": "",
             }
             continue
         out["third_parties"].append({
@@ -72,6 +75,10 @@ def parse_surv_report(path) -> dict:
             "insurer": _text(car, "HAVE_INSURANCE"),
             "policy_no": _text(car, "POLICYNO"),
             "claim_no": _text(car, "CLAIMNO"),
+            # ประเภทกรมธรรม์ = **รหัส** ที่ระบบประกันใช้ (01/02/03/52) ไม่ใช่คำอ่าน —
+            # ฝั่ง se-survey แปลงให้แล้วด้วย policyTypeCode() ตอน export XML
+            # (ยืนยันจากเคสจริง 000098: <POLICY_TYPE>01</POLICY_TYPE> และช่องบนหน้าเป็น '01')
+            "insure_type": _text(car, "POLICY_TYPE"),
             "cost_damage": _text(car, "COST_DAMAGE"),
             "damage_list": _text(car, "DAMAGE_LIST"),
             "repairer": _text(car, "REPAIRER_NAME"),
@@ -116,6 +123,13 @@ def parse_surv_report(path) -> dict:
             "treat_to": _text(inj, "TO_DATE"),
             "relation": _text(inj, "DRI_RELATION_ID"),  # รหัส (ddlDri_Relation_ID value)
         })
+
+    # ประเภทกรมธรรม์ของรถประกัน — อยู่ระดับรายงาน (TXN_SURV_REPORT/POLICY_TYPE)
+    # ไฟล์จริงห่อด้วย <INSERT_SURV_REPORT_XML> → TXN_SURV_REPORT เป็นลูก
+    # แต่บางไฟล์/บางเทสส่ง TXN_SURV_REPORT มาเป็น root เลย — find(".//") หา "ตัวเอง" ไม่เจอ
+    rep_el = root if root.tag == "TXN_SURV_REPORT" else root.find(".//TXN_SURV_REPORT")
+    if rep_el is not None and out.get("insured") is not None:
+        out["insured"]["policy_type"] = _text(rep_el, "POLICY_TYPE")
 
     # ค่าสำรวจ (ฝั่ง "เสนอ" ของบริษัทสำรวจ) — ใช้กรอกตารางราคาหน้า Debit Note
     bill_el = root.find(".//TXN_SURV_BILL")
@@ -165,6 +179,12 @@ def enrich_claim_from_xml(data, xml_path) -> bool:
     insured = parsed.get("insured", {})
     if not data.driver_gender.strip() and insured.get("gender", "").strip():
         data.driver_gender = insured["gender"].strip()
+
+    # ประเภทกรมธรรม์รถประกัน — เส้น se-survey ไม่เคยเซ็ตช่องนี้เลย (ว่างเสมอ → set_text ข้าม)
+    # ⚠️ "เฉพาะตอนยังว่าง" เหมือน driver_gender — เส้น ISURVEY อ่านจาก tab-7 มาแล้ว
+    #    (ให้เป็นคำอ่าน เช่น 'ประเภท 1') ห้าม XML ไปทับของเดิม
+    if not str(getattr(data, "insure_type", "")).strip()             and insured.get("policy_type", "").strip():
+        data.insure_type = insured["policy_type"].strip()
 
     # ค่าสำรวจ: แหล่งหลักคือชุด INS_* จากหน้าจอ ISURVEY (อ่านใน read_tab1)
     # — XML (ชุด SUR_ ฝั่งเสนอเดิม) เป็นแค่ fallback เมื่อไม่มีข้อมูลหน้าจอ
