@@ -961,9 +961,9 @@ with tempfile.TemporaryDirectory() as _xd2:
     _pt = surv_xml.parse_surv_report(_xp2)
     # ⛔ ของรถประกันอยู่ระดับ "รายงาน" ไม่ใช่ในบล็อกรถ (ตรงนั้นว่างเสมอ) — อ่านผิดที่ = ได้ค่าว่าง
     check("ประเภทกรมธรรม์รถประกัน: อ่านจากระดับรายงาน ไม่ใช่บล็อกรถ",
-          _pt["insured"].get("policy_type") == "52")
+          _pt["insured"].get("policy_type") == "ประเภท 2 พลัส")
     check("ประเภทกรมธรรม์คู่กรณี: อ่านจากบล็อกรถของคันนั้น",
-          _pt["third_parties"][0].get("insure_type") == "03")
+          _pt["third_parties"][0].get("insure_type") == "ประเภท 3")
 
     class _PTData:
         def __init__(self, it=""):
@@ -972,8 +972,8 @@ with tempfile.TemporaryDirectory() as _xd2:
             self.driver_gender = ""; self.bill = {}; self.xml_file = ""
     _d1 = _PTData()
     surv_xml.enrich_claim_from_xml(_d1, _xp2)
-    check("เส้น se-survey: ช่องว่างอยู่ → เติมรหัสจาก XML",
-          _d1.insure_type == "52")
+    check("เส้น se-survey: ช่องว่างอยู่ → เติมค่าจาก XML (แปลงเป็นคำอ่านแล้ว)",
+          _d1.insure_type == "ประเภท 2 พลัส")
     # ⛔ เส้น ISURVEY อ่านจาก tab-7 มาแล้ว (คำอ่าน) — XML ห้ามทับ ไม่งั้นไปเปลี่ยนเส้นที่ไม่ได้พัง
     _d2 = _PTData("ประเภท 1")
     surv_xml.enrich_claim_from_xml(_d2, _xp2)
@@ -981,6 +981,31 @@ with tempfile.TemporaryDirectory() as _xd2:
           _d2.insure_type == "ประเภท 1")
 
 # call site: คู่กรณีต้องคงรหัสจาก XML ทับ label ที่ report ให้มา (เหมือนจังหวัด/อำเภอ/ใบขับขี่)
+# ---- 20c. รหัสใน XML → คำอ่าน ก่อนกรอกลง EMCS (user ตัดสิน 30/08/69) ----
+# ช่อง txtPolicy_Type เป็นช่องข้อความอิสระ EMCS โชว์ค่าดิบไม่มีคำแปล — ที่เป็นรหัส
+# ทุกวันนี้เพราะ XML ยัดรหัสเข้าไป ไม่ใช่เพราะระบบต้องการรหัส
+_ptn = surv_xml.policy_type_name
+check("รหัส → คำอ่าน ครบ 8 ค่า",
+      [_ptn(c) for c in ("01", "02", "03", "04", "05", "10", "52", "53")]
+      == ["ประเภท 1", "ประเภท 2", "ประเภท 3", "พรบ.", "ประเภท 5",
+          "ไม่พบความคุ้มครอง", "ประเภท 2 พลัส", "ประเภท 3 พลัส"])
+# ⛔ ห้ามเขียน "ประเภท 2+" — EMCS กลืนเครื่องหมายบวกตอนบันทึก เหลือ "ประเภท 2" = ผิดความคุ้มครอง
+check("52/53 ต้องไม่มีเครื่องหมายบวก (EMCS กลืนตอนบันทึก)",
+      "+" not in _ptn("52") and "+" not in _ptn("53"))
+check("เว้นวรรคก่อน 'พลัส' (ไม่ใช่ 'ประเภท 2พลัส' ติดกัน)", _ptn("52") == "ประเภท 2 พลัส")
+# เจอของจริงบน EMCS ที่คนคีย์ '1' แทน '01'
+check("เลขไม่เติมศูนย์ก็แปลงได้", _ptn("1") == "ประเภท 1" and _ptn("3") == "ประเภท 3")
+# ⛔ ไม่รู้จัก = คืนเดิม ห้ามเดา (ส่งรหัสผิดเข้าระบบประกันเงียบ ๆ แย่กว่าส่งตามที่มี)
+check("รหัสนอกลิสต์/คำอื่น = คืนค่าเดิม ไม่เดา",
+      _ptn("99") == "99" and _ptn("2EXTRA") == "2EXTRA" and _ptn("") == "")
+# เส้น ISURVEY ให้คำอ่านมาอยู่แล้ว ผ่านตัวแปลงแล้วต้องไม่เปลี่ยน
+check("ค่าที่เป็นคำอยู่แล้วไม่ถูกแตะ", _ptn("ประเภท 1") == "ประเภท 1")
+# ต้องแปลงทั้งรถประกันและคู่กรณี — ไม่ใช่ที่เดียว
+_sx = __import__("inspect").getsource(surv_xml)
+check("แปลงทั้งรถประกัน (ระดับรายงาน) และคู่กรณี (บล็อกรถ)",
+      _sx.count("policy_type_name(_text(") == 2)
+
+
 _main_src_pt = pathlib.Path("main.py").read_text(encoding="utf-8")
 check("คู่กรณี: main.py คงประเภทกรมธรรม์จาก XML",
       '("province_id", "district_id", "lic_type", "insure_type")' in _main_src_pt)

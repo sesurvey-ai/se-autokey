@@ -23,6 +23,40 @@ def _clean_brand(value: str) -> str:
     return value
 
 
+# ── ประเภทกรมธรรม์: รหัสใน XML → คำอ่านที่จะกรอกลง EMCS ────────────────────────
+# XML เก็บเป็นรหัส (01/02/03/04/05/10/52/53 ตามตาราง masterPolicyType ของ ISURVEY)
+# และช่อง txtPolicy_Type บน EMCS ทุกวันนี้เป็นรหัส **เพราะ XML ยัดรหัสเข้าไป**
+# ไม่ใช่เพราะระบบต้องการรหัส — ช่องนี้เป็นช่องข้อความอิสระ 150 ตัวอักษร ไม่มีตัวเลือก
+# และ EMCS โชว์ค่าดิบโดยไม่มีคำแปลให้ คนเปิดดูจึงอ่านไม่ออก
+# → user ตัดสิน 30/08/69: ให้กรอก "ค่าจริงของฟิลด์" ลงไป ไม่ใช่รหัส
+#
+# ⚠️ 52/53 ไม่เขียน "ประเภท 2+" เพราะ **EMCS กลืนเครื่องหมายบวกตอนบันทึก**
+#    ('ประเภท 2+' → 'ประเภท 2' = ผิดความคุ้มครอง) · ถ้าปล่อยให้ _emcs_safe แปลงเองจะได้
+#    'ประเภท 2พลัส' ติดกันอ่านยาก → เขียนเป็นคำเต็มมีเว้นวรรคตั้งแต่ต้น
+POLICY_TYPE_NAME = {
+    "01": "ประเภท 1",
+    "02": "ประเภท 2",
+    "03": "ประเภท 3",
+    "04": "พรบ.",
+    "05": "ประเภท 5",
+    "10": "ไม่พบความคุ้มครอง",
+    "52": "ประเภท 2 พลัส",
+    "53": "ประเภท 3 พลัส",
+}
+
+
+def policy_type_name(value) -> str:
+    """รหัสประเภทกรมธรรม์ → คำอ่าน · ไม่ใช่รหัสที่รู้จัก = คืนค่าเดิม (ห้ามเดา)
+
+    เติมศูนย์นำหน้าให้ก่อนเทียบ — เจอของจริงบน EMCS ที่คนคีย์ '1' แทน '01'
+    ค่าที่เป็นคำอยู่แล้ว (เส้น ISURVEY อ่านจาก tab-7) ผ่านตรงนี้แล้วไม่เปลี่ยน
+    """
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    return POLICY_TYPE_NAME.get(s.zfill(2) if s.isdigit() else s, s)
+
+
 def parse_surv_report(path) -> dict:
     """อ่านไฟล์ SURV_REPORT_*.txt → {'third_parties': [...], 'injuries': [...],
     'assets': [...]} (รถ TYPE 0 คือรถประกัน — ไม่นับเป็นคู่กรณี)"""
@@ -78,7 +112,7 @@ def parse_surv_report(path) -> dict:
             # ประเภทกรมธรรม์ = **รหัส** ที่ระบบประกันใช้ (01/02/03/52) ไม่ใช่คำอ่าน —
             # ฝั่ง se-survey แปลงให้แล้วด้วย policyTypeCode() ตอน export XML
             # (ยืนยันจากเคสจริง 000098: <POLICY_TYPE>01</POLICY_TYPE> และช่องบนหน้าเป็น '01')
-            "insure_type": _text(car, "POLICY_TYPE"),
+            "insure_type": policy_type_name(_text(car, "POLICY_TYPE")),
             "cost_damage": _text(car, "COST_DAMAGE"),
             "damage_list": _text(car, "DAMAGE_LIST"),
             "repairer": _text(car, "REPAIRER_NAME"),
@@ -129,7 +163,7 @@ def parse_surv_report(path) -> dict:
     # แต่บางไฟล์/บางเทสส่ง TXN_SURV_REPORT มาเป็น root เลย — find(".//") หา "ตัวเอง" ไม่เจอ
     rep_el = root if root.tag == "TXN_SURV_REPORT" else root.find(".//TXN_SURV_REPORT")
     if rep_el is not None and out.get("insured") is not None:
-        out["insured"]["policy_type"] = _text(rep_el, "POLICY_TYPE")
+        out["insured"]["policy_type"] = policy_type_name(_text(rep_el, "POLICY_TYPE"))
 
     # ค่าสำรวจ (ฝั่ง "เสนอ" ของบริษัทสำรวจ) — ใช้กรอกตารางราคาหน้า Debit Note
     bill_el = root.find(".//TXN_SURV_BILL")
