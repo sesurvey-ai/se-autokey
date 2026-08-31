@@ -980,6 +980,21 @@ with tempfile.TemporaryDirectory() as _xd2:
     check("เส้น ISURVEY: มีค่าอยู่แล้ว → XML ไม่ทับ",
           _d2.insure_type == "ประเภท 1")
 
+# ---- 20d. คำเตือนยอดเงินต้องตรงบริบทของต้นทาง ----
+# ⛔ เส้น se-survey: ยอดใน XML **คือชุดที่หัวหน้าอนุมัติแล้ว** (สร้างจาก survey_expenses)
+#    การขึ้น "ยอดอาจไม่ตรงชุดอนุมัติ" ทุกรอบทั้งที่ตรงเป๊ะ = คนอ่านจนชินแล้วเลิกอ่าน
+#    (อาการเดียวกับตัวตรวจกลับที่เคยร้องผิดทุกรอบ) · เส้น ISURVEY ยังต้องเตือนเหมือนเดิม
+_sx2 = __import__("inspect").getsource(surv_xml.enrich_claim_from_xml)
+check("แยกความหมายของยอดใน XML ตามต้นทาง",
+      "xml_bill_is_approved" in _sx2)
+check("เส้น se-survey: ยอดที่อนุมัติแล้ว = ไม่เตือน",
+      "ค่าสำรวจจากชุดที่หัวหน้าอนุมัติบนเว็บ se-survey" in _sx2)
+check("เส้น ISURVEY: ยังเตือนเหมือนเดิม (ยอดหลักมาจากหน้าจอ)",
+      "ยอดอาจไม่ตรงชุดอนุมัติ" in _sx2)
+check("call site ของเส้น se-survey ส่งธงครบทั้ง 3 จุด",
+      pathlib.Path("main.py").read_text(encoding="utf-8").count("xml_bill_is_approved=True") == 3)
+
+
 # call site: คู่กรณีต้องคงรหัสจาก XML ทับ label ที่ report ให้มา (เหมือนจังหวัด/อำเภอ/ใบขับขี่)
 # ---- 20c. รหัสใน XML → คำอ่าน ก่อนกรอกลง EMCS (user ตัดสิน 30/08/69) ----
 # ช่อง txtPolicy_Type เป็นช่องข้อความอิสระ EMCS โชว์ค่าดิบไม่มีคำแปล — ที่เป็นรหัส

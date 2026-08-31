@@ -1043,7 +1043,7 @@ def _run_fill_existing(cfg, args, case_id, hdrs, meta):
     data.claim_value = claim_no
     data.invoice_value = gt("SURV_JOBNO")
     data.xml_file = str(xml_path)
-    enrich_claim_from_xml(data, xml_path)
+    enrich_claim_from_xml(data, xml_path, xml_bill_is_approved=True)
     loss_type = "auto"
     severity = "เบา"
     try:
@@ -1165,7 +1165,7 @@ def _run_injured_only(cfg, args, case_id, hdrs, meta):
     data.claim_value = claim_no
     data.invoice_value = gt("SURV_JOBNO")
     data.xml_file = str(xml_path)
-    enrich_claim_from_xml(data, xml_path)
+    enrich_claim_from_xml(data, xml_path, xml_bill_is_approved=True)
     if not data.injuries:
         raise SystemExit(f"เคส #{case_id} ไม่มีผู้บาดเจ็บใน XML — ไม่มีอะไรให้เติม")
     loss_type = "auto"
@@ -1470,7 +1470,7 @@ def run_sesurvey_import(cfg, args):
     data.claim_value = get_tag("REF_CLAIM_NO")
     data.invoice_value = get_tag("SURV_JOBNO")
     data.xml_file = str(xml_path)
-    enrich_claim_from_xml(data, xml_path)
+    enrich_claim_from_xml(data, xml_path, xml_bill_is_approved=True)
 
     # เติมค่าไทยจาก report ของ se-survey → fill_* กรอกหน้าหลัก EMCS (dropdown บังคับ) ได้ครบ
     # ไม่งั้น btnUpdate ไม่ผ่าน validation (ประเภทรถ/จังหวัด/ยี่ห้อ/คำนำหน้า/ลักษณะเหตุ ว่าง)

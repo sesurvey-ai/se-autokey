@@ -190,9 +190,16 @@ def parse_surv_report(path) -> dict:
     return out
 
 
-def enrich_claim_from_xml(data, xml_path) -> bool:
+def enrich_claim_from_xml(data, xml_path, *, xml_bill_is_approved: bool = False) -> bool:
     """เติมข้อมูลคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินจาก XML ลง ClaimData
-    คืน False เมื่อ parse ไม่ได้ (ผู้เรียกควร fallback ไปอ่านหน้าเว็บ)"""
+    คืน False เมื่อ parse ไม่ได้ (ผู้เรียกควร fallback ไปอ่านหน้าเว็บ)
+
+    xml_bill_is_approved: ยอดในไฟล์ XML **คือชุดที่หัวหน้าอนุมัติแล้ว** หรือไม่
+      · เส้น se-survey = True  — XML สร้างจาก `survey_expenses` ที่หัวหน้ากรอกบนเว็บเรา
+        แล้วกดอนุมัติ ไม่มี "หน้าจอ" อื่นที่ถูกต้องกว่านี้
+      · เส้น ISURVEY  = False — ยอดหลักคือ INS_* ที่อ่านจากหน้าจอ ISURVEY
+        ชุด SUR_ ในไฟล์เป็นยอด "เสนอ" เดิม อาจไม่ตรงกับที่อนุมัติจริง จึงต้องเตือน
+    """
     try:
         parsed = parse_surv_report(xml_path)
     except Exception as e:
@@ -221,11 +228,15 @@ def enrich_claim_from_xml(data, xml_path) -> bool:
     if not str(getattr(data, "insure_type", "")).strip()             and insured.get("policy_type", "").strip():
         data.insure_type = insured["policy_type"].strip()
 
-    # ค่าสำรวจ: แหล่งหลักคือชุด INS_* จากหน้าจอ ISURVEY (อ่านใน read_tab1)
-    # — XML (ชุด SUR_ ฝั่งเสนอเดิม) เป็นแค่ fallback เมื่อไม่มีข้อมูลหน้าจอ
+    # ค่าสำรวจ — ความหมายของ "ยอดใน XML" ต่างกันตามต้นทาง (ดู xml_bill_is_approved)
+    # ⛔ ห้ามเตือนแบบเหมารวม: เส้น se-survey ยอดใน XML คือชุดที่อนุมัติแล้ว การขึ้น
+    #    "ยอดอาจไม่ตรงชุดอนุมัติ" ทุกรอบทั้งที่ตรงเป๊ะ = คำเตือนที่คนอ่านจนชินแล้วเลิกอ่าน
+    #    (อาการเดียวกับตัวตรวจกลับที่เคยร้องผิดทุกรอบ — แก้ไปแล้ว 29/08/69)
     if not data.bill:
         data.bill = parsed.get("bill", {})
-        if data.bill:
+        if data.bill and xml_bill_is_approved:
+            log("   ✓ ค่าสำรวจจากชุดที่หัวหน้าอนุมัติบนเว็บ se-survey")
+        elif data.bill:
             log("   ⚠️ ใช้ค่าสำรวจจาก XML (ไม่มีข้อมูลหน้าจอ) — "
                 "ยอดอาจไม่ตรงชุดอนุมัติ ตรวจก่อนบันทึก")
 
