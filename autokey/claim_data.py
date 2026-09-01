@@ -441,7 +441,7 @@ class ClaimData:
         if undash:
             lines.append(
                 "   ↳ " + ", ".join(undash) + " — EMCS บังคับและใส่ \"-\" แทนไม่ได้ "
-                "(บอทจะหยุดถามตอนกรอกถึงช่องนี้ ให้กรอกบน EMCS แล้วกด 'ดำเนินการต่อ')")
+                "— บอทจะไม่เปิด EMCS ให้ ต้องเติมที่ต้นทางก่อน")
         for w in v["warnings"]:
             lines.append(f"⚠️ {w}")
         if v["optional"]:

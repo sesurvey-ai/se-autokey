@@ -2460,6 +2460,32 @@ check("รายงานก่อนกรอก: บอกว่าใส่ '
       'ใส่ "-" แทนไม่ได้' in _rep_d.validation_report())
 
 
+# ด่านหยุดก่อนเปิด EMCS (user เคาะ 01/09/69) — เปิดไปแล้วค่อยหยุดจะเหลือ draft ค้าง
+# ที่ลบไม่ได้ และล็อกเรื่องไว้กับ username ที่บอทใช้
+import main as _mainmod  # noqa: E402
+
+_gd = claim_data.ClaimData(claim_value="1", invoice_value="SEABI-1")
+check("ด่านเวลาสำรวจ: ว่าง → หยุด (ไม่เปิด EMCS)",
+      "ISURVEY ยังไม่มี" in _mainmod._survey_time_gate(_gd))
+check("ด่านเวลาสำรวจ: บอกวิธีแก้ (ไปเติมที่ ISURVEY)",
+      "เติมที่ ISURVEY" in _mainmod._survey_time_gate(_gd))
+
+_gd2 = claim_data.ClaimData(
+    claim_value="1", invoice_value="SEABI-1",
+    arrive_date="31/08/2026", arrive_time="19:30",
+    finish_date="31/08/2026", finish_time="20:00")
+check("ด่านเวลาสำรวจ: ครบ → ผ่าน ไม่หยุด", _mainmod._survey_time_gate(_gd2) == "")
+
+# ⛔ ด่านต้องอยู่ใน flow ที่กรอก EMCS จริงทั้ง 2 เส้น (นำเข้า XML + กรอกเอง)
+_msrc = __import__("inspect").getsource(_mainmod)
+check("ด่านเวลาสำรวจ: ถูกเรียกครบทั้ง 2 flow",
+      _msrc.count("_tg = _survey_time_gate(data)") == 2)
+# ⛔ ต้องอยู่ "ก่อน" ด่านกันซ้ำ se-key ซึ่งอยู่ก่อนเปิด EMCS อยู่แล้ว
+check("ด่านเวลาสำรวจ: อยู่ก่อนจุดที่เริ่มแตะ EMCS",
+      _msrc.index("_tg = _survey_time_gate(data)")
+      < _msrc.index("ส่วนที่ 2: กรอกข้อมูลลง EMCS"))
+
+
 # ---- 22g. สมุดงาน: เลขเคลม/เลขเซอร์เวย์ที่ทำไปแล้ว ----
 import autokey.joblog as _jl  # noqa: E402
 
