@@ -42,6 +42,11 @@ CLAIM_TYPE_NAMES = {"1": "เคลมสด", "2": "เคลมแห้ง",
 DRY_CLAIM_TYPE = "2"        # เคลมแห้ง
 
 # field ที่ EMCS ต้องใช้จริง — ถ้าว่างถือว่าผิดปกติ ต้องให้คนตรวจ
+# ช่องที่ EMCS บังคับ และ **ใส่ "-" แทนไม่ได้** (เป็นวันที่/ตัวเลข ไม่ใช่ข้อความ)
+# ว่างเมื่อไหร่ = EMCS ปัดตกตอนกดบันทึกแบบไม่ขึ้นข้อความ → ต้องให้คนกรอกเองเท่านั้น
+# (เจอจริง 01/09/69 เคลม 2026013168056 — ISURVEY ว่างทั้ง 4 ช่อง)
+UNDASHABLE_FIELDS = ("arrive_date", "arrive_time", "finish_date", "finish_time")
+
 CRITICAL_FIELDS = {
     "claim_value", "invoice_value", "policy_value", "claim_type", "surveyor_name",
     "arrive_date", "arrive_time", "finish_date", "finish_time",
@@ -429,6 +434,14 @@ class ClaimData:
         if v["critical"]:
             lines.append(f"❌ field สำคัญที่ยังว่าง ({len(v['critical'])}): "
                          + ", ".join(v["critical"]))
+        # บอกให้ชัดว่าช่องไหน "บอทเติมแทนไม่ได้" — ไม่งั้นคนอ่าน ❌ แล้วปล่อยผ่าน
+        # เพราะเข้าใจว่าบอทจะใส่ "-" ให้เหมือนช่องข้อความอื่น
+        undash = [FIELD_LABELS[f] for f in UNDASHABLE_FIELDS
+                  if f in FIELD_LABELS and FIELD_LABELS[f] in v["critical"]]
+        if undash:
+            lines.append(
+                "   ↳ " + ", ".join(undash) + " — EMCS บังคับและใส่ \"-\" แทนไม่ได้ "
+                "(บอทจะหยุดถามตอนกรอกถึงช่องนี้ ให้กรอกบน EMCS แล้วกด 'ดำเนินการต่อ')")
         for w in v["warnings"]:
             lines.append(f"⚠️ {w}")
         if v["optional"]:

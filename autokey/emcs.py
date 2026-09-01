@@ -1998,6 +1998,56 @@ def _fill_police_and_alcohol(driver, data: ClaimData):
             set_text(driver, "txtAlc_Result", res or alc)
 
 
+
+# ────────────────────────────────────────────────────────────────────
+# เวลาสำรวจภัย: ISURVEY ไม่มีข้อมูลได้จริง → EMCS ปัดตกแบบ **เงียบสนิท**
+#
+# 4 ช่องนี้ EMCS บังคับ และเป็นชนิดวันที่/ตัวเลข จึงใส่ "-" แทนไม่ได้
+# (ต่างจากช่องข้อความที่ _dash เติมให้ได้) — มีทางเดียวคือคนกรอกเอง
+#
+# เจอจริง 01/09/69 เคลม 2026013168056: ISURVEY ว่างทั้ง 4 ช่อง บอทรู้ตั้งแต่
+# ตอนอ่านข้อมูล (validate() ขึ้น ❌ ครบ 4) แต่เดินหน้าต่อ → กรอกทั้งหน้า →
+# กดบันทึก → validForm() ปัดตกโดยไม่มี alert → ไล่หาสาเหตุอยู่ 3 รอบ →
+# สุดท้ายคนไปกรอกเองบน EMCS ทั้งเรื่อง
+#
+# ⛔ ห้ามเดาค่าให้ (เช่นใส่เวลาปัจจุบัน) — EMCS ตรวจลำดับเวลากับวันเกิดเหตุ
+#    และเลขนี้เป็นหลักฐานว่าผู้สำรวจไปถึงเมื่อไหร่ เดาผิด = เอกสารผิด
+SURVEY_TIME_FIELDS = (
+    ("arrive_date", "wuCale_Acc_Reach_txtCalendar", "วันที่สำรวจภัย (ถึงที่เกิดเหตุ)"),
+    ("arrive_time", "txtAcc_Reach_Hour", "เวลาถึงที่เกิดเหตุ (ชั่วโมง:นาที)"),
+    ("finish_date", "wuCale_Acc_Finish_txtCalendar", "วันที่สำรวจภัยเสร็จ"),
+    ("finish_time", "txtAcc_Finish_Hour", "เวลาสำรวจภัยเสร็จ (ชั่วโมง:นาที)"),
+)
+
+
+def missing_survey_times(data) -> list:
+    """ชื่อช่องเวลาสำรวจที่ต้นทางไม่มีข้อมูล — [] = ครบ (ใช้ตรวจก่อนเปิด EMCS ได้ด้วย)"""
+    return [label for field, _id, label in SURVEY_TIME_FIELDS
+            if not str(getattr(data, field, "") or "").strip()]
+
+
+def _pause_for_survey_times(driver, data) -> bool:
+    """ช่องเวลาสำรวจว่าง → ตีกรอบแดงช่องนั้นบน EMCS แล้วหยุดรอให้คนกรอก
+
+    คืน True เมื่อมีการหยุดถาม (ไม่ว่าคนจะตอบหรือไม่) · False = ครบอยู่แล้ว
+    ไม่มีคนตอบ (รันแบบไม่มีคนเฝ้า) = ไปต่อเหมือนเดิม — จะไปโดนปัดตกตอนบันทึก
+    ซึ่งยังดีกว่าเงียบ เพราะ log มีบรรทัดบอกชัดแล้วว่าขาดอะไร
+    """
+    missing = missing_survey_times(data)
+    if not missing:
+        return False
+    ids = [fid for field, fid, _label in SURVEY_TIME_FIELDS
+           if not str(getattr(data, field, "") or "").strip()]
+    wait_for_manual_fill(
+        "เวลาสำรวจภัย: " + ", ".join(missing),
+        reason=("ISURVEY ไม่มีข้อมูลช่องเหล่านี้ — EMCS บังคับ และเป็นช่องวันที่/เวลา "
+                'จึงใส่ "-" แทนไม่ได้ ถ้าไม่กรอก EMCS จะปัดตกตอนบันทึกโดยไม่ขึ้นข้อความ'),
+        focus_ids=ids,
+        focus_labels=missing,
+        driver=driver,
+    )
+    return True
+
 def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห้ง"):
     log("EMCS: กรอกรายละเอียดอุบัติเหตุ")
     wait_visible(driver, By.ID, "wuCale_Acc_Date_txtCalendar")
@@ -2047,6 +2097,9 @@ def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห�
     fh, fm = split_hhmm(data.finish_time)
     set_text(driver, "txtAcc_Finish_Hour", fh)
     set_text(driver, "txtAcc_Finish_Minute", fm)
+
+    # ── เวลาสำรวจว่าง = หยุดถามตรงนี้เลย ไม่รอไปตายตอนกดบันทึก ──
+    _pause_for_survey_times(driver, data)
 
     # ลักษณะการเกิดเหตุ + จังหวัด/อำเภอเกิดเหตุ (ทุกตัวมี postback —
     # เว้นจังหวะกัน select ถัดไปทับค่าเดิมระหว่าง postback ยังไม่จบ)

@@ -2411,6 +2411,55 @@ finally:
 check("keyers: ไฟล์จริงในโปรเจกต์อ่านได้ครบ 10 เลข",
       sorted(_ir.load_keyers()) == list("0123456789"))
 
+# ---- 22f2. เวลาสำรวจว่าง: หยุดถามตอนกรอก ไม่ปล่อยไปตายตอนบันทึก ----
+# เจอจริง 01/09/69 เคลม 2026013168056 — ISURVEY ว่างทั้ง 4 ช่อง บอทรู้ตั้งแต่ตอนอ่านข้อมูล
+# แต่เดินหน้าต่อจนโดน validForm() ปัดตกเงียบ ๆ สุดท้ายคนต้องไปกรอกเองบน EMCS ทั้งเรื่อง
+class _FakeTimes:
+    arrive_date = arrive_time = finish_date = finish_time = ""
+
+
+_d_empty = _FakeTimes()
+check("เวลาสำรวจ: ว่างทั้ง 4 ช่อง → รายงานครบ",
+      len(emcs.missing_survey_times(_d_empty)) == 4)
+
+_d_full = _FakeTimes()
+_d_full.arrive_date = _d_full.finish_date = "31/08/2026"
+_d_full.arrive_time, _d_full.finish_time = "19:30", "20:00"
+check("เวลาสำรวจ: ครบทั้ง 4 ช่อง → ไม่ต้องหยุดถาม",
+      emcs.missing_survey_times(_d_full) == [])
+
+_d_part = _FakeTimes()
+_d_part.arrive_date = "31/08/2026"
+check("เวลาสำรวจ: ขาดบางช่อง → รายงานเฉพาะที่ขาด",
+      len(emcs.missing_survey_times(_d_part)) == 3)
+
+# ⛔ ช่องพวกนี้ใส่ "-" แทนไม่ได้ (วันที่/ตัวเลข) — ต้องถูกนับเป็น field สำคัญด้วย
+check("เวลาสำรวจ: อยู่ในรายการ field สำคัญครบ",
+      set(claim_data.UNDASHABLE_FIELDS) <= set(claim_data.CRITICAL_FIELDS))
+check("เวลาสำรวจ: รายชื่อฝั่ง emcs กับ claim_data ตรงกัน",
+      set(f for f, _i, _l in emcs.SURVEY_TIME_FIELDS) == set(claim_data.UNDASHABLE_FIELDS))
+
+# หยุดถามจริง + ชี้ช่องบน EMCS ให้ครบ (ไม่มี stdin = EOF → ไปต่อ แต่ต้องได้ถาม)
+_calls = {}
+_orig_wait = emcs.wait_for_manual_fill
+emcs.wait_for_manual_fill = lambda *a, **k: _calls.update(args=a, kw=k) or False
+try:
+    check("เวลาสำรวจ: ว่าง → หยุดถาม",
+          emcs._pause_for_survey_times(None, _d_empty) is True)
+    check("เวลาสำรวจ: ตีกรอบแดงชี้ช่องครบ 4 ช่อง",
+          len(_calls.get("kw", {}).get("focus_ids") or []) == 4)
+    _calls.clear()
+    check("เวลาสำรวจ: ครบแล้ว → ไม่หยุด ไม่ถาม",
+          emcs._pause_for_survey_times(None, _d_full) is False and not _calls)
+finally:
+    emcs.wait_for_manual_fill = _orig_wait
+
+# หน้ารายงานก่อนกรอกต้องบอกว่าช่องพวกนี้บอทเติมแทนไม่ได้
+_rep_d = claim_data.ClaimData(claim_value="1", invoice_value="SEABI-1")
+check("รายงานก่อนกรอก: บอกว่าใส่ '-' แทนไม่ได้",
+      'ใส่ "-" แทนไม่ได้' in _rep_d.validation_report())
+
+
 # ---- 22g. สมุดงาน: เลขเคลม/เลขเซอร์เวย์ที่ทำไปแล้ว ----
 import autokey.joblog as _jl  # noqa: E402
 
