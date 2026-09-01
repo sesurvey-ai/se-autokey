@@ -1899,6 +1899,14 @@ def main():
             _note = d.fresh_claim_note()
             if _note:
                 log(f"ℹ️ เคลมสด: {_note} — กรอกต่อ (อ่าน tab-4/5/6 ครบแล้ว)")
+            # ด่านเวลาสำรวจ — ขาดเมื่อไหร่ EMCS ปัดตกแน่นอน ข้ามเคลมนี้ไปเลย
+            # (ไม่เปิด Chrome ไม่ทิ้ง draft ค้าง) แล้วไปทำเคลมถัดไปต่อ
+            _tg = _survey_time_gate(d)
+            if _tg:
+                log("⏭️ ข้าม — ไม่มีเวลาสำรวจ กรอก EMCS ไม่ได้")
+                log_plain(f"  {_tg}")
+                results.append((claim, "⏭️", "ข้าม: ไม่มีเวลาสำรวจ (ต้องเติมที่ ISURVEY)"))
+                continue
             dup = _sekey_dup_skip(cfg, d)
             if dup:
                 log(f"⏭️ ข้าม — {dup}")
