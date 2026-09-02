@@ -398,6 +398,46 @@ def _clear_rows_if_any(driver, count_id: str, save_id: str, name: str,
     _save_section(driver, save_id, name)
 
 
+def _fill_age_after_birthdate(driver, birth_id: str, age_id: str, age,
+                              label: str = "ผู้ขับขี่"):
+    """กรอกอายุ **หลัง** ให้ EMCS คำนวณอายุของมันเองจากวันเกิดเสร็จก่อน
+
+    ช่องวันเกิดของ EMCS ผูก onblur → getCalculate_Age(วันเกิด, อายุ) = คำนวณอายุจาก
+    วันเกิดเทียบ "วันนี้" แล้วเขียนทับช่องอายุทันที (ทั้งผู้ขับขี่รถประกันและบล็อกคู่กรณี
+    ทุกคัน) ถ้ากรอกอายุก่อนวันเกิด ค่าจาก ISURVEY (อายุ ณ วันเกิดเหตุ) จะถูกทับตอน focus
+    ออกจากช่องวันเกิด → ตรวจกลับหลังบันทึกไม่ตรง → ประตูส่งงานปิด (เจอจริง 2026013166152:
+    53→54, 2026013167736: 45→46 — ผู้ขับขี่มีวันเกิดคั่นระหว่างวันเกิดเหตุกับวันคีย์)
+
+    ทางแก้ = บังคับ blur ช่องวันเกิดให้ EMCS คำนวณของมันก่อน (focus+blur ผ่าน JS —
+    ไม่พึ่งว่า focus อยู่ช่องไหนตอนนั้น เพราะ set_text อาจตกไปเส้น JS fallback ที่ไม่ย้าย
+    focus แล้ว blur จริงจะมาทีหลังตอนกรอกช่องถัดไป) แล้วค่อยกรอกอายุจาก ISURVEY ทับ —
+    หลังจากนี้ไม่มีใครแตะช่องวันเกิดอีก ค่าของเราจึงอยู่จนบันทึก
+    ไม่ "รับ" ค่าของ EMCS แทน เพราะบอทกรอกตามต้นทางเสมอ (อายุ ณ วันเกิดเหตุคือค่าที่
+    เซอร์เวย์บันทึก) — ต่างกันเมื่อไหร่ log ไว้ให้คนตรวจรู้
+    อายุจาก ISURVEY ว่าง → ไม่บังคับ blur (ปล่อยให้ EMCS คำนวณเองตามธรรมชาติ เหมือนเดิม
+    และไม่ไปทับค่าที่คนกรอกไว้บน draft ในโหมดเติมส่วนที่ขาด)
+    """
+    want = str(age or "").strip()
+    if not want:
+        log(f"   - ข้าม {age_id} (ค่าว่าง — ปล่อยให้ EMCS คำนวณจากวันเกิดเอง)")
+        return
+    auto = ""
+    try:
+        auto = driver.execute_script(
+            "var b=document.getElementById(arguments[0]);"
+            "if(b){b.focus();b.blur();}"
+            "var a=document.getElementById(arguments[1]);"
+            "return a?(a.value||''):'';", birth_id, age_id) or ""
+    except Exception as e:
+        log(f"   ⚠️ บังคับให้ EMCS คำนวณอายุ{label}จากวันเกิดก่อนไม่ได้ "
+            f"({type(e).__name__}) — กรอกอายุต่อตามปกติ")
+    set_text(driver, age_id, want)
+    auto = str(auto or "").strip()
+    if auto and auto != want:
+        log(f"   ℹ️ อายุ{label}: EMCS คำนวณจากวันเกิด ณ วันนี้ = {auto} "
+            f"— ใช้ {want} ตาม ISURVEY (อายุ ณ วันเกิดเหตุ)")
+
+
 def fill_third_parties(driver, data: ClaimData):
     """กรอกข้อมูลรถคู่กรณีทุกคันจากข้อมูล XML ของ ISURVEY แล้วกดบันทึกรถคู่กรณี
 
@@ -533,9 +573,13 @@ def fill_third_parties(driver, data: ClaimData):
             except Exception:
                 log(f"   ⚠️ เลือกเพศคู่กรณีคันที่ {n + 1} ไม่ได้")
 
-        set_text(driver, p + "txtDri_Age", tp.get("age", ""))
         set_text(driver, p + "wuCale_Dri_BirthDay_txtCalendar",
                  iso_to_thai_date(tp.get("birthdate", "")))
+        # ⛔ อายุต้องมาหลังวันเกิดเสมอ — onblur ช่องวันเกิดเขียนทับช่องอายุ
+        #    (ดู _fill_age_after_birthdate)
+        _fill_age_after_birthdate(driver, p + "wuCale_Dri_BirthDay_txtCalendar",
+                                  p + "txtDri_Age", tp.get("age", ""),
+                                  label=f"ผู้ขับขี่คู่กรณี {n + 1}")
         set_text(driver, p + "txtDri_Adrress", _dash(tp.get("address", "")))
 
         # จังหวัด/อำเภอ ผู้ขับขี่คู่กรณี — บาง layout ซ่อนช่องนี้ (ใช้ "ที่อยู่ปัจจุบัน"
@@ -1970,7 +2014,6 @@ def fill_driver(driver, data: ClaimData):
         f"{data.driver_name} {data.driver_surname}".strip())
     set_text(driver, "txtDri_Name01", _dash(dri_first or data.driver_name))
     set_text(driver, "txtDri_LastName01", _dash(dri_last or data.driver_surname))
-    set_text(driver, "txtDri_Age", data.driver_age)
     set_text(driver, "txtDri_Address", data.driver_address)
     set_text(driver, "txtDri_TelNo", _dash(data.driver_phone))
     set_text(driver, "txtDri_CardID", _dash(data.driver_idcard))
@@ -1978,6 +2021,10 @@ def fill_driver(driver, data: ClaimData):
     set_text(driver, "txtDri_DrvPlace", data.driver_license_place)
     set_text(driver, "txtCost_Damage", data.damage_estimate)
     set_text(driver, "wuCale_Dri_BirthDay_txtCalendar", to_buddhist_date(data.driver_birthdate))
+    # ⛔ อายุต้องมาหลังวันเกิดเสมอ — onblur ช่องวันเกิดเขียนทับช่องอายุด้วย "อายุ ณ วันนี้"
+    #    (ดู _fill_age_after_birthdate) เดิมกรอกอายุก่อน → ค่า ISURVEY หายตอนคีย์หลังวันเกิดผู้ขับขี่
+    _fill_age_after_birthdate(driver, "wuCale_Dri_BirthDay_txtCalendar", "txtDri_Age",
+                              data.driver_age)
     set_text(driver, "wuCale_Dri_DrvDate_Start_txtCalendar", to_buddhist_date(data.license_issue_date))
     set_text(driver, "wuCale_Dri_DrvDate_End_txtCalendar", to_buddhist_date(data.license_expiry_date))
 

@@ -3702,5 +3702,78 @@ check("รูป: ตารางว่างต้องยืนยันว�
       "still_on_page" in _emcs_src
       and "not (deleting_all and still_on_page)" in _emcs_src)
 
+
+# ---- อายุผู้ขับขี่ต้องกรอก "หลัง" วันเกิด — onblur ช่องวันเกิดของ EMCS เรียก getCalculate_Age
+# เขียนอายุ "ณ วันนี้" ทับช่องอายุ; บอทเคยกรอกอายุ (ISURVEY = ณ วันเกิดเหตุ) ก่อนวันเกิด → ถูกทับ
+# → ตรวจกลับหลังบันทึกไม่ตรง → ประตูส่งงานปิด (เจอจริง 2026013166152: 53→54, 2026013167736: 45→46
+# ผู้ขับขี่มีวันเกิดคั่นระหว่างวันเกิดเหตุกับวันคีย์) — พิสูจน์กับ JS จริงจาก snapshot แล้ว 2026-09-02 ----
+_dsrc = _insp.getsource(emcs.fill_driver)
+check("อายุผู้ขับขี่: กรอกหลังวันเกิด ผ่านตัวช่วยบังคับ blur (กัน EMCS auto-calc ทับ)",
+      '_fill_age_after_birthdate(driver, "wuCale_Dri_BirthDay_txtCalendar", "txtDri_Age"' in _dsrc
+      and 'set_text(driver, "txtDri_Age"' not in _dsrc
+      and _dsrc.index('"wuCale_Dri_BirthDay_txtCalendar", to_buddhist_date')
+      < _dsrc.index("_fill_age_after_birthdate("))
+_tsrc = _insp.getsource(emcs.fill_third_parties)
+check("อายุผู้ขับขี่คู่กรณี: กรอกหลังวันเกิด ผ่านตัวช่วยเดียวกัน (บล็อกคู่กรณีผูก onblur เหมือนกัน)",
+      'p + "txtDri_Age", tp.get("age", "")' in _tsrc
+      and 'set_text(driver, p + "txtDri_Age"' not in _tsrc
+      and _tsrc.index('iso_to_thai_date(tp.get("birthdate", ""))')
+      < _tsrc.index("_fill_age_after_birthdate("))
+_asrc = _insp.getsource(emcs._fill_age_after_birthdate)
+check("อายุ: บังคับ focus+blur ช่องวันเกิด (ให้ EMCS คำนวณก่อน) แล้วค่อย set_text อายุ",
+      "b.focus();b.blur();" in _asrc
+      and _asrc.index("b.focus();b.blur();") < _asrc.index("set_text(driver, age_id"))
+check("อายุ: ISURVEY ว่าง → ไม่บังคับ blur ไม่กรอก (ไม่ทับค่าที่คนกรอกไว้บน draft)",
+      _asrc.index("if not want:") < _asrc.index("execute_script"))
+
+
+class _AgeEl:
+    """ช่องอายุจำลอง — จำลำดับว่าใครเขียนก่อน (EMCS auto-calc vs บอทพิมพ์)"""
+    def __init__(self, ops, v=""):
+        self.v, self.ops = v, ops
+
+    def get_attribute(self, name):
+        return self.v if name == "value" else None
+
+    def clear(self):
+        self.v = ""
+
+    def send_keys(self, s):
+        self.v += str(s)
+        self.ops.append(f"type:{s}")
+
+
+class _AgeDriver:
+    """execute_script ที่บังคับ blur วันเกิด = EMCS เขียนอายุ ณ วันนี้ (54) ทับทันที"""
+    def __init__(self, age=""):
+        self.ops = []
+        self.age = _AgeEl(self.ops, age)
+
+    def find_element(self, by, value):
+        if value == "txtDri_Age":
+            return self.age
+        raise Exception("no such element")
+
+    def execute_script(self, script, *a):
+        if "b.focus();b.blur();" in script:
+            self.ops.append("emcs_autocalc")
+            self.age.v = "54"
+            return "54"
+        return None
+
+
+_br.reset_filled()
+_ad = _AgeDriver()
+emcs._fill_age_after_birthdate(_ad, "wuCale_Dri_BirthDay_txtCalendar", "txtDri_Age", "53")
+check("อายุ: EMCS คำนวณ 54 ก่อน แล้วบอทพิมพ์ 53 ทับ → บนหน้าเหลือ 53",
+      _ad.ops == ["emcs_autocalc", "type:53"] and _ad.age.v == "53", str(_ad.ops))
+check("อายุ: ค่าที่จำไว้ตรวจกลับ = 53 (ตรงกับหน้า → ประตูส่งงานไม่ปิด)",
+      _br._FILLED.get("txtDri_Age") == "53")
+_ad2 = _AgeDriver(age="40")
+emcs._fill_age_after_birthdate(_ad2, "wuCale_Dri_BirthDay_txtCalendar", "txtDri_Age", "")
+check("อายุ: ISURVEY ว่าง → ไม่แตะช่อง (ค่าเดิมบน draft อยู่ครบ)",
+      _ad2.ops == [] and _ad2.age.v == "40", str(_ad2.ops))
+_br.reset_filled()
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
