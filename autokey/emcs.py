@@ -2846,6 +2846,26 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
     click_fail_left = 3
     bad_id = ""           # id ช่องแรกที่ EMCS ตีตก (objControlName) — ไว้ตีกรอบแดง
     for attempt in range(1, 8):
+        # ── ถามก่อนกด: EMCS บังคับช่องไหนที่ยังว่าง ── (user เคาะ 02/09/69)
+        #
+        # ⛔ **ดอกจันแดงบนหน้าจอเชื่อไม่ได้** — อ่าน vlidSurvey() ของ EMCS จริง (เก็บไว้ใน
+        #    HTML ตอน error ของเคลม 2026013168056) พบว่าบังคับจริง 38 ช่อง แต่มีอีก 3 ช่อง
+        #    ที่มีดอกจันแล้วถูก comment ทิ้ง (เลขที่รับแจ้ง / ประเภทรถ / กรมธรรม์เลขที่ ซึ่ง
+        #    บังคับเฉพาะบางบริษัท) → กฎจริงมีที่เดียวคือ validForm()
+        #
+        # ทำเฉพาะรอบแรก — รอบถัด ๆ ไปมีเส้น "หยุดรอคนกรอก" ตอนโดนปัดตกอยู่แล้ว
+        # ถ้าถามทุกรอบจะถามซ้ำกับที่เพิ่งถามไป
+        if attempt == 1:
+            _pre = _read_validform(driver)
+            _miss = _pre.get("missing") or []
+            if _pre.get("ok") is False and _miss:
+                log(f"   ⚠️ EMCS บังคับช่องที่ยังว่างอยู่ {len(_miss)} ช่อง — ถามก่อนกดบันทึก")
+                wait_for_manual_fill(
+                    "ช่องบังคับที่ EMCS ยังไม่ยอมให้บันทึก: " + ", ".join(_miss),
+                    reason=("รายการนี้มาจาก validForm() ของ EMCS เอง (กฎจริง) — "
+                            "ไม่ใช่การเดาจากดอกจันแดง"),
+                    focus_ids=[_pre["control"]] if _pre.get("control") else None,
+                    focus_labels=_miss, driver=driver)
         log(f"EMCS: กดบันทึกหน้าหลัก ({button_id}, รอบ {attempt})")
         bad_id = ""
         clicked = _click_save_button(driver, button_id)
