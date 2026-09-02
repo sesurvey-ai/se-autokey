@@ -2411,6 +2411,21 @@ finally:
 check("keyers: ไฟล์จริงในโปรเจกต์อ่านได้ครบ 10 เลข",
       sorted(_ir.load_keyers()) == list("0123456789"))
 
+# ---- 22f4. ล้มแล้วต้องเขียนสาเหตุลง log ก่อน raise ----
+# เจอจริง 01/09/69 เคลม 2026013168056: log จบลงที่บรรทัด 📸 เก็บหลักฐาน error เฉย ๆ
+# traceback ไปโผล่ที่หน้าต่างคำสั่งซึ่งปิดไปแล้ว → เปิด log ย้อนหลังไม่รู้เลยว่าตายเพราะอะไร
+_msrc = __import__("inspect").getsource(__import__("main"))
+_msrc_lines = _msrc.split(chr(10))
+_silent = []
+for _i, _l in enumerate(_msrc_lines):
+    if _l.strip() == "raise" and _i >= 7:
+        _ctx = chr(10).join(_msrc_lines[max(0, _i - 7):_i])
+        if "save_debug_snapshot" in _ctx and "log(" not in _ctx:
+            _silent.append(_i + 1)
+check("ล้มแล้วเขียนสาเหตุลง log ทุกจุด (ไม่ raise เงียบหลังเก็บภาพ)",
+      not _silent, f"ยังเงียบที่บรรทัด {_silent}" if _silent else "")
+
+
 # ---- 22f3. กดแล้วเงียบ แต่ EMCS บอกมาแล้วว่าขาดอะไร → ห้ามกดซ้ำ ----
 # เจอจริง 01/09/69 เคลม 2026013168056: EMCS เด้ง "กรุณาใส่ข้อมูล... 1. 2. 3." ครบทุกช่อง
 # แต่บอทโยนทิ้งแล้วกดบันทึกซ้ำ 3 รอบ เสีย 90 วิ ทั้งที่คนนั่งรอเติมให้อยู่

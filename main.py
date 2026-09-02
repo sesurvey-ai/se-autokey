@@ -490,7 +490,8 @@ def run_images_only(cfg, args):
                             tag=f"images_only_{data.claim_value}")
         banner(f"เติมรูปเข้าเรื่อง {esurvey} เสร็จ — ตรวจบน EMCS แล้วกด 'ส่งงาน' "
                "เองเมื่อพร้อม (browser เปิดค้างให้)")
-    except Exception:
+    except Exception as e:
+        log(f"❌ เติมรูป: {type(e).__name__}: {e}")
         save_debug_snapshot(driver, cfg.runs_dir / "logs",
                             tag="error_images_only")
         raise
@@ -569,7 +570,8 @@ def run_import_xml(cfg, args):
         joblog.record("draft", data.claim_value, data.invoice_value, esurvey,
                       note="นำเข้า XML")
         _offer_submit(driver, cfg, data, esurvey=esurvey)
-    except Exception:
+    except Exception as e:
+        log(f"❌ นำเข้า XML: {type(e).__name__}: {e}")
         save_debug_snapshot(
             driver, cfg.runs_dir / "logs",
             tag=f"error_import_{getattr(data, 'claim_value', '') or 'x'}")
@@ -1071,7 +1073,8 @@ def _run_fill_existing(cfg, args, case_id, hdrs, meta):
         emcs.fill_existing_report(driver, cfg, data, esurvey=esurvey,
                                   images_folder=img_folder, loss_type=loss_type,
                                   severity=severity, full_billing=True)
-    except Exception:
+    except Exception as e:
+        log(f"❌ เติม draft เดิม เคส {case_id}: {type(e).__name__}: {e}")
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"fill_existing_{case_id}")
         raise
     banner(f"FILL-EXISTING: เติม+บันทึก draft เสร็จ (e-Survey {esurvey}) — "
@@ -1125,7 +1128,8 @@ def _run_images_only(cfg, args, case_id, hdrs, meta):
         # อัปทุกรูป (only=รายชื่อไฟล์ทั้งหมด = ไม่เปิด webui ให้เลือก) — upload_images จัดกลุ่มตามหมวดเอง
         names = list_images(Path(img_folder))
         emcs.upload_images(driver, img_folder, only=names)
-    except Exception:
+    except Exception as e:
+        log(f"❌ อัปรูป เคส {case_id}: {type(e).__name__}: {e}")
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"images_only_{case_id}")
         raise
     finally:
@@ -1188,7 +1192,8 @@ def _run_injured_only(cfg, args, case_id, hdrs, meta):
     try:
         emcs.fill_injured_only_existing(driver, cfg, data, esurvey=esurvey,
                                         loss_type=loss_type, severity=severity)
-    except Exception:
+    except Exception as e:
+        log(f"❌ ผู้บาดเจ็บ เคส {case_id}: {type(e).__name__}: {e}")
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"injured_only_{case_id}")
         raise
     finally:
@@ -2007,7 +2012,13 @@ def main():
                 force_new=args.force_new,
                 full_billing=not args.no_save_price,
             )
-    except Exception:
+    except Exception as e:
+        # ⛔ ต้องเขียนสาเหตุลง log ก่อน raise — ของเดิมเก็บแค่ภาพหน้าจอแล้วโยนต่อ
+        #    traceback ไปโผล่ที่หน้าต่างคำสั่งซึ่งปิดไปแล้ว → เปิด log ย้อนหลังเห็นแค่
+        #    บรรทัดสุดท้ายค้างไว้เฉย ๆ ไม่รู้เลยว่าตายเพราะอะไร
+        #    (เจอจริง 01/09/69 เคลม 2026013168056 — ล้มหลัง "ส่วนผู้บาดเจ็บยังไม่ปลดล็อก"
+        #     แต่ log ไม่มีบรรทัดบอกสาเหตุ ตามรอยต่อไม่ได้)
+        log(f"❌ เคลม {data.claim_value}: {type(e).__name__}: {e}")
         save_debug_snapshot(driver, cfg.runs_dir / "logs",
                             tag=f"error_emcs_{data.claim_value}")
         raise
