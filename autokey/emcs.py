@@ -321,6 +321,31 @@ def _select_index(driver, select_id, index: int, label: str = "", timeout=10):
 NO_ROWS_OPTION = "-- ไม่ระบุ --"
 
 
+def _menu_blocked_reason(driver) -> str:
+    """กดเมนูแท็บแล้วหน้าไม่เปลี่ยน — เพราะช่องบังคับ "หน้าหลัก" ยังว่างหรือเปล่า
+
+    ⛔ **ปุ่มเมนูทุกแท็บของ EMCS รัน validForm() ก่อน** (ดู onclick ของ imbInjure_Person):
+           if (validForm() == false) { return false; } ... __doPostBack(...)
+       ช่องบังคับหน้าหลักว่างแม้ช่องเดียว = กดแท็บแล้ว **ไม่มีอะไรเกิดขึ้น**
+       ไม่มี alert ไม่มี postback — เหมือนหน้าค้าง
+
+    เจอจริง 01/09/69 เคลม 2026013168056: ผู้บาดเจ็บกดไม่เข้า เพราะ "หมายเลข กม."
+    (บังคับ) ยังว่างอยู่ที่หน้าหลัก แต่บอทรายงานว่า "ส่วนผู้บาดเจ็บยังไม่ปลดล็อก"
+    ซึ่งชี้ผิดที่ คนอ่าน log แล้วไปหาสาเหตุที่แท็บผู้บาดเจ็บ
+
+    คืนข้อความบอกช่องที่ขาด ('' = ไม่ใช่สาเหตุนี้)
+    """
+    try:
+        res = _read_validform(driver)
+    except Exception:
+        return ""
+    if res.get("ok") is not False:
+        return ""
+    miss = res.get("missing") or []
+    head = "ช่องบังคับของ 'หน้าหลัก' ยังว่าง — EMCS เลยไม่ยอมให้เปลี่ยนแท็บ"
+    return head + ((": " + ", ".join(miss)) if miss else "")
+
+
 def _clear_rows_if_any(driver, count_id: str, save_id: str, name: str,
                        open_menu_id: str = "") -> None:
     """ข้อมูลใหม่ไม่มีแถวเลย → ตั้งจำนวนเป็น "-- ไม่ระบุ --" แล้วบันทึก = ลบของเดิมทิ้ง
@@ -347,6 +372,14 @@ def _clear_rows_if_any(driver, count_id: str, save_id: str, name: str,
             lambda d: d.find_element(By.ID, count_id).is_enabled()
         )
     except Exception:   # timeout หรือหา element ไม่เจอระหว่างรอ — ผลเหมือนกันคือทำไม่ได้
+        blocked = _menu_blocked_reason(driver)
+        if blocked:
+            # ชี้ให้ถูกที่: ปัญหาอยู่ที่หน้าหลัก ไม่ใช่แท็บนี้ — แล้วหยุดให้คนเติม
+            log(f"   ⚠️ เข้าแท็บ{name}ไม่ได้ — {blocked}")
+            wait_for_manual_fill(
+                f"ช่องบังคับหน้าหลัก (ทำให้เข้าแท็บ{name}ไม่ได้)",
+                reason=blocked, driver=driver)
+            return
         log(f"   ⚠️ ส่วน{name}ยังไม่ปลดล็อก ({count_id} ไม่โผล่/กดไม่ได้) — "
             "ข้าม ลบเองบนหน้า EMCS ถ้าจำเป็น")
         return
@@ -831,6 +864,13 @@ def fill_injuries(driver, data: ClaimData):
     try:
         wait_present(driver, By.ID, "ddlInj_Count", 20)
     except TimeoutException:
+        blocked = _menu_blocked_reason(driver)
+        if blocked:
+            log(f"   ⚠️ เข้าแท็บผู้บาดเจ็บไม่ได้ — {blocked}")
+            wait_for_manual_fill(
+                "ช่องบังคับหน้าหลัก (ทำให้เข้าแท็บผู้บาดเจ็บไม่ได้)",
+                reason=blocked, driver=driver)
+            return
         log("   ⚠️ ส่วนผู้บาดเจ็บไม่ปลดล็อก (ddlInj_Count ไม่โผล่) — ข้าม กรอกเอง")
         return
     if len(injs) > MAX_INJURIES:

@@ -2411,6 +2411,37 @@ finally:
 check("keyers: ไฟล์จริงในโปรเจกต์อ่านได้ครบ 10 เลข",
       sorted(_ir.load_keyers()) == list("0123456789"))
 
+# ---- 22f5. กดแท็บไม่เข้า เพราะช่องบังคับ "หน้าหลัก" ยังว่าง ----
+# ⛔ ปุ่มเมนูทุกแท็บของ EMCS รัน validForm() ก่อน (onclick ของ imbInjure_Person):
+#      if (validForm() == false) { return false; } ... __doPostBack(...)
+#    ช่องบังคับหน้าหลักว่างแม้ช่องเดียว = กดแท็บแล้วไม่มีอะไรเกิดขึ้น ไม่มี alert
+# เจอจริง 01/09/69 เคลม 2026013168056: "หมายเลข กม." ว่าง → เข้าแท็บผู้บาดเจ็บไม่ได้
+# แต่ log เขียนว่า "ส่วนผู้บาดเจ็บยังไม่ปลดล็อก" ซึ่งชี้ผิดที่
+_o_mb = emcs._read_validform
+try:
+    emcs._read_validform = lambda d: {"ok": False, "err": "", "control": "txtKm_No",
+                                      "missing": ["หมายเลข กม."], "alert": ""}
+    _why_mb = emcs._menu_blocked_reason(None)
+    check("กดแท็บไม่เข้า → บอกว่าเป็นเพราะช่องหน้าหลัก ไม่ใช่แท็บนั้น",
+          "หน้าหลัก" in _why_mb and "หมายเลข กม." in _why_mb, _why_mb[:80])
+
+    emcs._read_validform = lambda d: {"ok": True, "err": "", "control": "",
+                                      "missing": [], "alert": ""}
+    check("validForm ผ่าน → ไม่โทษช่องหน้าหลัก (คนละสาเหตุ)",
+          emcs._menu_blocked_reason(None) == "")
+
+    emcs._read_validform = lambda d: (_ for _ in ()).throw(RuntimeError("driver ตาย"))
+    check("อ่าน validForm ไม่ได้ → คืนค่าว่าง ไม่ลาก error ออกมา",
+          emcs._menu_blocked_reason(None) == "")
+finally:
+    emcs._read_validform = _o_mb
+
+_esrc = __import__("inspect").getsource(emcs)
+check("กดแท็บไม่เข้า → หยุดถามคน ไม่ข้ามเงียบ",
+      _esrc.count("_menu_blocked_reason(driver)") == 3   # 1 นิยาม + 2 จุดเรียก
+      and _esrc.count("ช่องบังคับหน้าหลัก (ทำให้เข้าแท็บ") == 2)
+
+
 # ---- 22f4. ล้มแล้วต้องเขียนสาเหตุลง log ก่อน raise ----
 # เจอจริง 01/09/69 เคลม 2026013168056: log จบลงที่บรรทัด 📸 เก็บหลักฐาน error เฉย ๆ
 # traceback ไปโผล่ที่หน้าต่างคำสั่งซึ่งปิดไปแล้ว → เปิด log ย้อนหลังไม่รู้เลยว่าตายเพราะอะไร
