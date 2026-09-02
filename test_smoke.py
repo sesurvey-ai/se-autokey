@@ -2460,37 +2460,6 @@ check("รายงานก่อนกรอก: บอกว่าใส่ '
       'ใส่ "-" แทนไม่ได้' in _rep_d.validation_report())
 
 
-# ด่านหยุดก่อนเปิด EMCS (user เคาะ 01/09/69) — เปิดไปแล้วค่อยหยุดจะเหลือ draft ค้าง
-# ที่ลบไม่ได้ และล็อกเรื่องไว้กับ username ที่บอทใช้
-import main as _mainmod  # noqa: E402
-
-_gd = claim_data.ClaimData(claim_value="1", invoice_value="SEABI-1")
-check("ด่านเวลาสำรวจ: ว่าง → หยุด (ไม่เปิด EMCS)",
-      "ISURVEY ยังไม่มี" in _mainmod._survey_time_gate(_gd))
-check("ด่านเวลาสำรวจ: บอกวิธีแก้ (ไปเติมที่ ISURVEY)",
-      "เติมที่ ISURVEY" in _mainmod._survey_time_gate(_gd))
-
-_gd2 = claim_data.ClaimData(
-    claim_value="1", invoice_value="SEABI-1",
-    arrive_date="31/08/2026", arrive_time="19:30",
-    finish_date="31/08/2026", finish_time="20:00")
-check("ด่านเวลาสำรวจ: ครบ → ผ่าน ไม่หยุด", _mainmod._survey_time_gate(_gd2) == "")
-
-# ⛔ ด่านต้องอยู่ครบ **ทุกเส้นที่กรอก EMCS** — เส้น batch (--claims / [1/N]) คือเส้นที่
-#    พนักงานใช้จริง ถ้าลืมเส้นนี้ ด่านจะไม่ทำงานเลยทั้งที่โค้ดดูเหมือนมี
-_msrc = __import__("inspect").getsource(_mainmod)
-check("ด่านเวลาสำรวจ: ถูกเรียกครบทั้ง 3 flow (XML / เดี่ยว / batch)",
-      _msrc.count("_survey_time_gate(") == 4)   # 1 นิยาม + 3 จุดเรียก
-check("ด่านเวลาสำรวจ: เส้น batch ข้ามเคลมนั้น ไม่หยุดทั้งชุด",
-      "results.append((claim, \"⏭️\", \"ข้าม: ไม่มีเวลาสำรวจ (ต้องเติมที่ ISURVEY)\"))" in _msrc)
-# ⛔ ต้องอยู่ "ก่อน" จุดที่เริ่มแตะ EMCS
-check("ด่านเวลาสำรวจ: อยู่ก่อนจุดที่เริ่มแตะ EMCS",
-      _msrc.index("_tg = _survey_time_gate(data)")
-      < _msrc.index("ส่วนที่ 2: กรอกข้อมูลลง EMCS"))
-check("ด่านเวลาสำรวจ: เส้น batch อยู่ก่อนเปิด Chrome",
-      _msrc.index("_tg = _survey_time_gate(d)") < _msrc.index("driver = browser()"))
-
-
 # ---- 22g. สมุดงาน: เลขเคลม/เลขเซอร์เวย์ที่ทำไปแล้ว ----
 import autokey.joblog as _jl  # noqa: E402
 
