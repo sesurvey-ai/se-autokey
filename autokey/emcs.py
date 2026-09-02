@@ -2713,7 +2713,7 @@ def _report_visible_buttons(driver, button_id: str = "") -> str:
     return ""
 
 
-def _diagnose_save_click(driver, button_id: str = "") -> str:
+def _diagnose_save_click(driver, button_id: str = "", vf=None) -> str:
     """หาเหตุผลที่กดปุ่มบันทึกแล้ว EMCS เงียบสนิท (ไม่มีทั้ง alert และ postback)
 
     onclick ของ btnSave คือ
@@ -2733,7 +2733,9 @@ def _diagnose_save_click(driver, button_id: str = "") -> str:
         return wrong
 
     # 2) validForm() ว่ายังไง (+ ขุด global ที่มันเก็บชื่อช่องที่ขาดไว้แต่ไม่ยอมโชว์)
-    res = _read_validform(driver)   # เก็บ alert ที่ validForm เด้งให้แล้วในตัว
+    # ⛔ รับผลที่อ่านมาแล้วได้ (vf) — เรียก _read_validform ซ้ำ = validForm เด้ง alert อีกรอบ
+    #    ทำให้ log มี alert เดียวกันซ้ำ ๆ และผลรอบท้ายเชื่อไม่ได้ (เจอจริง 01/09/69)
+    res = vf if vf is not None else _read_validform(driver)
     if res.get("alert"):
         return f"EMCS แจ้ง: {res['alert'][:300]}"
     if res.get("err"):
@@ -2824,7 +2826,7 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
                 if _vf.get("ok") is False:
                     # ช่องบังคับขาดจริง (EMCS ปัดปุ่มตกเงียบ ๆ) — กดซ้ำอีกกี่ครั้งก็ผลเดิม
                     # ไปหยุดรอคนเลย พร้อมบอกว่าขาดช่องไหนบ้าง
-                    alert_text = _diagnose_save_click(driver, button_id) or alert_text
+                    alert_text = _diagnose_save_click(driver, button_id, vf=_vf) or alert_text
                     log(f"   ↳ {alert_text}")
                 elif click_fail_left > 0:
                     click_fail_left -= 1
@@ -2838,16 +2840,24 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
                 # ตกลงมาที่ "หยุดรอคนกรอก" เหมือน validation ปกติ (เคลม 2026013059072)
                 log("   ⚠️ กดบันทึกแล้ว EMCS เงียบ ไม่มี alert ตอบกลับ — ปุ่มถูก "
                     "validForm() ฝั่ง JS ปัดตก (ไม่ยิง postback)")
-                _why = _diagnose_save_click(driver, button_id)
-                bad_id = _read_validform(driver).get("control") or ""
-                # ข้อมูลผ่าน validForm แต่เงียบ = คำสั่งบันทึกหายกลางทาง (postback ของช่อง
-                # ก่อนหน้ามาถึงทีหลังแล้ว render ทับ) — กดใหม่บนหน้าที่นิ่งแล้วมักผ่านเลย
-                # ห้ามฟ้องล้มทันที: ของเดิมโยน RuntimeError ทั้งที่กดซ้ำครั้งเดียวก็จบ
-                if _read_validform(driver).get("ok") is not False and click_fail_left > 0:
+                # ⛔ อ่าน validForm ครั้งเดียวแล้วใช้ต่อ — **ทุกครั้งที่เรียกมันเด้ง alert ใหม่**
+                #    ของเดิมเรียก 3 ครั้งซ้อน (ในตัววินิจฉัย + อีก 2 ที่นี่) alert เดียวกัน
+                #    จึงโผล่ 3 รอบใน log แล้วผลรอบท้ายเชื่อไม่ได้
+                _vf = _read_validform(driver)
+                _why = _diagnose_save_click(driver, button_id, vf=_vf)
+                bad_id = _vf.get("control") or ""
+                if _vf.get("ok") is True and click_fail_left > 0:
+                    # validForm ผ่านจริง แต่หน้าเงียบ = คำสั่งบันทึกหายกลางทาง (postback ของ
+                    # ช่องก่อนหน้ามาถึงทีหลังแล้ว render ทับ) — กดใหม่บนหน้าที่นิ่งแล้วมักผ่าน
+                    # ⛔ ต้องเป็น True เท่านั้น — ok=None แปลว่า "อ่านไม่ได้" ไม่ใช่ "ข้อมูลครบ"
+                    #    ของเดิมใช้ `is not False` จึงกดเดาทั้งที่ยังไม่รู้ว่าขาดอะไร
                     click_fail_left -= 1
                     log("   ↻ ข้อมูลผ่าน validForm() — น่าจะเป็นคำสั่งบันทึกหายกลางทาง กดใหม่")
                     continue
                 if _why:
+                    # EMCS บอกมาแล้วว่าขาดช่องไหน → **ห้ามกดซ้ำ** ตกไปเส้น "หยุดรอคนกรอก"
+                    # (เจอจริง 01/09/69 เคลม 2026013168056: ได้รายชื่อช่องมาครบตั้งแต่รอบแรก
+                    #  แต่โยนทิ้งไปกดซ้ำ 3 รอบ เสีย 90 วิ ทั้งที่คนนั่งรอเติมให้อยู่)
                     log(f"   ↳ {_why}")
                     alert_text = _why
 

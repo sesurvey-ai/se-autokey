@@ -1182,7 +1182,7 @@ def _run_save_main(alerts, is_new, answered=False, click_ok=True, validform=None
     emcs.wait_for_manual_fill = _manual
     emcs._refill_missing_fields = lambda d, data, txt: False
     emcs._diagnose_save_click = (
-        lambda d, bid="": "validForm() คืน false โดยไม่บอกเหตุผล")
+        lambda d, bid="", vf=None: "validForm() คืน false โดยไม่บอกเหตุผล")
     emcs.WebDriverWait = _NeverReady if wait_exc is None else _RaiseWait(wait_exc)
     emcs._click_save_button = _click
     emcs._read_validform = lambda d: (
@@ -2410,6 +2410,35 @@ finally:
     _ir.KEYERS_FILE = _o
 check("keyers: ไฟล์จริงในโปรเจกต์อ่านได้ครบ 10 เลข",
       sorted(_ir.load_keyers()) == list("0123456789"))
+
+# ---- 22f3. กดแล้วเงียบ แต่ EMCS บอกมาแล้วว่าขาดอะไร → ห้ามกดซ้ำ ----
+# เจอจริง 01/09/69 เคลม 2026013168056: EMCS เด้ง "กรุณาใส่ข้อมูล... 1. 2. 3." ครบทุกช่อง
+# แต่บอทโยนทิ้งแล้วกดบันทึกซ้ำ 3 รอบ เสีย 90 วิ ทั้งที่คนนั่งรอเติมให้อยู่
+_o_kn, _n_kn, _c_kn, _ = _run_save_main(
+    [_sel_exc.TimeoutException()] * 6, is_new=True,
+    validform={"ok": False, "err": "", "control": "txtAcc_Reach_Hour",
+               "missing": ["ชั่วโมงของวันที่สำรวจภัย"], "alert": ""})
+check("เงียบ + EMCS บอกช่องที่ขาด → ถามคนตั้งแต่รอบแรก ไม่กดวน",
+      _n_kn == 1 and _c_kn == 1, f"ถาม {_n_kn} ครั้ง / กด {_c_kn} ครั้ง")
+
+# ⛔ **การ์ดหลักของบล็อกนี้** — ok=None แปลว่า "อ่านไม่ได้" ไม่ใช่ "ข้อมูลครบ"
+#    ของเดิมเช็ค `is not False` → None ผ่าน → กดซ้ำจนหมดโควตา 3 รอบ ก่อนจะยอมถามคน
+_o_un, _n_un, _c_un, _ = _run_save_main(
+    [_sel_exc.TimeoutException()] * 6, is_new=True, validform=None)
+check("เงียบ + อ่าน validForm ไม่ได้ (ok=None) → ถามคน ไม่กดเดา",
+      _n_un == 1 and _c_un == 1, f"ถาม {_n_un} ครั้ง / กด {_c_un} ครั้ง")
+
+# ผ่าน validForm จริง (ok=True) เท่านั้นที่ยังกดซ้ำได้ — คำสั่งบันทึกหายกลางทางจริง ๆ
+_o_ok, _n_ok, _c_ok, _ = _run_save_main(
+    [_sel_exc.TimeoutException()] * 8, is_new=True,
+    validform={"ok": True, "err": "", "control": "", "missing": [], "alert": ""})
+check("เงียบ + validForm ผ่านจริง → ยังกดซ้ำได้ก่อนถามคน",
+      _c_ok > 1, f"กด {_c_ok} ครั้ง / ถาม {_n_ok} ครั้ง")
+
+# ⛔ ตัววินิจฉัยต้องรับผลที่อ่านมาแล้วได้ — เรียก _read_validform ซ้ำ = alert เด้งซ้ำ
+check("ตัววินิจฉัยรับผล validForm ที่อ่านมาแล้ว (ไม่เรียกซ้ำให้ alert เด้งซ้ำ)",
+      "vf" in __import__("inspect").signature(emcs._diagnose_save_click).parameters)
+
 
 # ---- 22f2. เวลาสำรวจว่าง: หยุดถามตอนกรอก ไม่ปล่อยไปตายตอนบันทึก ----
 # เจอจริง 01/09/69 เคลม 2026013168056 — ISURVEY ว่างทั้ง 4 ช่อง บอทรู้ตั้งแต่ตอนอ่านข้อมูล
