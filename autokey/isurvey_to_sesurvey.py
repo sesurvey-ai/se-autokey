@@ -88,6 +88,24 @@ CLAIM_MTYPE_MAP = {"01": "F", "02": "D", "03": "C"}
 RELATION_MAP = {
     "01": "เจ้าของรถ", "02": "ญาติ", "03": "เพื่อน", "04": "ลูกจ้าง", "06": "ผู้เช่า",
 }
+#: คำที่ EMCS รับในช่องความสัมพันธ์ (ddlDri_Relation_ID 40 ค่า — ชุดเดียวกับ RELATION ใน xmlExport)
+#: ⚠️ audit 03/09/69 พบว่า API ส่ง `relation` มาเป็น **คำ** ('ลูกจ้าง', 'เจ้าของรถ') ไม่ใช่รหัส
+#:    และ masterRelation ว่าง → RELATION_MAP ที่คีย์เป็นรหัสไม่เคยจับได้ ค่าหายเงียบทั้ง 3 เคสที่ตรวจ
+RELATION_LABELS = frozenset((
+    "สามี", "ภรรยา", "บุตร", "บิดา", "มารดา", "นายจ้าง", "ลูกจ้าง", "ผู้เช่า", "พี่ชาย", "พี่สาว",
+    "น้องชาย", "น้องสาว", "เจ้าของรถ", "หลาน", "อา", "น้า", "ลุง", "ป้า", "ญาติ", "เพื่อน", "แฟน",
+    "พนักงาน", "พี่เขย", "น้องเขย", "พี่สะใภ้", "น้องสะใภ้", "พนักงานผู้เช่า", "ลุงเขย", "น้าเขย",
+    "น้าสะใภ้", "อาเขย", "อาสะใภ้", "หุ้นส่วน", "บุตรหุ้นส่วน", "เจ้าของบริษัท", "เพื่อนบุตรเจ้าของรถ",
+    "บุตรเขย", "หลานเขย", "บุตรสะใภ้",
+))
+
+
+def _relation(v) -> str:
+    """ความสัมพันธ์ → คำที่เว็บ/EMCS รับ: รับได้ทั้งคำตรง ๆ และรหัสเก่า · ไม่รู้จัก = ว่าง (ให้คนเลือก)"""
+    t = _s(v)
+    if t in RELATION_LABELS:
+        return t
+    return RELATION_MAP.get(t, "")
 
 GENDER_MAP = {"M": "ชาย", "F": "หญิง", "W": "หญิง"}
 # ระดับความเสียหายรายชิ้น: ISURVEY ให้ rank A-D (ชุดเดียวกับ rdoDam_Lavel ของ EMCS)
@@ -114,6 +132,22 @@ def _photo_unit(total, count):
     return str(int(unit)) if unit == int(unit) else str(unit)
 
 
+PHOTO_STD_UNIT = 5   # บาท/รูป ตามกติกาเหมาของ se-billing (10 รูป × 5 = 50)
+
+
+def _photo_split(total, count):
+    """(จำนวนรูป, ราคาต่อรูป) จากยอดรวม+จำนวนของ ISURVEY — จำนวน 0 แต่มียอด = ยอด ÷ 5 บาท/รูป"""
+    n = _num(count)
+    t = _num(total)
+    if n:
+        return n, _photo_unit(total, count)
+    if not t:
+        return n, t
+    if float(t) % PHOTO_STD_UNIT == 0:
+        return int(float(t) / PHOTO_STD_UNIT), PHOTO_STD_UNIT
+    return 1, t
+
+
 def _gender_mf(v) -> str:
     """เพศ **ผู้ขับขี่รถประกัน** — se-survey (มือถือ + เว็บ + XML) เก็บเป็น 'M'/'F'
     ต่างจาก `gender` ของคู่กรณี/ผู้บาดเจ็บที่เว็บใช้คำไทย (ดู GENDER_MAP)
@@ -125,6 +159,16 @@ def _gender_mf(v) -> str:
     if u in ("F", "W") or s == "หญิง":
         return "F"
     return ""
+
+
+#: อักขระที่ EMCS รับในช่องชื่อ (กติกาเดียวกับ EMCS_NAME_OK ของเว็บ) — นอกนั้น EMCS ล้างทั้งช่องทิ้ง
+_NAME_BAD = re.compile(r"[^ a-zA-Z0-9ก-๙.\-]")
+
+
+def _name(v) -> str:
+    """ชื่อคน/บริษัทให้ EMCS รับได้: แทนอักขระต้องห้ามด้วยเว้นวรรคแล้วยุบช่องว่าง
+    ('บริษัท โตโยต้า ลีสซิ่ง (ประเทศไทย) จำกัด' → '... ลีสซิ่ง ประเทศไทย จำกัด') — audit 03/09/69"""
+    return " ".join(_NAME_BAD.sub(" ", _s(v)).split())
 
 
 def _s(v) -> str:
@@ -242,6 +286,27 @@ def district_name(api, isv_amphur, isv_province) -> str:
     return DISTRICT_NAME.get(ep, {}).get(str(ec).lstrip("0") or "0", "")
 
 
+_SIDE_BOTH = re.compile(r"\s*(ซ้าย\s*[-/+และ]\s*ขวา|ขวา\s*[-/+และ]\s*ซ้าย|ซ้ายขวา|ทั้งสองข้าง|สองข้าง)\s*$")
+_SIDE_ONE = re.compile(r"\s*(ซ้าย|ขวา)\s*$")
+
+
+def split_part_side(name) -> tuple[str, str]:
+    """'บังโคลนหน้าขวา' → ('บังโคลนหน้า', 'R') · 'ไฟหน้าซ้าย-ขวา' → ('ไฟหน้า', 'A') · 'กันชนหน้า' → ('กันชนหน้า', 'A')
+
+    ISURVEY เขียนข้างติดท้ายชื่อชิ้นส่วน ส่วน se-survey/EMCS แยก "ข้าง" เป็น radio (pos L/R/A)
+    และ checklist 22 ชิ้นของ EMCS ใช้ชื่อไม่มีข้าง — ไม่แยกแล้วบอทติ๊ก "ทั้งคู่" ให้ชิ้นที่บอกข้างชัด
+    (audit 03/09/69: 12/15 ชิ้นใน 3 เคสมีข้างท้ายชื่อ) · 'A' = ทั้งคู่/ไม่ระบุข้าง ตามความหมายเดิมของแอป
+    """
+    n = _s(name)
+    m = _SIDE_BOTH.search(n)
+    if m:
+        return n[:m.start()].strip(" -+/"), "A"
+    m = _SIDE_ONE.search(n)
+    if m:
+        return n[:m.start()].strip(" -+/"), ("L" if m.group(1) == "ซ้าย" else "R")
+    return n, "A"
+
+
 def surveyor_code(name_with_code: str) -> str:
     """'SEC423 สมชาติ หอมมาลา' → 'SEC423'
 
@@ -304,7 +369,7 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         # เลขที่รับแจ้ง — EMCS บังคับช่องนี้ และเส้น XML ไม่เคยส่งมาเลย
         "claim_ref_no": _s(claim.get("notify_no")) or _s(noti.get("notify_no")),
         "policy_no": _s(pol.get("policy_no")) or _s((t1.get("Policy") or {}).get("policy_no")),
-        "assured_name": _s(pol.get("assured_name")),
+        "assured_name": _name(pol.get("assured_name")),
         "policy_type": _s(pol.get("policy_TypeID")),
         "policy_start": be_date(pol.get("effective_date") or t3.get("effective_date")),
         "policy_end": be_date(pol.get("expiry_date") or t3.get("expiry_date")),
@@ -317,8 +382,8 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "acc_fault": acc_fault,
         "acc_cause": _s(acc.get("acc_type_desc")) or _s(row.get("acc_type_desc")),
         "claim_type": claim_type,
-        "acc_surveyor": surv_name,
-        "surveyor_name": surv_name,
+        "acc_surveyor": _name(surv_name),
+        "surveyor_name": _name(surv_name),
         "acc_surveyor_phone": _s(row.get("emp_phone")),
         # ── ไทม์ไลน์ 4 จุด ──
         "acc_customer_report_date": be_datetime(noti.get("notified_date"), noti.get("notified_time")),
@@ -351,9 +416,9 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "engine_no": _s(t3.get("engine_no")),
         "estimated_cost": _num(t3.get("D_TOTAL_COST")),
         "driver_title": dtitle or ("คุณ" if dfirst else ""),
-        "driver_name": _s(drv.get("drv_name")),
-        "driver_first_name": dfirst,
-        "driver_last_name": dlast,
+        "driver_name": _name(drv.get("drv_name")),
+        "driver_first_name": _name(dfirst),
+        "driver_last_name": _name(dlast),
         "driver_age": _num(drv.get("age")),
         "driver_gender": _gender_mf(drv.get("drv_gender")),
         "driver_address": _s(drv.get("address")),
@@ -368,7 +433,9 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "driver_birthdate": be_date(drv.get("birthdate")),
         "driver_license_type": api.master("masterDrvLicense", "dvlTID", "dvl_type").get(
             _s(drv.get("lic_typeID")), ""),
-        "driver_relation": RELATION_MAP.get(_s(drv.get("relation")), ""),
+        "driver_relation": _relation(drv.get("relation")),
+        # บัตร 13 หลัก = คนไทย · อย่างอื่น (พาสปอร์ต/ต่างด้าว) = ต่างชาติ — เว็บมีช่องนี้แต่เดิมไม่เคยตั้ง
+        "driver_id_type": "foreign" if _s(drv.get("IDcard_no")) and not re.fullmatch(r"\d{13}", _s(drv.get("IDcard_no"))) else "thai",
     })
     if not veh:
         warnings.append('ISURVEY ไม่ได้ระบุ "ประเภทรถ" ของรถประกัน — เลือกเองบนหน้าเว็บ')
@@ -376,12 +443,18 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
     # ── ความเสียหายรถประกัน ──
     # ⭐ เส้นทางนี้ได้รายการความเสียหายมาด้วย — ไฟล์ XML ของ ISURVEY ปล่อยว่างเสมอ (6/6 ไฟล์)
     parts = api.get_parts(case_id) or []
-    report["insured_damage"] = [{
-        "part": _s(p.get("partname")),
-        "type": _s(p.get("damage_type_detail")),
-        "level": DAMAGE_LEVEL_MAP.get(_s(p.get("damaged_level")).upper(), _s(p.get("damaged_level"))),
-        "cost": _s(p.get("LABOUR_COST")),
-    } for p in parts if _s(p.get("partname"))]
+    report["insured_damage"] = []
+    for p in parts:
+        if not _s(p.get("partname")):
+            continue
+        part, pos = split_part_side(p.get("partname"))
+        report["insured_damage"].append({
+            "part": part,
+            "pos": pos,
+            "type": _s(p.get("damage_type_detail")),
+            "level": DAMAGE_LEVEL_MAP.get(_s(p.get("damaged_level")).upper(), _s(p.get("damaged_level"))),
+            "cost": _s(p.get("LABOUR_COST")),
+        })
 
     # ── คู่กรณี / ผู้บาดเจ็บ / ทรัพย์สิน ──
     report["opposing_parties"] = _third_parties(api, case_id)
@@ -434,8 +507,8 @@ def _third_parties(api, case_id) -> list:
         home_prov = _s(d.get("drv_provinceID"))
         out.append({
             "title": title,
-            "first_name": first,
-            "last_name": last,
+            "first_name": _name(first),
+            "last_name": _name(last),
             "gender": GENDER_MAP.get(_s(d.get("drv_gender")), ""),
             "age": _s(d.get("age")),
             "birthdate": be_date(d.get("birthdate")),
@@ -452,12 +525,15 @@ def _third_parties(api, case_id) -> list:
             "car_model": _s(r.get("car_model")),
             "car_color": _s(r.get("car_color")),
             "vin": _s(r.get("chassis_no")),
-            "owner_name": _s(r.get("owner_name")),
+            "owner_name": _name(r.get("owner_name")),
             "owner_address": _s(r.get("owner_address")),
             # แปลงชื่อบริษัทเป็นชื่อที่ EMCS มีจริง **ตั้งแต่ตอนนำเข้า** (ยังมีคนตรวจอยู่)
             # ไม่ใช่ปล่อยให้บอท fuzzy เดาตอนกรอกซึ่งไม่มีใครดู · แปลงไม่ได้ = ปล่อยชื่อเดิม
             # ไปให้หัวหน้าเลือกเองบนเว็บ (ช่องจะขึ้นเตือนว่าเลือกบน EMCS ไม่ได้)
-            "insurer": to_emcs_insurer(_s(r.get("oth_insure_company_name"))),
+            # audit 03/09/69: `oth_insure_company_name` เป็น None ทุกเคส มีแต่รหัส → ต้องเปิด master
+            # (ทางโหมด ISURVEY ตรงของบอทก็ resolve ผ่านรหัสแบบนี้อยู่แล้ว)
+            "insurer": to_emcs_insurer(_s(r.get("oth_insure_company_name"))
+                                       or _s(api._company(_s(r.get("oth_insure_companyID"))))),
             "policy_no": _s(r.get("oth_policy_no")),
             "claim_no": _s(r.get("oth_accident_no")),
             "policy_type": api.master("masterPolicyType", "poTID", "policy_type").get(
@@ -465,7 +541,7 @@ def _third_parties(api, case_id) -> list:
             "license_no": _s(d.get("lic_no")),
             "license_type": api.master("masterDrvLicense", "dvlTID", "dvl_type").get(
                 _s(d.get("lic_typeID")), ""),
-            "relation": RELATION_MAP.get(_s(d.get("relation")), ""),
+            "relation": _relation(d.get("relation")),
             "license_place": province_name(d.get("lic_issue_provinceID")),
             "license_start": be_date(d.get("lic_issueDate")),
             "license_end": be_date(d.get("lic_expireDate")),
@@ -517,7 +593,7 @@ def _injuries(api, case_id, warnings: list) -> list:
                 "ระบุแทนไม่ได้ — เลือกเองบนหน้าเว็บ")
         out.append({
             "person_type": ptype,
-            "name": _s(r.get("person_name")),
+            "name": _name(r.get("person_name")),
             "age": _s(r.get("age")),
             "cid": _s(r.get("IDcard_no")),
             "gender": GENDER_MAP.get(_s(r.get("gender")), ""),
@@ -552,12 +628,12 @@ def _assets(api, case_id) -> list:
         ikey = row.get("ikey")
         if not ikey:
             continue
-        r = api.get_record(case_id, 6, ikey) or {}
+        r = _flat(api.get_record(case_id, 6, ikey))   # ห่อใต้ 'property' เหมือน tab-5 ห่อใต้ 'patient'
         out.append({
             "item": _s(r.get("prop_name")),
             "detail": _s(r.get("prop_damage_detail")),
             "estimated_cost": _s(r.get("damage_cost")),
-            "owner_name": _s(r.get("owner_name")),
+            "owner_name": _name(r.get("owner_name")),
             "owner_address": _s(r.get("owner_address")),
             "owner_phone": _s(r.get("owner_phone")),
         })
@@ -570,15 +646,23 @@ def _bill(bill: dict):
     ใช้ฝั่ง **INS_*** (ยอดที่ประกันอนุมัติ) ตรงกับที่เส้น XML ใช้ · ว่างทั้งก้อน = None
     (งาน "รอตรวจข้อมูล" ยอดมักยังไม่ถูกกรอก — หัวหน้ากรอกบนเว็บเราแทน)
     """
+    # audit 03/09/69 (3 เคส): INVEST_NUM / TRANS_NUM / PHOTO_NUM เป็น 0 ทั้งที่มียอด — ISURVEY
+    # (ผ่านส่วนขยาย se-billing) กรอกแต่ "ยอด" ไม่กรอกจำนวน · se-survey/EMCS คิดเป็น จำนวน × ราคา
+    # → ค่าบริการ/เดินทาง: มียอดแต่จำนวน 0 = 1 ครั้ง · ค่ารูป: มียอดแต่จำนวน 0 = ยอด ÷ 5 บาท/รูป
+    #   (กติกาเหมาของ se-billing 10 รูป × 5 = 50) หารไม่ลงตัวค่อยถือเป็น 1 × ยอด
+    def _count(num_key, price_key):
+        n = _num(bill.get(num_key))
+        return n if n else (1 if (_num(bill.get(price_key)) or 0) > 0 else n)
+    photo_n, photo_unit = _photo_split(bill.get("INS_PHOTO"), bill.get("PHOTO_NUM"))
     out = {
-        "service_fee_count": _num(bill.get("INVEST_NUM")),
+        "service_fee_count": _count("INVEST_NUM", "INS_INVEST"),
         "service_fee_price": _num(bill.get("INS_INVEST")),
-        "travel_fee_count": _num(bill.get("TRANS_NUM")),
+        "travel_fee_count": _count("TRANS_NUM", "INS_TRANS"),
         "travel_fee_price": _num(bill.get("INS_TRANS")),
-        "photo_fee_count": _num(bill.get("PHOTO_NUM")),
+        "photo_fee_count": photo_n,
         # INS_PHOTO ของ ISURVEY = ยอดรวมค่ารูป · se-survey เก็บ "ราคาต่อรูป" (export คูณจำนวนเอง)
         # → หารด้วยจำนวนรูปก่อน ไม่งั้น 50 กลายเป็น 50/รูป = 500 ใน EMCS (เคส #221, 03/09/69)
-        "photo_fee_price": _photo_unit(bill.get("INS_PHOTO"), bill.get("PHOTO_NUM")),
+        "photo_fee_price": photo_unit,
         "phone_fee": _num(bill.get("INS_TEL")),
         "bail_fee": _num(bill.get("INS_INSURE")),
         "claim_fee_price": _num(bill.get("INS_CLAIM")),
