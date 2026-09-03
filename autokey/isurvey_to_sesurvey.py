@@ -103,7 +103,16 @@ def _s(v) -> str:
     """
     if v is None:
         return ""
-    s = str(v).replace("\r\n", "\n").replace("\r", "\n").strip()
+    s = str(v).replace("\r\n", "\n").replace("\r", "\n")
+    # ช่องว่างแปลก ๆ ที่ตาเห็นเหมือนเว้นวรรคแต่ EMCS ไม่รับ — เจอจริง 03/09/69
+    # เคส #221 (SEABI-220260800746): ISURVEY ส่งชื่อผู้สำรวจมาเป็น "นาย\xa0มี" (NBSP)
+    # → เว็บทาแดงช่อง "ผู้สำรวจภัย" ทั้งที่ดูครบ และ noTyping ของ EMCS จะล้างทั้งช่องทิ้ง
+    # แปลงเป็นเว้นวรรคปกติตั้งแต่ตอนดึง ทุกช่อง (ไม่มีข้อมูลไหนต้องเก็บ NBSP ไว้)
+    for ch in ("\u00a0", "\u2007", "\u202f", "\u3000"):
+        s = s.replace(ch, " ")
+    for ch in ("\u200b", "\u200c", "\u200d", "\ufeff"):   # zero-width มองไม่เห็นเลย
+        s = s.replace(ch, "")
+    s = s.strip()
     return "" if s.lower() in ("null", "none", "-") else s
 
 
