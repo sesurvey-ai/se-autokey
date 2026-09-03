@@ -1127,6 +1127,76 @@ def _current_select_text(driver, select_id) -> str:
         return ""
 
 
+_JS_ARM_SUBMIT = """
+if (window.__akArmed) return 'armed';
+var f = (typeof theForm !== 'undefined') ? theForm : (document.forms[0] || null);
+if (!f) return 'no-form';
+window.__akArmed = 1;
+var os = f.submit;
+f.submit = function () { window.__akSubmitted = Date.now(); return os.apply(f, arguments); };
+if (typeof __doPostBack === 'function') {
+  var od = __doPostBack;
+  window.__doPostBack = function (a, c) { window.__akSubmitted = Date.now(); return od(a, c); };
+}
+f.addEventListener('submit', function () { window.__akSubmitted = Date.now(); }, true);
+/* ASP.NET AJAX (UpdatePanel): postback บางตัวเป็น XHR ไม่ได้โหลดหน้าใหม่ — เอกสารเดิมอยู่ต่อ
+   ต้องล้างธงตอน endRequest ไม่งั้นจะรอ "เอกสารถูกแทนที่" ไปจนหมดเวลา (เจอจริง 03/09/69) */
+try {
+  if (window.Sys && Sys.WebForms && Sys.WebForms.PageRequestManager) {
+    var prm = Sys.WebForms.PageRequestManager.getInstance();
+    prm.add_beginRequest(function () { window.__akSubmitted = Date.now(); window.__akAsync = 1; });
+    prm.add_endRequest(function () { window.__akSubmitted = 0; window.__akAsync = 0; });
+    window.__akPrm = 1;
+  }
+} catch (e) {}
+return 'ok';
+"""
+
+
+def arm_submit_watch(driver) -> None:
+    """ติดตัวดักบนเอกสารปัจจุบัน: ทุกทางที่ฟอร์มถูกส่ง (__doPostBack / form.submit / event
+    submit) จะตั้ง `window.__akSubmitted` — ตัวดักหายไปเองเมื่อเอกสารถูกแทนที่ (response มา)"""
+    try:
+        driver.execute_script(_JS_ARM_SUBMIT)
+    except Exception:
+        pass
+
+
+def wait_postback_done(driver, timeout: float = 25.0, grace: float = 0.3) -> bool:
+    """ถ้าเอกสารนี้ **สั่ง submit ไปแล้ว** และยังไม่ถูกแทนที่ = คำตอบจากเซิร์ฟเวอร์ยังมาไม่ถึง
+    → รอจนเอกสารเปลี่ยน (ตัวดักหาย) แล้วติดตัวดักบนเอกสารใหม่ให้พร้อมสำหรับรอบถัดไป
+
+    ทำไมต้องมี (03/09/69 เคส #198 · ดัมพ์สภาพหน้าตอน "กดบันทึกแล้วเงียบ" 20 กว่ารอบ):
+    ทุกวิธีที่รอ "หน้านิ่ง" เป็นการเดาเวลา — แยกไม่ออกระหว่าง "นิ่งเพราะเสร็จแล้ว" กับ
+    "นิ่งเพราะเซิร์ฟเวอร์ยังไม่ตอบ" พอเซิร์ฟเวอร์ช้ากว่าที่รอ (ช่วงคนใช้เยอะ) response ของ
+    dropdown มาถึง**พอดีตอนคลิกบันทึก** เอกสารถูกสลับกลางคัน form.submit() ของเราจึง
+    ถูกเบราว์เซอร์ทิ้งเงียบ ๆ (ปุ่มขึ้น Please wait บนเอกสารเก่าที่กำลังจะหาย) → ไม่มี alert
+    ไม่มีการบันทึก หน้าใหม่ปุ่มกลับเป็น 'แก้ไข' — คลิกที่สองผ่านเสมอเพราะไม่มีอะไรค้างแล้ว
+    ตัวดักนี้รู้ "มี submit ค้าง" จากข้อเท็จจริง ไม่ใช่จากเวลา
+
+    คืน True = ไม่มีอะไรค้าง (หรือรอจนเสร็จแล้ว) · False = รอจนหมดเวลาแล้วยังค้าง"""
+    time.sleep(grace)                   # setTimeout(__doPostBack, 0) ของ EMCS ต้องได้ยิงก่อน
+    deadline = time.time() + timeout
+    waited = False
+    while time.time() < deadline:
+        try:
+            pending = driver.execute_script(
+                "return !!(window.__akArmed && window.__akSubmitted"
+                " && !(window.__akPrm && window.Sys && !Sys.WebForms.PageRequestManager"
+                "        .getInstance().get_isInAsyncPostBack() && !window.__akAsync));")
+        except Exception:
+            pending = False              # เอกสารกำลังเปลี่ยนพอดี = คำตอบมาแล้ว
+        if not pending:
+            if waited:
+                log("   ⏳ รอ response ของ postback ก่อนหน้าจนมาถึงแล้ว จึงไปต่อ")
+            arm_submit_watch(driver)     # เอกสารใหม่ (หรือยังไม่เคยส่ง) — ติดตัวดักไว้
+            return True
+        waited = True
+        time.sleep(0.2)
+    log("   ⚠️ postback ก่อนหน้ายังไม่ได้คำตอบจนหมดเวลารอ — ไปต่อ (อาจต้องกดบันทึกซ้ำ)")
+    return False
+
+
 def _settle_after_select(driver, quiet: float = 0.8, timeout: float = 12.0) -> None:
     """รอให้ postback ที่เกิดจาก **การเลือก dropdown** จบก่อนไปทำอย่างอื่น
 
@@ -1138,21 +1208,9 @@ def _settle_after_select(driver, quiet: float = 0.8, timeout: float = 12.0) -> N
         response ของ postback ก่อนหน้ามาทับ ฟอร์มไม่เคยถูกส่ง ไม่มี alert ไม่มี error
     ของเดิมแก้ด้วยการนอนรอเวลาตายตัว (presleep=1) ซึ่งไม่พอเมื่อเซิร์ฟเวอร์ช้ากว่านั้น
 
-    marker บน window หาย = โหลดหน้าใหม่จริง (full postback) — รอจนนิ่งติดกัน `quiet` วิ"""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            driver.execute_script("window.__akSel = 1;")
-        except Exception:
-            time.sleep(0.3)          # หน้ากำลังเปลี่ยนพอดี — รอแล้วปักใหม่
-            continue
-        time.sleep(quiet)
-        try:
-            if driver.execute_script("return window.__akSel === 1;"):
-                return
-        except Exception:
-            pass
-    log("   ⏳ dropdown ยิง postback แล้วหน้ายังไม่นิ่งจนหมดเวลา — ไปต่อ (อาจต้องกดบันทึกซ้ำ)")
+    ⛔ เคยรอด้วย marker + เวลานิ่ง (quiet) — ไม่พอเมื่อเซิร์ฟเวอร์ตอบช้ากว่าที่รอ (03/09/69)
+    ตอนนี้ใช้ตัวดัก submit จริง (wait_postback_done): รอเฉพาะเมื่อมี postback ค้างจริง"""
+    wait_postback_done(driver, timeout=timeout)
 
 
 def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
@@ -1196,6 +1254,7 @@ def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
                 )
             sel = Select(driver.find_element(By.ID, select_id))
             options = [o.text for o in sel.options]
+            arm_submit_watch(driver)    # ให้ onchange ที่ยิง __doPostBack ถูกดักไว้แน่ ๆ
             # โหมดเติมส่วนที่ขาด: ตัวที่เลือกอยู่ตรงกับที่จะเลือกแล้ว = ไม่ต้องเลือกซ้ำ
             # (เลือกซ้ำ = ยิง onchange → postback ทั้งหน้า เสียเวลาที่สุดในบรรดาช่องทั้งหมด)
             if SKIP_UNCHANGED:

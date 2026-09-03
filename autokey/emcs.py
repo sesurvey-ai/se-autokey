@@ -21,6 +21,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
 from .browser import (
+    wait_postback_done,
     _current_select_text,
     _is_placeholder_option,
     accept_alert,
@@ -2687,28 +2688,72 @@ def _wait_page_quiet(driver, quiet: float = 2.0, timeout: float = 10.0) -> bool:
     return False
 
 
-def _postback_started(driver, wait: float = 4.0) -> bool:
-    """คลิกไปแล้ว — postback **ออกเดินทางจริง**ไหมภายใน `wait` วินาที
+_JS_SILENT_STATE = """
+var id = arguments[0], b = document.getElementById(id), out = {};
+out.click = window.__seClick || null;
+out.btn = b ? {value: b.value, disabled: b.disabled} : null;
+try { var nv = performance.getEntriesByType('navigation')[0];
+      out.nav = nv ? {type: nv.type, ms: Math.round(nv.responseEnd), age: Math.round(performance.now())} : null; } catch (e) {}
+try { out.hifPostStatus = (document.getElementById('hifPostStatus') || {}).value; } catch (e) {}
+try { out.eventTarget = (document.getElementById('__EVENTTARGET') || {}).value; } catch (e) {}
+try { out.ready = document.readyState; } catch (e) {}
+try { if (window.Sys && Sys.WebForms) { var p = Sys.WebForms.PageRequestManager.getInstance();
+      out.prm = {inAsync: p.get_isInAsyncPostBack(),
+                 asyncCtl: (p._asyncPostBackControlIDs || []).slice(0, 12),
+                 postCtl: (p._postBackControlClientIDs || []).slice(0, 12),
+                 panels: (p._updatePanelClientIDs || []).length}; } } catch (e) { out.prm = 'err'; }
+try { out.posts = performance.getEntriesByType('resource').filter(function (r) {
+        return r.initiatorType === 'other' || /frmSurvey/.test(r.name); }).length; } catch (e) {}
+return out;
+"""
 
-    True เมื่อ (ก) marker บน window หาย = หน้าเริ่มโหลดใหม่ (full postback ออกแล้ว)
-    หรือ (ข) มี alert เด้ง = EMCS ตอบกลับแล้ว
-    False = onclick ทำงานครบ (ปุ่มขึ้น 'Please wait...') **แต่ฟอร์มไม่ถูกส่ง** —
-    เกิดตอน response ของ postback ก่อนหน้ามา render ทับพอดีตอนเรากด
 
-    ทำไมต้องแยกให้ออก: เดิมพอปุ่มขึ้น 'Please wait...' ก็ถือว่าคลิกติดแล้ว ไปรอ alert
-    ต่ออีก 12-30 วิ ทั้งที่ฟอร์มไม่เคยถูกส่ง — รู้ตั้งแต่วินาทีที่ 4 แล้วกดใหม่ทันที
-    ถูกกว่ามาก (เคส #198 03/09/69: คลิกหาย 1 ครั้ง = เสีย 17 วิ)"""
-    deadline = time.time() + wait
+def _silent_state(driver, button_id: str) -> str:
+    """สภาพหน้าตอน "กดบันทึกแล้วเงียบ" — ตัวดักคลิก + ปุ่ม + navigation ล่าสุด + hifPostStatus
+    (เครื่องมือวินิจฉัย: อ่านอย่างเดียว ไม่แตะอะไร)"""
+    try:
+        st = driver.execute_script(_JS_SILENT_STATE, button_id)
+    except Exception as e:
+        return f"อ่านสภาพหน้าไม่ได้ ({type(e).__name__})"
+    return str(st)[:600]
+
+
+def _wait_alert_or_refresh(driver, timeout: float, grace: float = 2.0):
+    """หลังคลิกบันทึก: รอ alert หรือรู้ให้เร็วว่า "หน้าโหลดใหม่แล้วแต่ไม่มี alert"
+
+    คืน ('alert', ข้อความ) · ('refresh', '') · ('none', '')
+
+    'refresh' คือลายเซ็นของอาการที่ไล่จนเจอ 03/09/69 (เคส #198 ดัมพ์สภาพหน้าตอนเงียบ ~25 รอบ):
+    หน้า EMCS เป็น ASP.NET AJAX (UpdatePanel 130 ใบ) — dropdown ยิง postback แบบ XHR
+    patch หน้าอยู่กับที่ · พอกดปุ่มบันทึก (full postback) **ครั้งแรก**หลังจากนั้น เซิร์ฟเวอร์
+    บางครั้งไม่ยิง event ของปุ่ม แค่ render หน้าใหม่: navigation เกิด ~2-3 วิหลังคลิก
+    ไม่มี alert ไม่มีการบันทึก ปุ่มกลับเป็น 'แก้ไข' — คลิกที่สองบนหน้าสะอาดผ่านเสมอ
+    ไม่เกี่ยวกับจังหวะรอ (รอ 25 วิก่อนกดก็ยังเกิด) จึงต้อง **รู้เร็วแล้วกดใหม่** ไม่ใช่รอนาน
+
+    วิธีรู้: ตัวดักคลิก (window.__seClick) หายไป = เอกสารถูกแทนที่แล้ว · โหลดเสร็จเกิน
+    `grace` วิแล้วยังไม่มี alert = แค่ refresh (alert สำเร็จของ EMCS มาพร้อมหน้าใหม่ทันที)"""
+    deadline = time.time() + timeout
+    refreshed_at = None
     while time.time() < deadline:
         try:
-            if driver.execute_script("return window.__akNav !== 1;"):
-                return True          # หน้าเปลี่ยนแล้ว = ฟอร์มถูกส่งออกไปจริง
+            WebDriverWait(driver, 0.5).until(EC.alert_is_present())
+            return "alert", accept_alert(driver, timeout=2)
+        except TimeoutException:
+            pass
         except UnexpectedAlertPresentException:
-            return True              # alert เด้ง = EMCS ตอบกลับแล้ว
+            return "alert", accept_alert(driver, timeout=2)
+        try:
+            gone = driver.execute_script(
+                "return !window.__seClick && document.readyState === 'complete';")
+        except UnexpectedAlertPresentException:
+            return "alert", accept_alert(driver, timeout=2)
         except Exception:
-            return True              # อ่านไม่ได้เพราะหน้ากำลังเปลี่ยน = ถือว่าออกแล้ว
-        time.sleep(0.25)
-    return False
+            gone = False                     # กำลังเปลี่ยนหน้าอยู่
+        if gone:
+            refreshed_at = refreshed_at or time.time()
+            if time.time() - refreshed_at >= grace:
+                return "refresh", ""
+    return "none", ""
 
 
 def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
@@ -2752,6 +2797,9 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
         #    2 วิ แล้วคลิกหลุด 2 รอบติด (เสียไป 68 วิ) · ค่านี้จ่ายเพิ่มรอบละ 1 วิ
         #    แลกกับการไม่เสีย 12-33 วิตอนคลิกหาย — คุ้มกว่ามาก
         _wait_page_quiet(driver, quiet=3.0, timeout=15.0)
+        # ⛔ ด่านที่แก้ต้นเหตุจริง (03/09/69): ถ้าเอกสารนี้สั่ง submit ไปแล้วและคำตอบยังไม่มา
+        #    ห้ามคลิก — คลิกตอนเอกสารกำลังถูกสลับ = form.submit() ถูกทิ้งเงียบ ๆ
+        wait_postback_done(driver)
         try:
             btn = wait_clickable(driver, By.ID, button_id)
         except UnexpectedAlertPresentException:
@@ -2770,21 +2818,15 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
                 continue
             return False
         _arm_click_probe(driver, button_id)     # ไว้บอกทีหลังว่าคลิกไปตายตรงไหน
-        # marker สำหรับดูว่าหน้าเปลี่ยนจริงไหมหลังคลิก (ดู _postback_started)
-        try:
-            driver.execute_script("window.__akNav = 1;")
-        except Exception:
-            pass
         btn.click()
         try:    # onclick ทำงาน → ปุ่มถูกปิด/เปลี่ยนข้อความทันที
             WebDriverWait(driver, 5).until(
                 lambda d: (lambda e: (not e.is_enabled())
                            or "wait" in (e.get_attribute("value") or "").lower())(
                     d.find_element(By.ID, button_id)))
-            # ⛔ เคยลองเช็ค "หน้าเปลี่ยนไหมหลังคลิก" (marker บน window) เพื่อแยก
-            #    "ฟอร์มถูกส่ง" ออกจาก "onclick ทำงานเฉย ๆ" — **ใช้ไม่ได้** เพราะ marker
-            #    หายได้จาก postback ตัวอื่นที่ค้างอยู่เหมือนกัน (เทสสด 03/09/69 คืน True
-            #    ทั้งที่ฟอร์มไม่ได้ถูกส่ง) → ถอดออก อย่าเอากลับมาโดยไม่มีสัญญาณที่ดีกว่านี้
+            # ปุ่มเปลี่ยนสถานะ = onclick ถึง handler แล้ว · ส่วน "ฟอร์มถูกส่งจริงไหม" กันไว้
+            # ก่อนหน้านี้แล้วด้วย wait_postback_done (ไม่คลิกตอนมี submit ค้าง) —
+            # เคยลองเช็คหลังคลิกด้วย marker บน window แล้วใช้ไม่ได้ (03/09/69) อย่าเอากลับมา
             return True
         except UnexpectedAlertPresentException:
             return True          # เด้ง alert = คลิกติดแน่นอน (ผู้เรียกอ่านต่อเอง)
@@ -2994,19 +3036,18 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
             # คลิกไม่ออกตั้งแต่แรก — ไม่ต้องรอ alert ให้เสียเวลา ลงไปเส้นวินิจฉัยเลย
             if not clicked:
                 raise TimeoutException("คลิกไม่ออก (ฟอร์มไม่ถูกส่ง)")
-            # ── รอ alert สั้นก่อน แล้วค่อยรอยาวในรอบสุดท้าย ──
-            #
-            # ข้อเท็จจริงที่วัดได้ (เคส #198 03/09/69 · 6 รอบทดสอบ): **คลิกแรกหายบ่อย
-            # ~2 ใน 3 ครั้ง แล้วคลิกที่สองผ่านเสมอภายใน 3-5 วิ** ด้วยข้อมูลชุดเดิมเป๊ะ
-            # ไล่หาต้นเหตุแล้ว 3 ทาง (จัดลำดับกรอกใหม่ · blur ก่อนกด · รอ postback ของ
-            # dropdown ให้จบ) ทุกทางช่วยให้เกิดน้อยลงแต่ยังไม่หายขาด — ตัวการที่แท้จริง
-            # อยู่ในฝั่ง EMCS ที่มองไม่เห็นจากนอก
-            #
-            # จึงจ่ายค่ารอให้ถูกกับความจริง: รอบแรก ๆ รอสั้น (4 วิ) แล้วกดใหม่เลย
-            # รอบสุดท้ายรอเต็ม (12 วิ) เผื่อเซิร์ฟเวอร์ช้าจริง
-            # → คลิกหาย 1 ครั้งเสีย ~6 วิ แทน 18 วิ (เดิมก่อนแก้ทั้งหมด: 33 วิ)
-            alert_text, silent = accept_alert(
-                driver, timeout=(4 if attempt < 3 else 12)), False
+            # ── รอ alert หรือรู้เร็วว่าเป็นแค่ "refresh ไม่มี alert" (ดู _wait_alert_or_refresh) ──
+            kind, alert_text = _wait_alert_or_refresh(driver, timeout=(6 if attempt < 3 else 12))
+            if kind == "refresh":
+                if click_fail_left > 0:
+                    click_fail_left -= 1
+                    log("   ↻ หน้าโหลดใหม่โดยไม่มี alert — postback แรกหลัง UpdatePanel patch "
+                        "ไม่ยิง event ของปุ่ม (อาการรู้จักแล้ว 03/09/69) · กดใหม่ทันที")
+                    continue
+                raise TimeoutException("refresh-no-alert")
+            if kind == "none":
+                raise TimeoutException("no-alert")
+            silent = False
         except TimeoutException:
             alert_text, silent = "", True
             # ⚠️ "ไม่มี alert" ไม่ได้แปลว่าไม่ได้บันทึก — ถาม DOM ก่อนเสมอ
@@ -3036,6 +3077,8 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
                 # ตกลงมาที่ "หยุดรอคนกรอก" เหมือน validation ปกติ (เคลม 2026013059072)
                 log("   ⚠️ กดบันทึกแล้ว EMCS เงียบ ไม่มี alert ตอบกลับ — ปุ่มถูก "
                     "validForm() ฝั่ง JS ปัดตก (ไม่ยิง postback)")
+                # หลักฐาน ณ วินาทีนั้น — ไว้ไล่ว่า "เงียบ" เพราะอะไรกันแน่ (03/09/69)
+                log(f"   🔬 สภาพหน้าตอนเงียบ: {_silent_state(driver, button_id)}")
                 # ⛔ อ่าน validForm ครั้งเดียวแล้วใช้ต่อ — **ทุกครั้งที่เรียกมันเด้ง alert ใหม่**
                 #    ของเดิมเรียก 3 ครั้งซ้อน (ในตัววินิจฉัย + อีก 2 ที่นี่) alert เดียวกัน
                 #    จึงโผล่ 3 รอบใน log แล้วผลรอบท้ายเชื่อไม่ได้
