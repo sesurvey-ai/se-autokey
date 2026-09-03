@@ -90,6 +90,11 @@ RELATION_MAP = {
 }
 
 GENDER_MAP = {"M": "ชาย", "F": "หญิง", "W": "หญิง"}
+# ระดับความเสียหายรายชิ้น: ISURVEY ให้ rank A-D (ชุดเดียวกับ rdoDam_Lavel ของ EMCS)
+# แต่ se-survey (มือถือ+เว็บ) เก็บ L/M/H/X — ส่ง 'A' ไปตรง ๆ เว็บจะโชว์ไม่ติ๊ก และตอนยกเข้า EMCS
+# main.py แปลง L/M/H/X→A-D ไม่รู้จัก 'A' → ระดับว่าง → EMCS ปัดตก "กรุณาเลือก ระดับความเสียหาย"
+# (เจอจริงเคส #221, 03/09/69)
+DAMAGE_LEVEL_MAP = {"A": "L", "B": "M", "C": "H", "D": "X"}
 TITLES = ("นาย", "นางสาว", "นาง", "ด.ช.", "ด.ญ.", "คุณ")
 
 
@@ -360,7 +365,7 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
     report["insured_damage"] = [{
         "part": _s(p.get("partname")),
         "type": _s(p.get("damage_type_detail")),
-        "level": _s(p.get("damaged_level")),
+        "level": DAMAGE_LEVEL_MAP.get(_s(p.get("damaged_level")).upper(), _s(p.get("damaged_level"))),
         "cost": _s(p.get("LABOUR_COST")),
     } for p in parts if _s(p.get("partname"))]
 

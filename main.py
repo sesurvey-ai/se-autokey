@@ -597,7 +597,8 @@ def _money(v) -> str:
 
 # ── ความเสียหาย (แผนภาพมือถือ) → รายการที่ fill_damage_list/fill_opponent_damage กรอกได้ ──
 _DMG_POS_TH = {'L': 'ซ้าย', 'R': 'ขวา', 'A': ''}          # pos → ต่อท้ายชื่อชิ้นส่วน (ให้ EMCS อ่านซ้าย/ขวา)
-_DMG_LVL_RANK = {'L': 'A', 'M': 'B', 'H': 'C', 'X': 'D'}  # ระดับ ต่ำ/กลาง/สูง/สูงมาก → rank A-D (rdoDam_Lavel)
+_DMG_LVL_RANK = {'L': 'A', 'M': 'B', 'H': 'C', 'X': 'D',  # ระดับ ต่ำ/กลาง/สูง/สูงมาก → rank A-D (rdoDam_Lavel)
+                 'A': 'A', 'B': 'B', 'C': 'C', 'D': 'D'}  # rank A-D ตรง ๆ (งานที่ดึงจาก ISURVEY ก่อน 03/09/69)
 
 
 # pos ของแอป → index radio rdoDam_Left_Right ของ EMCS ('0'=ซ้าย '1'=ขวา '2'=ทั้งคู่)
