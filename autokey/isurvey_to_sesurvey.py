@@ -95,6 +95,19 @@ TITLES = ("นาย", "นางสาว", "นาง", "ด.ช.", "ด.ญ."
 
 # ── ตัวช่วยรูปแบบข้อมูล ──────────────────────────────────────────────────────
 
+def _gender_mf(v) -> str:
+    """เพศ **ผู้ขับขี่รถประกัน** — se-survey (มือถือ + เว็บ + XML) เก็บเป็น 'M'/'F'
+    ต่างจาก `gender` ของคู่กรณี/ผู้บาดเจ็บที่เว็บใช้คำไทย (ดู GENDER_MAP)
+    เดิมส่ง 'หญิง' ไป → radio หน้าตรวจไม่ติ๊ก หัวหน้าเห็น "ยังขาด 1 ช่อง" แต่หาไม่เจอ (เคส #221, 03/09/69)"""
+    s = _s(v)
+    u = s.upper()
+    if u == "M" or s == "ชาย":
+        return "M"
+    if u in ("F", "W") or s == "หญิง":
+        return "F"
+    return ""
+
+
 def _s(v) -> str:
     """ISURVEY คืน None เมื่อว่าง — และ 'null' เป็นสตริงในบางช่อง (เจอที่ DD_OTH_COND)
 
@@ -323,7 +336,7 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "driver_first_name": dfirst,
         "driver_last_name": dlast,
         "driver_age": _num(drv.get("age")),
-        "driver_gender": GENDER_MAP.get(_s(drv.get("drv_gender")), ""),
+        "driver_gender": _gender_mf(drv.get("drv_gender")),
         "driver_address": _s(drv.get("address")),
         "driver_province": province_name(drv_prov),
         "driver_district": district_name(api, drv.get("drv_amphurID"), drv_prov),
