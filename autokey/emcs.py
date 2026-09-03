@@ -2363,9 +2363,15 @@ def _fill_opponent_fault(driver, data: ClaimData, is_opponent_fault: bool = Fals
     # 2) การเรียกร้องค่าเสียหายจากคู่กรณี
     picked = [s.strip() for s in str(data.opo_results or "").split(",") if s.strip()]
     if not picked:
-        log("   ⚠️ ไม่มีข้อมูล 'การเรียกร้องค่าเสียหายจากคู่กรณี' — ติ๊กเองบนหน้าจอ "
-            "(EMCS บังคับอย่างน้อย 1 ข้อ; บอทไม่ติ๊กมั่วแทนเซอร์เวย์)")
-        missing.append("การเรียกร้องค่าเสียหายจากคู่กรณี")
+        # ⛔ เตือนเฉพาะตอนที่ EMCS บังคับจริงเท่านั้น — กติกาจาก validForm() ของ EMCS เอง:
+        #      if (rdoAcc_Cause01.checked) { CheckCheckBoxArrayValid('chkOpo_Result_',5,…) }
+        #    ผลคดีอื่น = ไม่บังคับ · ของเดิมเตือนทุกเคสที่ต้นทางไม่มีข้อมูล ซึ่งคือเคสส่วนใหญ่
+        #    → เตือนหลอกจนคนเลิกอ่าน (user ทัก 03/09/69 · ฝั่งเว็บแก้กติกาเดียวกันแล้ว)
+        if is_opponent_fault:
+            log("   ⚠️ ไม่มีข้อมูล 'การเรียกร้องค่าเสียหายจากคู่กรณี' — ติ๊กเองบนหน้าจอ "
+                "(ผลคดี = รถคู่กรณีเป็นฝ่ายผิด → EMCS บังคับอย่างน้อย 1 ข้อ; "
+                "บอทไม่ติ๊กมั่วแทนเซอร์เวย์)")
+            missing.append("การเรียกร้องค่าเสียหายจากคู่กรณี")
         return missing
     ticked = 0
     for t in picked:
@@ -2388,8 +2394,8 @@ def _fill_opponent_fault(driver, data: ClaimData, is_opponent_fault: bool = Fals
             set_text(driver, "txtOpo_Pay", data.opo_pay)
             set_text(driver, "txtOpo_Recovery_Amount", data.opo_recovery)
             log(f"   ✓ รับเงิน {data.opo_pay} จากเรียกร้องทั้งหมด {data.opo_recovery}")
-    # มีข้อมูลมาแต่ติ๊กไม่เข้าสักข้อ = ยังไม่ผ่านด่าน EMCS อยู่ดี
-    if not ticked:
+    # มีข้อมูลมาแต่ติ๊กไม่เข้าสักข้อ = ยังไม่ผ่านด่าน EMCS อยู่ดี (เฉพาะผลคดีที่บังคับ)
+    if not ticked and is_opponent_fault:
         missing.append("การเรียกร้องค่าเสียหายจากคู่กรณี")
     return missing
 
@@ -2681,6 +2687,30 @@ def _wait_page_quiet(driver, quiet: float = 2.0, timeout: float = 10.0) -> bool:
     return False
 
 
+def _postback_started(driver, wait: float = 4.0) -> bool:
+    """คลิกไปแล้ว — postback **ออกเดินทางจริง**ไหมภายใน `wait` วินาที
+
+    True เมื่อ (ก) marker บน window หาย = หน้าเริ่มโหลดใหม่ (full postback ออกแล้ว)
+    หรือ (ข) มี alert เด้ง = EMCS ตอบกลับแล้ว
+    False = onclick ทำงานครบ (ปุ่มขึ้น 'Please wait...') **แต่ฟอร์มไม่ถูกส่ง** —
+    เกิดตอน response ของ postback ก่อนหน้ามา render ทับพอดีตอนเรากด
+
+    ทำไมต้องแยกให้ออก: เดิมพอปุ่มขึ้น 'Please wait...' ก็ถือว่าคลิกติดแล้ว ไปรอ alert
+    ต่ออีก 12-30 วิ ทั้งที่ฟอร์มไม่เคยถูกส่ง — รู้ตั้งแต่วินาทีที่ 4 แล้วกดใหม่ทันที
+    ถูกกว่ามาก (เคส #198 03/09/69: คลิกหาย 1 ครั้ง = เสีย 17 วิ)"""
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        try:
+            if driver.execute_script("return window.__akNav !== 1;"):
+                return True          # หน้าเปลี่ยนแล้ว = ฟอร์มถูกส่งออกไปจริง
+        except UnexpectedAlertPresentException:
+            return True              # alert เด้ง = EMCS ตอบกลับแล้ว
+        except Exception:
+            return True              # อ่านไม่ได้เพราะหน้ากำลังเปลี่ยน = ถือว่าออกแล้ว
+        time.sleep(0.25)
+    return False
+
+
 def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
     """กดปุ่มบันทึก แล้ว **ยืนยันว่าคลิกติดจริง** — คืน True เมื่อติด
 
@@ -2694,6 +2724,21 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
     ด้วยข้อมูลชุดเดิมผ่านทันที (ได้ S68426080794) — ไม่ใช่ปัญหาข้อมูล แต่เป็นจังหวะกด
     """
     for i in range(1, tries + 1):
+        # ⛔ **ถอดโฟกัสออกจากช่องสุดท้ายก่อนเสมอ** — ต้นเหตุจริงของ "คลิกบันทึกหาย"
+        #
+        # set_text พิมพ์ด้วย send_keys แล้ว **ไม่ได้ blur** โฟกัสจึงค้างอยู่ในช่องที่เพิ่งพิมพ์
+        # พอคลิกปุ่มบันทึก เบราว์เซอร์ยิง onblur/onchange ของช่องนั้นก่อนเป็นอันดับแรก —
+        # ช่องวันที่/อายุ/ฯลฯ ของ EMCS ผูก handler ที่ยิง postback ไว้ → postback ตัวนั้น
+        # ออกเดินทางพร้อมกับคลิกของเรา แล้ว response กลับมา render ทับ = คำสั่งบันทึกหาย
+        # โดยไม่มี alert ไม่มี error (เจอซ้ำ 03/09/69 เคส #198 แม้จัดลำดับกรอกใหม่แล้ว)
+        #
+        # blur เองก่อน แล้วค่อยรอหน้านิ่ง = postback ของช่องสุดท้ายจบก่อนเรากดเสมอ
+        try:
+            driver.execute_script(
+                "if (document.activeElement && document.activeElement.blur)"
+                " document.activeElement.blur();")
+        except Exception:
+            pass
         # รอหน้าให้นิ่งก่อน: โหลดจบ + ไม่มี postback ของ ASP.NET ค้างอยู่
         try:
             WebDriverWait(driver, 20).until(lambda d: d.execute_script(
@@ -2725,12 +2770,21 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
                 continue
             return False
         _arm_click_probe(driver, button_id)     # ไว้บอกทีหลังว่าคลิกไปตายตรงไหน
+        # marker สำหรับดูว่าหน้าเปลี่ยนจริงไหมหลังคลิก (ดู _postback_started)
+        try:
+            driver.execute_script("window.__akNav = 1;")
+        except Exception:
+            pass
         btn.click()
         try:    # onclick ทำงาน → ปุ่มถูกปิด/เปลี่ยนข้อความทันที
             WebDriverWait(driver, 5).until(
                 lambda d: (lambda e: (not e.is_enabled())
                            or "wait" in (e.get_attribute("value") or "").lower())(
                     d.find_element(By.ID, button_id)))
+            # ⛔ เคยลองเช็ค "หน้าเปลี่ยนไหมหลังคลิก" (marker บน window) เพื่อแยก
+            #    "ฟอร์มถูกส่ง" ออกจาก "onclick ทำงานเฉย ๆ" — **ใช้ไม่ได้** เพราะ marker
+            #    หายได้จาก postback ตัวอื่นที่ค้างอยู่เหมือนกัน (เทสสด 03/09/69 คืน True
+            #    ทั้งที่ฟอร์มไม่ได้ถูกส่ง) → ถอดออก อย่าเอากลับมาโดยไม่มีสัญญาณที่ดีกว่านี้
             return True
         except UnexpectedAlertPresentException:
             return True          # เด้ง alert = คลิกติดแน่นอน (ผู้เรียกอ่านต่อเอง)
@@ -2937,11 +2991,22 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
         bad_id = ""
         clicked = _click_save_button(driver, button_id)
         try:
-            # ⛔ 12 วิพอ — alert ของ EMCS ตอบกลับภายใน 1-6 วิเสมอเมื่อคลิกถึง handler จริง
-            #    (วัดจากเคส #198: รอบที่ผ่านใช้ 6 วิ) · ที่เหลือคือ "คลิกหาย" ซึ่งรอต่อไปก็ไม่มา
-            #    ของเดิมรอ 30 วิ ทำให้คลิกหาย 1 ครั้ง = เสีย 33 วิ (เจอ 3 รอบ = 101 วิ/เคส)
-            #    ⚠️ ถ้าเจอเคสที่ EMCS ตอบช้ากว่านี้จริง ให้ขยับเป็น 20 อย่าถอยกลับไป 30
-            alert_text, silent = accept_alert(driver, timeout=12), False
+            # คลิกไม่ออกตั้งแต่แรก — ไม่ต้องรอ alert ให้เสียเวลา ลงไปเส้นวินิจฉัยเลย
+            if not clicked:
+                raise TimeoutException("คลิกไม่ออก (ฟอร์มไม่ถูกส่ง)")
+            # ── รอ alert สั้นก่อน แล้วค่อยรอยาวในรอบสุดท้าย ──
+            #
+            # ข้อเท็จจริงที่วัดได้ (เคส #198 03/09/69 · 6 รอบทดสอบ): **คลิกแรกหายบ่อย
+            # ~2 ใน 3 ครั้ง แล้วคลิกที่สองผ่านเสมอภายใน 3-5 วิ** ด้วยข้อมูลชุดเดิมเป๊ะ
+            # ไล่หาต้นเหตุแล้ว 3 ทาง (จัดลำดับกรอกใหม่ · blur ก่อนกด · รอ postback ของ
+            # dropdown ให้จบ) ทุกทางช่วยให้เกิดน้อยลงแต่ยังไม่หายขาด — ตัวการที่แท้จริง
+            # อยู่ในฝั่ง EMCS ที่มองไม่เห็นจากนอก
+            #
+            # จึงจ่ายค่ารอให้ถูกกับความจริง: รอบแรก ๆ รอสั้น (4 วิ) แล้วกดใหม่เลย
+            # รอบสุดท้ายรอเต็ม (12 วิ) เผื่อเซิร์ฟเวอร์ช้าจริง
+            # → คลิกหาย 1 ครั้งเสีย ~6 วิ แทน 18 วิ (เดิมก่อนแก้ทั้งหมด: 33 วิ)
+            alert_text, silent = accept_alert(
+                driver, timeout=(4 if attempt < 3 else 12)), False
         except TimeoutException:
             alert_text, silent = "", True
             # ⚠️ "ไม่มี alert" ไม่ได้แปลว่าไม่ได้บันทึก — ถาม DOM ก่อนเสมอ

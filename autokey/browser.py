@@ -259,6 +259,11 @@ def accept_alert(driver, timeout=30) -> str:
 #   '0 mg%' → '0 mg'                    (% หายเกลี้ยง — ผลตรวจแอลกอฮอล์เสียหน่วย)
 #   '...การ — ชนท้าย' → '...การ  ชนท้าย' (em-dash หายทั้งตัว เว้นวรรครอบข้างยังอยู่)
 #
+# 03/09/69 เจอเพิ่มอีกตัวจากเคส #198 (S68426090922): ดอกจันหายทั้งหมด
+#   '***วุฒิชัย***' → 'วุฒิชัย'  (ลายเซ็นท้ายความเห็นที่เซอร์เวย์ใส่กันเป็นปกติ)
+#   → ตัดดอกจันทิ้งตั้งแต่ต้นทาง (user เคาะ 03/09/69) ให้ตรงกับที่ EMCS เก็บจริง
+#     ไม่งั้นตัวตรวจกลับฟ้อง "ไม่ตรง" ทุกใบ จนคนเลิกอ่านผลตรวจ
+#
 # แก้ที่ EMCS ไม่ได้ → แปลงเป็นตัวที่ "รอด" ก่อนพิมพ์ "เฉพาะช่องที่ระบุไว้"
 # (user เลือกเอง 13/08/69) · ข้อมูลต้นทางใน se-survey ไม่ถูกแตะ — คนเปิดดูบนเว็บ/แอป
 # ยังเห็น "2+" เหมือนเดิม
@@ -292,7 +297,7 @@ def _emcs_safe(elem_id, value: str) -> str:
     (เทียบตรงตัวอย่างเดียวจะพลาดคู่กรณีทั้งหมด ซึ่งเป็นที่ที่ "2+" โผล่บ่อยที่สุด)
     """
     eid = str(elem_id or "")
-    if not any(c in value for c in ("+", "%", EM_DASH)):
+    if not any(c in value for c in ("+", "%", EM_DASH, "*")):
         return value
     if not any(eid == f or eid.endswith("_" + f) for f in EMCS_EATS_FIELDS):
         return value
@@ -309,6 +314,11 @@ def _emcs_safe(elem_id, value: str) -> str:
         # em-dash → ยัติภังค์ (อยู่ในชุดที่ EMCS รับ) — คงความหมายเดิม ไม่เหลือช่องว่างคู่
         changed.append(f"em-dash → '-' {out.count(EM_DASH)} จุด")
         out = out.replace(EM_DASH, "-")
+    if "*" in out:
+        # ดอกจันไม่มีตัวแทนที่สื่อความหมายเดิม (มันเป็นแค่การเน้น) — ตัดทิ้งให้ตรงกับ
+        # ที่ EMCS เก็บจริง ซึ่งกลืนมันหายอยู่แล้ว (user เคาะ 03/09/69)
+        changed.append(f"ตัด '*' ทิ้ง {out.count('*')} ตัว")
+        out = out.replace("*", "")
     log(f"   ~ {elem_id}: {' · '.join(changed)} (EMCS กลืนอักขระพวกนี้ตอนบันทึก)")
     return out
 
@@ -1117,6 +1127,34 @@ def _current_select_text(driver, select_id) -> str:
         return ""
 
 
+def _settle_after_select(driver, quiet: float = 0.8, timeout: float = 12.0) -> None:
+    """รอให้ postback ที่เกิดจาก **การเลือก dropdown** จบก่อนไปทำอย่างอื่น
+
+    dropdown ของ EMCS หลายตัว (จังหวัด/อำเภอ/ประเภทรถ/ประเภทใบขับขี่) ยิง postback
+    เต็มหน้าตอน onchange — ของเดิมเลือกแล้วไปต่อทันที postback จึงเดินทางค้างอยู่
+    แล้วไป render ทับสิ่งที่ทำต่อจากนั้น อาการที่เห็น:
+      · ค่าที่พิมพ์ต่อจากนั้นหายไปเฉย ๆ
+      · **คลิกปุ่มบันทึกหาย** (เจอซ้ำ ๆ เคส #198 03/09/69) — คลิกออกไปแล้วโดน
+        response ของ postback ก่อนหน้ามาทับ ฟอร์มไม่เคยถูกส่ง ไม่มี alert ไม่มี error
+    ของเดิมแก้ด้วยการนอนรอเวลาตายตัว (presleep=1) ซึ่งไม่พอเมื่อเซิร์ฟเวอร์ช้ากว่านั้น
+
+    marker บน window หาย = โหลดหน้าใหม่จริง (full postback) — รอจนนิ่งติดกัน `quiet` วิ"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            driver.execute_script("window.__akSel = 1;")
+        except Exception:
+            time.sleep(0.3)          # หน้ากำลังเปลี่ยนพอดี — รอแล้วปักใหม่
+            continue
+        time.sleep(quiet)
+        try:
+            if driver.execute_script("return window.__akSel === 1;"):
+                return
+        except Exception:
+            pass
+    log("   ⏳ dropdown ยิง postback แล้วหน้ายังไม่นิ่งจนหมดเวลา — ไปต่อ (อาจต้องกดบันทึกซ้ำ)")
+
+
 def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
                  presleep=0.0, label="", required=False,
                  min_score=FUZZY_MIN_SCORE):
@@ -1166,8 +1204,15 @@ def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
                     if _same_text(cur, value):
                         log(f"   = {name} ตรงอยู่แล้ว ('{cur}') — ข้าม")
                         return cur, 100
-                except Exception:
-                    pass
+                    # ต่างกันแค่การสะกดของ EMCS เอง (เช่น 'ส่วนบุคคคล' ค 3 ตัว) = ตรงแล้ว
+                    # เลือกซ้ำ = ยิง postback ทั้งหน้าฟรี ๆ ซึ่งเป็นต้นเหตุ "คลิกบันทึกหาย"
+                    if cur and not _is_placeholder_option(cur) and                             fuzz.WRatio(str(value), cur) >= 97:
+                        log(f"   = {name} ตรงอยู่แล้ว ('{cur}' สะกดต่างจากต้นทางนิดหน่อย) — ข้าม")
+                        return cur, 100
+                    # ไม่ตรงจริง — บอกด้วยว่าบนหน้าเป็นอะไร จะได้รู้ว่าทำไมต้องเลือกใหม่
+                    log(f"   ⤳ {name}: บนหน้าเป็น '{cur}' ต้องการ '{value}' — เลือกใหม่")
+                except Exception as e:
+                    log(f"   ⤳ {name}: อ่านค่าที่เลือกอยู่ไม่ได้ ({type(e).__name__}) — เลือกใหม่")
             # ตัวแรกที่ value="0"/"" = placeholder ของ dropdown นี้ (ตรวจทั้งหน้า EMCS
             # 449 select แล้ว ไม่มีตัวเลือกจริงตัวไหนใช้ value 0) — เชื่อถือได้กว่าเดา
             # จากข้อความ เพราะข้อความต่างกันไปตามช่อง: '-- ระบุ --', '-- จังหวัด --',
@@ -1188,6 +1233,7 @@ def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
             if _exact is not None:
                 log(f"   ✓ {name}: '{value}' → '{_exact}' (ตรงเป๊ะ)")
                 Select(driver.find_element(By.ID, select_id)).select_by_visible_text(_exact)
+                _settle_after_select(driver)
                 return _exact, 100
 
             best = process.extractOne(str(value), options, scorer=fuzz.WRatio)
@@ -1223,6 +1269,7 @@ def fuzzy_select(driver, select_id, value, wait_options=True, timeout=10,
             mark = "⚠️" if score < FUZZY_WARN_SCORE else "✓"
             log(f"   {mark} {name}: '{value}' → '{text}' (score {score:.0f})")
             Select(driver.find_element(By.ID, select_id)).select_by_visible_text(text)
+            _settle_after_select(driver)
             if score < FUZZY_WARN_SCORE:
                 log(f"     ** คะแนนต่ำ ควรตรวจสอบด้วยตาก่อนบันทึก **")
                 # ย้อมเหลืองค้างไว้บนหน้า EMCS — คนตรวจจะได้เห็นว่า "ช่องไหน"
