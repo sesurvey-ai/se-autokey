@@ -100,6 +100,20 @@ TITLES = ("นาย", "นางสาว", "นาง", "ด.ช.", "ด.ญ."
 
 # ── ตัวช่วยรูปแบบข้อมูล ──────────────────────────────────────────────────────
 
+def _photo_unit(total, count):
+    """ยอดรวมค่ารูป + จำนวนรูป → ราคาต่อรูป (ทศนิยม 2) — จำนวน 0/ว่าง = คืนยอดเดิม (ไม่มีอะไรให้หาร)"""
+    t = _num(total)
+    n = _num(count)
+    try:
+        tf, nf = float(t or 0), float(n or 0)
+    except (TypeError, ValueError):
+        return t
+    if nf <= 0 or tf == 0:
+        return t
+    unit = round(tf / nf, 2)
+    return str(int(unit)) if unit == int(unit) else str(unit)
+
+
 def _gender_mf(v) -> str:
     """เพศ **ผู้ขับขี่รถประกัน** — se-survey (มือถือ + เว็บ + XML) เก็บเป็น 'M'/'F'
     ต่างจาก `gender` ของคู่กรณี/ผู้บาดเจ็บที่เว็บใช้คำไทย (ดู GENDER_MAP)
@@ -562,7 +576,9 @@ def _bill(bill: dict):
         "travel_fee_count": _num(bill.get("TRANS_NUM")),
         "travel_fee_price": _num(bill.get("INS_TRANS")),
         "photo_fee_count": _num(bill.get("PHOTO_NUM")),
-        "photo_fee_price": _num(bill.get("INS_PHOTO")),
+        # INS_PHOTO ของ ISURVEY = ยอดรวมค่ารูป · se-survey เก็บ "ราคาต่อรูป" (export คูณจำนวนเอง)
+        # → หารด้วยจำนวนรูปก่อน ไม่งั้น 50 กลายเป็น 50/รูป = 500 ใน EMCS (เคส #221, 03/09/69)
+        "photo_fee_price": _photo_unit(bill.get("INS_PHOTO"), bill.get("PHOTO_NUM")),
         "phone_fee": _num(bill.get("INS_TEL")),
         "bail_fee": _num(bill.get("INS_INSURE")),
         "claim_fee_price": _num(bill.get("INS_CLAIM")),
