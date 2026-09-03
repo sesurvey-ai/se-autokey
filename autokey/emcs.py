@@ -1897,10 +1897,15 @@ def _select_car_brand(driver, car_brand, label="ยี่ห้อรถ",
 def fill_car(driver, data: ClaimData):
     log("EMCS: กรอกรายละเอียดรถยนต์")
     wait_visible(driver, By.ID, "txtCar_RegNo")
+    # ⛔ ลำดับด้านล่างเรียงตาม **ตำแหน่งจริงบนหน้า EMCS (บนลงล่าง)** ไม่ใช่จัดกลุ่มตามชนิดช่อง
+    #    อ่านลำดับจาก DOM ของหน้าจริง (เคส 000098) 03/09/69:
+    #    txtCar_RegNo → ddlCar_Province → ddlCType → ddlCMFG → txtCModel2 → ddlCar_Color
+    #    → txtCar_RegNo_Year → ddlEvType → txtChassisNo → txtModelNo → txtEngineNo → txtKm_No
+    #    เหตุผล: ช่องที่ยิง postback (ddl) จะได้อยู่ต้น ๆ แล้วมีช่องข้อความตามอีกยาว
+    #    หน้าจึงนิ่งก่อนถึงปุ่มบันทึก — กันคลิกบันทึกหลุดเพราะ postback มาถึงทีหลัง
     set_text(driver, "txtCar_RegNo", _dash(_plate(data.insure_plate)))
-    set_text(driver, "txtCModel2", data.insure_model)
-    set_text(driver, "txtChassisNo", data.insure_chassis)
-    set_text(driver, "txtEngineNo", data.insure_engine)
+    fuzzy_select(driver, "ddlCar_Province", data.plate_province, presleep=1,
+                 label="จังหวัดรถ", required=True)
 
     # dropdown แต่ละตัวมี postback — ประเภทรถ→ยี่ห้อ เป็น cascade (ผูกกัน) ฝั่ง server:
     # onchange ของ ddlCType โหลด "ตัวเลือกยี่ห้อ" (ddlCMFG) → ต้องเลือกยี่ห้อ "ทันทีหลัง"
@@ -1909,8 +1914,7 @@ def fill_car(driver, data: ClaimData):
     # ประเภทรถ/จังหวัดรถ/ยี่ห้อรถ = field บังคับ (required) → ว่าง/เลือกไม่ได้ หยุดรอคน
     _select_car_type(driver, data.prb_car_type)
     _select_car_brand(driver, data.car_brand)   # รอ+guard+ยิง onchange ซ้ำถ้า list ยังว่าง
-    fuzzy_select(driver, "ddlCar_Province", data.plate_province, presleep=1,
-                 label="จังหวัดรถ", required=True)
+    set_text(driver, "txtCModel2", data.insure_model)
     # verify-stuck: เผื่อ postback จังหวัดรีเซ็ตยี่ห้อกลับเป็น placeholder → เลือกยี่ห้อซ้ำ
     # (เงื่อนไข "ช่องยังว่าง" กันอยู่แล้ว — อย่าไปผูกกับผลรอบแรก เพราะรอบแรกที่ล้มจาก
     # race ของ cascade คือเคสที่ต้องใช้รอบสองกู้พอดี เช่น 'HONDA' ก็เคยได้ 0 คะแนน)
@@ -1919,11 +1923,13 @@ def fill_car(driver, data: ClaimData):
         _select_car_brand(driver, data.car_brand, label="ยี่ห้อรถ (เลือกซ้ำ)")
     fuzzy_select(driver, "ddlCar_Color", data.car_color, presleep=1, label="สีรถ")
     set_text(driver, "txtCar_RegNo_Year", _year_ad(data.car_reg_year))
-    # เดิมกรอกให้เฉพาะคู่กรณี (emcs.py:298) ของรถประกันตกหล่น — แอปเก็บมาแล้วต้องพาไป
-    set_text(driver, "txtKm_No", data.mileage)
-    set_text(driver, "txtModelNo", data.model_no)
     _fill_ev(driver, "", data.ev_type, data.ev_battery_no, data.ev_charger_no,
              data.ev_battery_start)
+    set_text(driver, "txtChassisNo", data.insure_chassis)
+    set_text(driver, "txtModelNo", data.model_no)
+    set_text(driver, "txtEngineNo", data.insure_engine)
+    # เดิมกรอกให้เฉพาะคู่กรณี (emcs.py:298) ของรถประกันตกหล่น — แอปเก็บมาแล้วต้องพาไป
+    set_text(driver, "txtKm_No", data.mileage)
 
 
 def _year_ad(year) -> str:
@@ -2010,33 +2016,38 @@ def fill_driver(driver, data: ClaimData):
             select_id="ddlDri_Title_ID", driver=driver)
 
     # ตัดคำนำหน้าที่ติดมากับชื่อ (เช่น 'น.ส.ปฐมาวดี'→'ปฐมาวดี') — ไม่งั้นชื่อจะมีคำนำหน้าซ้ำ
+    # ⛔ เรียงตาม **ตำแหน่งจริงบนหน้า EMCS (บนลงล่าง)** อ่านจาก DOM หน้าจริง (เคส 000098):
+    #    เพศ → คำนำหน้า → ชื่อ → สกุล → ความสัมพันธ์ → อายุ → วันเกิด → ที่อยู่ → จังหวัด →
+    #    อำเภอ → โทร → บัตรประชาชน → ใบขับขี่ → ประเภทใบขับขี่ → ออกให้ที่ → วันออก/หมดอายุ
+    #    → (ปุ่มความเสียหาย) → ค่าเสียหายประมาณ
+    #
+    # ⚠️ **ข้อยกเว้นเดียว: วันเกิดต้องมาก่อนอายุ** ถึงแม้บนหน้าจอ "อายุ" จะอยู่เหนือ "วันเกิด"
+    #    เพราะ onblur ของช่องวันเกิดเขียนทับช่องอายุด้วย "อายุ ณ วันนี้" (ดู _fill_age_after_birthdate)
+    #    ไล่ตามหน้าจอเป๊ะ ๆ ตรงคู่นี้ = ค่าอายุที่ต้นทางส่งมาหายทุกครั้ง
     _t, dri_first, dri_last = split_thai_name(
         f"{data.driver_name} {data.driver_surname}".strip())
     set_text(driver, "txtDri_Name01", _dash(dri_first or data.driver_name))
     set_text(driver, "txtDri_LastName01", _dash(dri_last or data.driver_surname))
-    set_text(driver, "txtDri_Address", data.driver_address)
-    set_text(driver, "txtDri_TelNo", _dash(data.driver_phone))
-    set_text(driver, "txtDri_CardID", _dash(data.driver_idcard))
-    set_text(driver, "txtDri_DrvID", _dash(data.driver_license_no))
-    set_text(driver, "txtDri_DrvPlace", data.driver_license_place)
-    set_text(driver, "txtCost_Damage", data.damage_estimate)
-    set_text(driver, "wuCale_Dri_BirthDay_txtCalendar", to_buddhist_date(data.driver_birthdate))
-    # ⛔ อายุต้องมาหลังวันเกิดเสมอ — onblur ช่องวันเกิดเขียนทับช่องอายุด้วย "อายุ ณ วันนี้"
-    #    (ดู _fill_age_after_birthdate) เดิมกรอกอายุก่อน → ค่า ISURVEY หายตอนคีย์หลังวันเกิดผู้ขับขี่
-    _fill_age_after_birthdate(driver, "wuCale_Dri_BirthDay_txtCalendar", "txtDri_Age",
-                              data.driver_age)
-    set_text(driver, "wuCale_Dri_DrvDate_Start_txtCalendar", to_buddhist_date(data.license_issue_date))
-    set_text(driver, "wuCale_Dri_DrvDate_End_txtCalendar", to_buddhist_date(data.license_expiry_date))
-
-    # dropdown มี postback — ต้องเว้นจังหวะกันค่าโดน postback ก่อนหน้าทับ
     fuzzy_select(driver, "ddlDri_Relation_ID", data.driver_relation,
                  presleep=1, label="ความสัมพันธ์")
+    set_text(driver, "wuCale_Dri_BirthDay_txtCalendar", to_buddhist_date(data.driver_birthdate))
+    _fill_age_after_birthdate(driver, "wuCale_Dri_BirthDay_txtCalendar", "txtDri_Age",
+                              data.driver_age)
+    set_text(driver, "txtDri_Address", data.driver_address)
+    # dropdown มี postback — ต้องเว้นจังหวะกันค่าโดน postback ก่อนหน้าทับ
     fuzzy_select(driver, "ddlDri_ProvinceID", data.driver_province,
                  presleep=1, label="จังหวัดผู้ขับขี่")
     fuzzy_select(driver, "ddlDri_DistrictID", data.driver_amphur,
                  presleep=1, label="อำเภอผู้ขับขี่")
+    set_text(driver, "txtDri_TelNo", _dash(data.driver_phone))
+    set_text(driver, "txtDri_CardID", _dash(data.driver_idcard))
+    set_text(driver, "txtDri_DrvID", _dash(data.driver_license_no))
     fuzzy_select(driver, "ddlEmcs_License_Type", data.driver_license_type,
                  presleep=1, label="ประเภทใบขับขี่")
+    set_text(driver, "txtDri_DrvPlace", data.driver_license_place)
+    set_text(driver, "wuCale_Dri_DrvDate_Start_txtCalendar", to_buddhist_date(data.license_issue_date))
+    set_text(driver, "wuCale_Dri_DrvDate_End_txtCalendar", to_buddhist_date(data.license_expiry_date))
+    set_text(driver, "txtCost_Damage", data.damage_estimate)
 
 
 def _dt_time(v) -> str:
@@ -2146,8 +2157,27 @@ def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห�
     set_text(driver, "txtAcc_Date_Minute", m)
 
     set_text(driver, "txtAcc_Place", _dash(data.acc_place))
+
+    # ⛔ 4 dropdown นี้ยิง postback ทุกตัว — **ต้องอยู่ต้นบล็อกตามตำแหน่งจริงบนหน้า**
+    #    (DOM หน้าจริงเคส 000098: ddlAcc_ProvinceID → ddlAcc_DistrictID → ddlClm_Cause
+    #     → ddlLoss_ID แล้วค่อยตามด้วยช่องข้อความอีก ~30 ช่อง)
+    #    ของเดิมดันไว้ท้ายสุดก่อนกดบันทึกแค่ 2 วินาที → postback ตัวสุดท้ายมาถึงหลังกดบันทึก
+    #    render ทับ **คำสั่งบันทึกหายเงียบ ๆ** เสียเวลารอ alert เก้อ 33 วิ/รอบ (วัดจริง
+    #    เคส #198 03/09/69: กด 3 รอบ = 101 วินาที รอบสุดท้ายผ่านใน 6 วิ ด้วยข้อมูลชุดเดิม)
+    #    จังหวัด/อำเภอ = cascade ต้องติดกันและเรียงตามนี้เท่านั้น
+    fuzzy_select(driver, "ddlAcc_ProvinceID", data.acc_province,
+                 presleep=1, label="จังหวัดเกิดเหตุ", required=True)
+    fuzzy_select(driver, "ddlAcc_DistrictID", data.acc_amphur,
+                 presleep=1, label="อำเภอเกิดเหตุ", required=True)
+    fuzzy_select(driver, "ddlClm_Cause", data.acc_type_desc,
+                 presleep=1, label="ลักษณะการเกิดเหตุ", required=True)
+    # ลักษณะความเสียหาย (ddlLoss_ID) — ISURVEY ไม่มีข้อมูลนี้ (มีแต่ลักษณะการเกิดเหตุ)
+    # เคลมแห้ง → loss_type='เคลมแห้ง' เลือกอัตโนมัติ / เคลมสด → loss_type='' →
+    # required=True หยุดรอให้ผู้ใช้เลือกเองบนหน้า EMCS (รูปแบบเดียวกับ field บังคับอื่น)
+    fuzzy_select(driver, "ddlLoss_ID", loss_type, presleep=1,
+                 label="ลักษณะความเสียหาย", required=True)
+
     set_text(driver, "txtAcc_Detail", _dash(data.acc_detail))
-    _fill_police_and_alcohol(driver, data)
     # ผลการดำเนินงาน + ความเห็นผู้ตรวจสอบ (se-survey มีข้อความ; EMCS มาร์ค 'not used' แต่ช่องแก้ได้)
     # หน้า 1: 2 ช่องนี้เป็น input บรรทัดเดียว (EMCS มาร์ค 'not used') → ยุบบรรทัดก่อนพิมพ์
     # ต่างจากหน้าค่าใช้จ่ายที่เป็น textarea และคงบรรทัดไว้
@@ -2185,24 +2215,11 @@ def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห�
     set_text(driver, "txtAcc_Finish_Hour", fh)
     set_text(driver, "txtAcc_Finish_Minute", fm)
 
+    # บล็อกตำรวจ/แอลกอฮอล์อยู่**ท้ายหน้า** (DOM 140-148) — ย้ายลงมาให้ตรงกับหน้าจริง
+    _fill_police_and_alcohol(driver, data)
+
     # ── เวลาสำรวจว่าง = หยุดถามตรงนี้เลย ไม่รอไปตายตอนกดบันทึก ──
     _pause_for_survey_times(driver, data)
-
-    # ลักษณะการเกิดเหตุ + จังหวัด/อำเภอเกิดเหตุ (ทุกตัวมี postback —
-    # เว้นจังหวะกัน select ถัดไปทับค่าเดิมระหว่าง postback ยังไม่จบ)
-    # ลักษณะการเกิดเหตุ/จังหวัด/อำเภอเกิดเหตุ = field บังคับ → ว่าง/เลือกไม่ได้ หยุดรอคน
-    fuzzy_select(driver, "ddlClm_Cause", data.acc_type_desc,
-                 presleep=1, label="ลักษณะการเกิดเหตุ", required=True)
-    fuzzy_select(driver, "ddlAcc_ProvinceID", data.acc_province,
-                 presleep=1, label="จังหวัดเกิดเหตุ", required=True)
-    fuzzy_select(driver, "ddlAcc_DistrictID", data.acc_amphur,
-                 presleep=1, label="อำเภอเกิดเหตุ", required=True)
-
-    # ลักษณะความเสียหาย (ddlLoss_ID) — ISURVEY ไม่มีข้อมูลนี้ (มีแต่ลักษณะการเกิดเหตุ)
-    # เคลมแห้ง → loss_type='เคลมแห้ง' เลือกอัตโนมัติ / เคลมสด → loss_type='' →
-    # required=True หยุดรอให้ผู้ใช้เลือกเองบนหน้า EMCS (รูปแบบเดียวกับ field บังคับอื่น)
-    fuzzy_select(driver, "ddlLoss_ID", loss_type, presleep=1,
-                 label="ลักษณะความเสียหาย", required=True)
 
 
 def fill_verdict(driver, data: ClaimData):
@@ -2686,7 +2703,10 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
                 "         .get_isInAsyncPostBack());"))
         except Exception:
             pass
-        _wait_page_quiet(driver)
+        # ⛔ 3 วินาที ไม่ใช่ 2 — วัดจากเคส #198 (03/09/69): กดบันทึกหลัง postback ตัวสุดท้าย
+        #    2 วิ แล้วคลิกหลุด 2 รอบติด (เสียไป 68 วิ) · ค่านี้จ่ายเพิ่มรอบละ 1 วิ
+        #    แลกกับการไม่เสีย 12-33 วิตอนคลิกหาย — คุ้มกว่ามาก
+        _wait_page_quiet(driver, quiet=3.0, timeout=15.0)
         try:
             btn = wait_clickable(driver, By.ID, button_id)
         except UnexpectedAlertPresentException:
@@ -2917,7 +2937,11 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
         bad_id = ""
         clicked = _click_save_button(driver, button_id)
         try:
-            alert_text, silent = accept_alert(driver), False
+            # ⛔ 12 วิพอ — alert ของ EMCS ตอบกลับภายใน 1-6 วิเสมอเมื่อคลิกถึง handler จริง
+            #    (วัดจากเคส #198: รอบที่ผ่านใช้ 6 วิ) · ที่เหลือคือ "คลิกหาย" ซึ่งรอต่อไปก็ไม่มา
+            #    ของเดิมรอ 30 วิ ทำให้คลิกหาย 1 ครั้ง = เสีย 33 วิ (เจอ 3 รอบ = 101 วิ/เคส)
+            #    ⚠️ ถ้าเจอเคสที่ EMCS ตอบช้ากว่านี้จริง ให้ขยับเป็น 20 อย่าถอยกลับไป 30
+            alert_text, silent = accept_alert(driver, timeout=12), False
         except TimeoutException:
             alert_text, silent = "", True
             # ⚠️ "ไม่มี alert" ไม่ได้แปลว่าไม่ได้บันทึก — ถาม DOM ก่อนเสมอ
