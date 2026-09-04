@@ -1364,11 +1364,14 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/import-sesurvey":
             # ปุ่ม "นำเข้า EMCS": หน้า operator ท้องถิ่น (same-origin) หรือ inspector (cross-origin)
             params = self._read_json()
-            # 🔒 live import + โหมดกู้/ซ่อม อนุญาตเฉพาะหน้า operator ท้องถิ่น — ถ้ามาจาก origin
-            # ภายนอก (ปุ่ม inspector ที่ยังพักไว้) บังคับ import แบบ dry-run เสมอ กันเผลอแตะ EMCS
+            # 🔒 จาก origin ภายนอก (ปุ่ม "นำเข้า EMCS" บนเว็บ se-survey — เฉพาะ origin ในรายการอนุญาต):
+            #    อนุญาตเฉพาะโหมด import (นำเข้า) — โหมดกู้/ซ่อม (fill-existing/images-only/injured-only)
+            #    ยังทำได้จากหน้า operator ในเครื่องเท่านั้น · live ตามที่เว็บส่งมา (user เปิดให้สร้าง draft
+            #    จริงจากเว็บ 04/09/69) — ยังคงกติกา draft-only: บอทหยุดที่ draft คนกด "ส่งงานใหม่" เอง
+            #    และด่านกันซ้ำ 3 ชั้น (emcs_imported_at / meta / ค้นเรื่องเดิมใน EMCS) ทำงานเหมือนเดิม
             if self._cors_origin() is not None:
-                params["live"] = False
                 params["mode"] = "import"
+                params["live"] = bool(params.get("live"))
             run_id, err = start_sesurvey_run(params)
             if err:
                 self._send(409, {"error": err})
