@@ -42,8 +42,8 @@ class FakeAPI:
             8: {"Accident": {"notified_date": "2026-08-28", "notified_time": "14:38"}},
         }
         self.parts = [
-            {"partname": "บังโคลนหน้าขวา", "damaged_level": "A", "damage_type_detail": "บุบ,ครูด,", "LABOUR_COST": "3000"},
-            {"partname": "ไฟหน้าซ้าย-ขวา", "damaged_level": "C", "damage_type_detail": "", "LABOUR_COST": ""},
+            {"partname": "บังโคลนหน้าขวา", "damaged_level": "A", "damage_type_detail": "บุบ,ครูด,", "LABOUR_COST": "3000", "damage_cost": "1500"},
+            {"partname": "ไฟหน้าซ้าย-ขวา", "damaged_level": "C", "damage_type_detail": "", "LABOUR_COST": "", "damage_cost": "6000"},
             {"partname": "กันชนหน้า + คิ้ว", "damaged_level": "B", "damage_type_detail": "", "LABOUR_COST": ""},
             {"partname": "กระจกมองข้างซ้าย", "damaged_level": "D", "damage_type_detail": "", "LABOUR_COST": ""},
         ]
@@ -159,6 +159,13 @@ def test_opponent_cost_falls_back_to_parts_when_record_total_empty():
     api.records[4] = [("k4", rec)]
     o = conv.build_case(api, "case1", {})["report"]["opposing_parties"][0]
     assert o["estimated_cost"] == "2300"     # 1500 ค่าแรง + 800 อะไหล่
+
+
+def test_insured_estimated_cost_sums_labour_and_parts():
+    r = _build()["report"]
+    assert r["estimated_cost"] == 10500                      # 3000+1500 + 6000 (D_TOTAL_COST 8000 ของ ISURVEY ถูกทับเพราะรายชิ้นมีตัวเลข)
+    api = FakeAPI(); api.parts = [{"partname": "กันชนหน้า", "damaged_level": "A", "damage_type_detail": "", "LABOUR_COST": "", "damage_cost": ""}]
+    assert conv.build_case(api, "c", {})["report"]["estimated_cost"] == 8000   # รายชิ้นไม่มีตัวเลข → ใช้ D_TOTAL_COST
 
 
 def test_property_record_is_unwrapped():

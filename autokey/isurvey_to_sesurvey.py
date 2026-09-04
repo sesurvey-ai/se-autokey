@@ -318,6 +318,28 @@ def _damage_item(name, level, dtype="", cost="") -> dict:
             "level": DAMAGE_LEVEL_MAP.get(lv.upper(), lv), "cost": _s(cost)}
 
 
+def _money_sum(*vals) -> float:
+    total = 0.0
+    for v in vals:
+        try:
+            total += float(_s(v).replace(",", "") or 0)
+        except ValueError:
+            pass
+    return total
+
+
+def _insured_cost(t3: dict, parts: list):
+    """ความเสียหายประมาณ (บาท) ของรถประกัน = Σ(ค่าแรง + ค่าอะไหล่) รายชิ้น + อื่น ๆ (D_OTH)
+    user ขอ 04/09/69 ให้รวมจากตาราง "ข้อมูลความเสียหาย" ของ ISURVEY (คอลัมน์ค่าแรง/ค่าอะไหล่) —
+    ยอดรวม D_TOTAL_COST ของ ISURVEY จะเท่ากันก็ต่อเมื่อช่างกด Calculate · รายชิ้นไม่มีตัวเลขค่อยถอยไปใช้ D_TOTAL_COST
+    (ตรวจกับ 3 เคลมจริง: 8000 · 27500 (อะไหล่ 25000 + ค่าแรง 2500) · 27000 ตรงทั้งหมด)"""
+    from_parts = _money_sum(*[p.get("LABOUR_COST") for p in parts], *[p.get("damage_cost") for p in parts])
+    if from_parts > 0:
+        from_parts += _money_sum(t3.get("D_OTH"))
+        return int(from_parts) if from_parts.is_integer() else from_parts
+    return _num(t3.get("D_TOTAL_COST"))
+
+
 def _opponent_damage(api, case_id, ikey) -> list:
     """ความเสียหายรายชิ้นของคู่กรณี 1 คัน — ISURVEY ให้ผ่าน list_parts_other_car (ต้องส่ง ikey)
     เดิมตัวแปลงใส่ [] ตายตัว → เคสที่ดึงมาไม่มีความเสียหายคู่กรณีเลย (เคส #224, 04/09/69)"""
@@ -424,6 +446,7 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
     }
 
     # ── รถประกัน + ผู้ขับขี่ ──
+    parts = api.get_parts(case_id) or []          # ใช้ทั้งรายการความเสียหายและยอดค่าเสียหายประมาณ
     veh = _s(t3.get("vehTID"))
     dtitle, dfirst, dlast = split_name(drv.get("drv_name"))
     drv_prov = _s(drv.get("drv_provinceID"))
@@ -436,7 +459,7 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "car_color": _s(t3.get("car_color")),
         "chassis_no": _s(t3.get("chassis_no")),
         "engine_no": _s(t3.get("engine_no")),
-        "estimated_cost": _num(t3.get("D_TOTAL_COST")),
+        "estimated_cost": _insured_cost(t3, parts),
         "driver_title": dtitle or ("คุณ" if dfirst else ""),
         "driver_name": _name(drv.get("drv_name")),
         "driver_first_name": _name(dfirst),
@@ -464,7 +487,6 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
 
     # ── ความเสียหายรถประกัน ──
     # ⭐ เส้นทางนี้ได้รายการความเสียหายมาด้วย — ไฟล์ XML ของ ISURVEY ปล่อยว่างเสมอ (6/6 ไฟล์)
-    parts = api.get_parts(case_id) or []
     report["insured_damage"] = [
         _damage_item(p.get("partname"), p.get("damaged_level"), p.get("damage_type_detail"), p.get("LABOUR_COST"))
         for p in parts if _s(p.get("partname"))]
