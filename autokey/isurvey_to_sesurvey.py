@@ -340,11 +340,11 @@ def _insured_cost(t3: dict, parts: list):
     return _num(t3.get("D_TOTAL_COST"))
 
 
-def _opponent_damage(api, case_id, ikey) -> list:
-    """ความเสียหายรายชิ้นของคู่กรณี 1 คัน — ISURVEY ให้ผ่าน list_parts_other_car (ต้องส่ง ikey)
+def _opponent_damage(parts: list) -> list:
+    """ความเสียหายรายชิ้นของคู่กรณี 1 คัน — จากผล list_parts_other_car (ต้องส่ง ikey ตอนอ่าน)
     เดิมตัวแปลงใส่ [] ตายตัว → เคสที่ดึงมาไม่มีความเสียหายคู่กรณีเลย (เคส #224, 04/09/69)"""
     out = []
-    for p in api.opponent_parts(case_id, ikey) or []:
+    for p in parts or []:
         if not _s(p.get("part")):
             continue
         out.append(_damage_item(p.get("part"), p.get("level"), p.get("type"), p.get("labour")))
@@ -536,6 +536,7 @@ def _third_parties(api, case_id) -> list:
             continue
         r = api.get_record(case_id, 4, ikey) or {}
         d = r.get("driver") or {}
+        opp_parts = api.opponent_parts(case_id, ikey) or []     # ตารางความเสียหายของคันนี้ (ใช้ทั้งรายการ+ยอด)
         title, first, last = split_name(d.get("drv_name"))
         veh = _s(r.get("vehTID"))
         car_prov = _s(r.get("plate_provinceID"))
@@ -580,24 +581,24 @@ def _third_parties(api, case_id) -> list:
             "license_place": province_name(d.get("lic_issue_provinceID")),
             "license_start": be_date(d.get("lic_issueDate")),
             "license_end": be_date(d.get("lic_expireDate")),
-            # ค่าเสียหายรวม: API ไม่มีช่องยอดรวม ต้องบวกเอง (อะไหล่+ค่าแรง+อื่นๆ)
+            # ความเสียหายประมาณ (บาท) ของคู่กรณี — คิดแบบเดียวกับรถประกัน (user 04/09/69): Σ(ค่าแรง+ค่าอะไหล่)
+            # จากตารางความเสียหายของคันนั้น + อื่น ๆ · ตารางไม่มีตัวเลขค่อยถอยไปใช้ยอดในหน้าคู่กรณี
             # ⚠️ ห้ามใช้ 'total' จาก list_records — คนละยอด (พิสูจน์แล้วเคลม 2026013058298)
-            "estimated_cost": _sum_damage(r),
-            "damage": _opponent_damage(api, case_id, ikey),
+            "estimated_cost": _opponent_cost(r, opp_parts),
+            "damage": _opponent_damage(opp_parts),
             "kfk": False,
         })
-        # ยอดรวมของคู่กรณีว่าง (เคส #224) แต่มีค่าแรง/อะไหล่รายชิ้น → รวมจากรายชิ้นแทน
-        if not out[-1]["estimated_cost"]:
-            total = 0.0
-            for p in api.opponent_parts(case_id, ikey) or []:
-                for k in ("labour", "parts"):
-                    try:
-                        total += float(_s(p.get(k)).replace(",", "") or 0)
-                    except ValueError:
-                        pass
-            if total:
-                out[-1]["estimated_cost"] = f"{total:g}"
     return out
+
+
+def _opponent_cost(rec: dict, parts: list) -> str:
+    """Σ(labour + parts) รายชิ้นจาก list_parts_other_car + D_OTH ของ record; รายชิ้นไม่มีตัวเลข → D_SPRP+D_LABOUR+D_OTH
+    (เคลมทดสอบ 2026013159949: ตาราง 8 ชิ้น × 1000 = 8000 = D_LABOUR 8000 · เคส #224 ยอดหน้าคู่กรณีว่างแต่รายชิ้นมี 500)"""
+    from_parts = _money_sum(*[p.get("labour") for p in parts], *[p.get("parts") for p in parts])
+    if from_parts > 0:
+        from_parts += _money_sum(rec.get("D_OTH"))
+        return f"{from_parts:g}"
+    return _sum_damage(rec)
 
 
 def _sum_damage(rec: dict) -> str:

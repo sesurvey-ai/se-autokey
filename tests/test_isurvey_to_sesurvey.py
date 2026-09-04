@@ -144,21 +144,25 @@ def test_opponent_insurer_resolved_from_company_code():
     assert o["policy_type"] == "ประเภท 2+"
     assert o["license_type"] == "ใบขับขี่รถยนต์ส่วนบุคคล"
     assert o["gender"] == "ชาย"                           # คู่กรณีใช้คำไทย (คนละกติกากับผู้ขับขี่รถประกัน)
-    assert o["estimated_cost"] == "1500"
+    assert o["estimated_cost"] == "2300"                  # Σ รายชิ้น (1500+800) — กติกา 04/09/69 คิดเหมือนรถประกัน
 
 
 def test_opponent_damage_pulled_from_parts_api():
     o = _build()["report"]["opposing_parties"][0]
     assert [(d["part"], d["pos"], d["level"]) for d in o["damage"]] == [("ประตูหน้า", "L", "M"), ("กระจกมองข้าง", "L", "L")]
-    assert o["estimated_cost"] == "1500"     # ยอดรวมจาก record (D_SPRP+D_LABOUR) มีอยู่แล้ว ไม่ทับด้วยรายชิ้น
+    assert o["estimated_cost"] == "2300"     # Σ รายชิ้น 1500 ค่าแรง + 800 อะไหล่ มาก่อนยอดหน้าคู่กรณี (1500) — คิดเหมือนรถประกัน
 
 
-def test_opponent_cost_falls_back_to_parts_when_record_total_empty():
+def test_opponent_cost_adds_other_and_falls_back_to_record_when_parts_have_no_numbers():
     api = FakeAPI()
-    rec = dict(api.records[4][0][1]); rec.update({"D_SPRP": "", "D_LABOUR": "", "D_OTH": ""})
+    rec = dict(api.records[4][0][1]); rec.update({"D_SPRP": "0", "D_LABOUR": "8000", "D_OTH": "200"})
     api.records[4] = [("k4", rec)]
     o = conv.build_case(api, "case1", {})["report"]["opposing_parties"][0]
-    assert o["estimated_cost"] == "2300"     # 1500 ค่าแรง + 800 อะไหล่
+    assert o["estimated_cost"] == "2500"     # รายชิ้น 2300 + อื่น ๆ 200
+    api.opponent_parts = lambda cid, ikey: [{"part": "ประตูหน้าซ้าย", "type": "", "level": "B", "labour": "", "parts": "", "memo": ""}]
+    o = conv.build_case(api, "case1", {})["report"]["opposing_parties"][0]
+    assert o["estimated_cost"] == "8200"     # รายชิ้นไม่มีตัวเลข → D_SPRP+D_LABOUR+D_OTH ของหน้าคู่กรณี
+    assert len(o["damage"]) == 1
 
 
 def test_insured_estimated_cost_sums_labour_and_parts():
