@@ -1142,6 +1142,11 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path in ("/", "/index.html"):
             self._send(200, PAGE, "text/html; charset=utf-8")
+        elif u.path == "/healthz":
+            # เว็บ se-survey (หน้ารายการงาน) ยิงมาถามว่าเครื่องนี้มีบอทเปิดอยู่ไหม → มี = โชว์ปุ่ม "นำเข้า EMCS"
+            # ไม่มี = "รอผู้นำเข้า EMCS หรือติดตั้ง se-autokey" (user เคาะ 04/09/69) · ตอบเบา ๆ ไม่แตะ EMCS/ISURVEY
+            from autokey import __version__
+            self._send(200, {"ok": True, "app": "se-autokey", "version": __version__})
         elif u.path == "/image":
             self._serve_image(parse_qs(u.query))
         elif u.path == "/sesurvey-cases":
