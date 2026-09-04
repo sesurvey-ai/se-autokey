@@ -12,7 +12,7 @@ env:
 
 POST (JSON) — ทุกอันต้องมี X-Service-Token:
   /login-test  {username, password}                          → {ok, name}
-  /pending     {username, password, date_from?, date_to?}    → {ok, cases: [...]}
+  /pending     {username, password, date_from?, date_to?, status?}  → {ok, cases: [...]}   (status "" = ทุกสถานะ · ไม่ส่ง = รอตรวจข้อมูล)
   /pull        {username, password, claim, survey_no, created_by?, with_photos?} → {ok, result}
 GET /healthz → {ok: true}
 """
@@ -79,7 +79,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, "name": pull_core.whoami(api)})
             if path == "/pending":
                 api = pull_core.make_client(username, password)
-                rows = pull_core.list_pending(api, str(body.get("date_from") or ""), str(body.get("date_to") or ""))
+                status = body.get("status", pull_core.ISURVEY_STATUS_PENDING)   # "" = ทุกสถานะ
+                rows = pull_core.list_pending(api, str(body.get("date_from") or ""), str(body.get("date_to") or ""),
+                                              status=str(status or ""))
                 return self._send(200, {"ok": True, "cases": rows})
             if path == "/pull":
                 if not SESURVEY_TOKEN:

@@ -61,7 +61,8 @@ def whoami(api: ISurveyAPI) -> str:
 def list_pending(api: ISurveyAPI, date_from: str = "", date_to: str = "",
                  status: str = ISURVEY_STATUS_PENDING) -> list[dict]:
     """งานตามสถานะในช่วงวันที่ (ค่าเริ่มต้น 14 วันหลัง) — ใช้รายงาน enquiry เหมือน webui
-    (listcases.php ตัน 50 แถว/paging ใช้ไม่ได้ — probe 2026-08-04) · กรองเฉพาะบริษัทที่รับงานจริง"""
+    (listcases.php ตัน 50 แถว/paging ใช้ไม่ได้ — probe 2026-08-04) · กรองเฉพาะบริษัทที่รับงานจริง
+    status="" = ทุกสถานะ (เว็บ se-survey ขอทั้งหมดแล้วให้ผู้ใช้เลือกสถานะเอง — user ขอ 04/09/69)"""
     if not date_to:
         date_to = datetime.now().strftime("%Y-%m-%d")
     if not date_from:
