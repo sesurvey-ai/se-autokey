@@ -1,0 +1,18 @@
+# service ดึงงาน ISURVEY → se-survey (pull_service.py) — ไม่มี Chrome/EMCS ในภาพนี้
+# Dokploy: Build Type = Dockerfile · Dockerfile Path = Dockerfile.pull · port 8790
+# env ที่ต้องตั้ง: PULL_SERVICE_TOKEN · SESURVEY_API_URL · SESURVEY_API_TOKEN (= INTEGRATION_TOKEN ของ backend)
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    TZ=Asia/Bangkok
+
+WORKDIR /app
+COPY requirements-pull.txt .
+RUN pip install --no-cache-dir -r requirements-pull.txt
+
+COPY autokey/ ./autokey/
+COPY pull_service.py .
+
+EXPOSE 8790
+CMD ["python", "pull_service.py"]

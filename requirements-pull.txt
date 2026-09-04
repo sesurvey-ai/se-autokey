@@ -1,0 +1,5 @@
+# ชุดเล็กสำหรับ pull_service.py — isurvey_api.py ดึง browser.py มาด้วย (import selenium/rapidfuzz ตอนโหลดโมดูล)
+# จึงต้องมีทั้งคู่แม้ไม่เปิดเบราว์เซอร์ · ไม่เอา opencv/numpy/Pillow (ใช้เฉพาะงาน OCR/รูปของบอทเต็ม)
+requests>=2.31
+rapidfuzz>=3.0
+selenium>=4.18

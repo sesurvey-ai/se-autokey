@@ -1185,3 +1185,15 @@ python -m autokey.license_ocr <รูป|โฟลเดอร์>        # ท�
 - ก่อนหน้านั้นวันเดียวกัน: เพศ M/F · ระดับความเสียหาย A–D→L/M/H/X · ค่ารูปยอดรวม→ต่อรูป · NBSP
 
 ที่ยังเป็นข้อจำกัดฝั่งเว็บ (ไม่ใช่ตัวแปลง): ช่องอำเภอของคู่กรณีบนเว็บกรองด้วยจังหวัดป้ายทะเบียน ไม่ใช่ภูมิลำเนา
+
+## service ดึงงาน ISURVEY บนเซิร์ฟเวอร์ (pull_service.py, 04/09/69)
+
+ให้เว็บ se-survey มีปุ่ม "ดึงงานรอตรวจ" เอง — backend se-survey เรียก service นี้ด้วย **บัญชี ISURVEY ของหัวหน้าที่กด**
+(เก็บเข้ารหัสฝั่ง se-survey, ส่งมาต่อคำขอ) · service ไม่เก็บ state · ใช้ `autokey/pull_core.py` ซึ่งเรียก `build_case`
+ตัวเดียวกับ webui · ISURVEY อ่านอย่างเดียว · ไม่แตะ EMCS
+
+- รัน: `PULL_SERVICE_TOKEN=… SESURVEY_API_URL=… SESURVEY_API_TOKEN=<INTEGRATION_TOKEN> python pull_service.py` (port 8790)
+- Docker: `Dockerfile.pull` (python:3.12-slim + requirements-pull.txt) — Dokploy: Build Type Dockerfile, path `Dockerfile.pull`
+- endpoint: POST `/login-test` `/pending` `/pull` (header `X-Service-Token`) · GET `/healthz`
+- ทดสอบในเครื่อง 04/09/69: login-test ✓ · token ผิด 401 ✓ · รหัสผิด 502 ✓ · pending 14 วัน = 504 งาน ✓
+- ฝั่ง se-survey: env `ISURVEY_SERVICE_URL` `ISURVEY_SERVICE_TOKEN` (= PULL_SERVICE_TOKEN) `CRED_KEY` · หน้า /inspector/isurvey
