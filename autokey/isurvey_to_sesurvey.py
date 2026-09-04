@@ -310,6 +310,25 @@ def split_part_side(name) -> tuple[str, str]:
     return n, "A"
 
 
+def _damage_item(name, level, dtype="", cost="") -> dict:
+    """ชิ้นส่วน 1 รายการในรูปแบบที่เว็บ/บอทใช้ ({part, pos, level(L/M/H/X), type, cost})"""
+    part, pos = split_part_side(name)
+    lv = _s(level)
+    return {"part": part, "pos": pos, "type": _s(dtype),
+            "level": DAMAGE_LEVEL_MAP.get(lv.upper(), lv), "cost": _s(cost)}
+
+
+def _opponent_damage(api, case_id, ikey) -> list:
+    """ความเสียหายรายชิ้นของคู่กรณี 1 คัน — ISURVEY ให้ผ่าน list_parts_other_car (ต้องส่ง ikey)
+    เดิมตัวแปลงใส่ [] ตายตัว → เคสที่ดึงมาไม่มีความเสียหายคู่กรณีเลย (เคส #224, 04/09/69)"""
+    out = []
+    for p in api.opponent_parts(case_id, ikey) or []:
+        if not _s(p.get("part")):
+            continue
+        out.append(_damage_item(p.get("part"), p.get("level"), p.get("type"), p.get("labour")))
+    return out
+
+
 def surveyor_code(name_with_code: str) -> str:
     """'SEC423 สมชาติ หอมมาลา' → 'SEC423'
 
@@ -446,18 +465,9 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
     # ── ความเสียหายรถประกัน ──
     # ⭐ เส้นทางนี้ได้รายการความเสียหายมาด้วย — ไฟล์ XML ของ ISURVEY ปล่อยว่างเสมอ (6/6 ไฟล์)
     parts = api.get_parts(case_id) or []
-    report["insured_damage"] = []
-    for p in parts:
-        if not _s(p.get("partname")):
-            continue
-        part, pos = split_part_side(p.get("partname"))
-        report["insured_damage"].append({
-            "part": part,
-            "pos": pos,
-            "type": _s(p.get("damage_type_detail")),
-            "level": DAMAGE_LEVEL_MAP.get(_s(p.get("damaged_level")).upper(), _s(p.get("damaged_level"))),
-            "cost": _s(p.get("LABOUR_COST")),
-        })
+    report["insured_damage"] = [
+        _damage_item(p.get("partname"), p.get("damaged_level"), p.get("damage_type_detail"), p.get("LABOUR_COST"))
+        for p in parts if _s(p.get("partname"))]
 
     # ── คู่กรณี / ผู้บาดเจ็บ / ทรัพย์สิน ──
     report["opposing_parties"] = _third_parties(api, case_id)
@@ -551,9 +561,20 @@ def _third_parties(api, case_id) -> list:
             # ค่าเสียหายรวม: API ไม่มีช่องยอดรวม ต้องบวกเอง (อะไหล่+ค่าแรง+อื่นๆ)
             # ⚠️ ห้ามใช้ 'total' จาก list_records — คนละยอด (พิสูจน์แล้วเคลม 2026013058298)
             "estimated_cost": _sum_damage(r),
-            "damage": [],
+            "damage": _opponent_damage(api, case_id, ikey),
             "kfk": False,
         })
+        # ยอดรวมของคู่กรณีว่าง (เคส #224) แต่มีค่าแรง/อะไหล่รายชิ้น → รวมจากรายชิ้นแทน
+        if not out[-1]["estimated_cost"]:
+            total = 0.0
+            for p in api.opponent_parts(case_id, ikey) or []:
+                for k in ("labour", "parts"):
+                    try:
+                        total += float(_s(p.get(k)).replace(",", "") or 0)
+                    except ValueError:
+                        pass
+            if total:
+                out[-1]["estimated_cost"] = f"{total:g}"
     return out
 
 

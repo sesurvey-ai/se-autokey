@@ -335,7 +335,9 @@ def dump_raw(api, case, cid) -> dict:
         raw["tabs"][str(t)] = api.get_tab(cid, t)
     for t in (4, 5, 6):
         rows = api.list_records(cid, t)
-        raw["records"][str(t)] = [{"row": row, "rec": api.get_record(cid, t, row.get("ikey"))} for row in rows if row.get("ikey")]
+        raw["records"][str(t)] = [{"row": row, "rec": api.get_record(cid, t, row.get("ikey")),
+                                   "parts": (api.opponent_parts(cid, row.get("ikey")) if t == 4 else None)}
+                                  for row in rows if row.get("ikey")]
     # ชื่อบริษัทประกันของคู่กรณี resolve ผ่าน api._company(รหัส) — เก็บผลไว้ให้โหมด --raw เล่นซ้ำได้
     raw["company_names"] = {}
     for x in raw["records"].get("4", []):
@@ -363,6 +365,11 @@ class _ReplayAPI:
         return {}
     def master(self, name, k, v): return self.raw["masters"].get(name, {})
     def _company(self, code): return self.raw.get("company_names", {}).get(str(code), "")
+    def opponent_parts(self, cid, ikey):
+        for x in self.raw["records"].get("4", []):
+            if x["row"].get("ikey") == ikey:
+                return x.get("parts") or []
+        return []
     def _tumbon(self, c): return ""
     def _amphur(self, c): return ""
     def _prov(self, c): return ""

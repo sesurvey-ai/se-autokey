@@ -74,6 +74,9 @@ class FakeAPI:
     def get_record(self, cid, t, ikey): return dict(self.records.get(t, []))[ikey]
     def master(self, name, k, v): return self.masters.get(name, {})
     def _company(self, code): return "บริษัท ทิพยประกันภัย จำกัด (มหาชน)" if code == "136" else ""
+    def opponent_parts(self, cid, ikey):
+        return [{"part": "ประตูหน้าซ้าย", "type": "บุบ,", "level": "B", "labour": "1500", "parts": "0", "memo": ""},
+                {"part": "กระจกมองข้างซ้าย", "type": "แตก,", "level": "A", "labour": "", "parts": "800", "memo": ""}] if ikey == "k4" else []
     def _tumbon(self, c): return ""
     def _amphur(self, c): return ""
     def _prov(self, c): return ""
@@ -142,6 +145,20 @@ def test_opponent_insurer_resolved_from_company_code():
     assert o["license_type"] == "ใบขับขี่รถยนต์ส่วนบุคคล"
     assert o["gender"] == "ชาย"                           # คู่กรณีใช้คำไทย (คนละกติกากับผู้ขับขี่รถประกัน)
     assert o["estimated_cost"] == "1500"
+
+
+def test_opponent_damage_pulled_from_parts_api():
+    o = _build()["report"]["opposing_parties"][0]
+    assert [(d["part"], d["pos"], d["level"]) for d in o["damage"]] == [("ประตูหน้า", "L", "M"), ("กระจกมองข้าง", "L", "L")]
+    assert o["estimated_cost"] == "1500"     # ยอดรวมจาก record (D_SPRP+D_LABOUR) มีอยู่แล้ว ไม่ทับด้วยรายชิ้น
+
+
+def test_opponent_cost_falls_back_to_parts_when_record_total_empty():
+    api = FakeAPI()
+    rec = dict(api.records[4][0][1]); rec.update({"D_SPRP": "", "D_LABOUR": "", "D_OTH": ""})
+    api.records[4] = [("k4", rec)]
+    o = conv.build_case(api, "case1", {})["report"]["opposing_parties"][0]
+    assert o["estimated_cost"] == "2300"     # 1500 ค่าแรง + 800 อะไหล่
 
 
 def test_property_record_is_unwrapped():
