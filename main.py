@@ -202,7 +202,7 @@ def parse_args():
     args = p.parse_args()
 
     if not (args.claim or args.claims or args.claims_file or args.data_json
-            or args.sesurvey_case or args.emcs_images or args.emcs_sync_status):
+            or args.sesurvey_case or args.emcs_images or args.emcs_sync_status or args.station):
         p.error("ต้องระบุ --claim / --claims / --claims-file / --data-json / --emcs-sync-status / "
                 "--sesurvey-case / --emcs-images อย่างน้อยหนึ่งอย่าง")
     return args
