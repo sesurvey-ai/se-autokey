@@ -122,6 +122,45 @@ def save_account(prefix: str, user: str, pwd: str):
     return ""
 
 
+def sesurvey_status() -> dict:
+    """สถานะการเชื่อมต่อระบบ se-survey — **ไม่คืน token ออกทางหน้าเว็บ**"""
+    env = _load_env_file(BASE / ".env")
+    return {"url": env.get("SESURVEY_API_URL", "") or "https://api.sesurvey.cloud",
+            "has_token": bool(env.get("SESURVEY_API_TOKEN", ""))}
+
+
+def save_sesurvey(url: str, token: str):
+    """บันทึก SESURVEY_API_URL/SESURVEY_API_TOKEN ลง .env — คืน error string ('' = สำเร็จ)
+
+    ปุ่ม "นำเข้า EMCS" บนเว็บ se-survey ต้องใช้ token นี้ดึงข้อมูลเคส — เครื่องผู้ใช้ที่ติดตั้งบอทใหม่
+    ไม่มีให้ (เจอจริง 04/09/69: กดปุ่มแล้วขึ้น "ไม่พบ SESURVEY_API_TOKEN ใน .env") จึงให้ตั้งจากหน้านี้
+    แทนการแก้ไฟล์ .env เอง · เว้นช่อง token ว่าง = แก้แค่ที่อยู่ ไม่ล้าง token เดิม"""
+    url = str(url or "").strip().rstrip("/") or "https://api.sesurvey.cloud"
+    if not url.startswith(("http://", "https://")):
+        return "ที่อยู่ระบบต้องขึ้นต้นด้วย http:// หรือ https://"
+    cur = _load_env_file(BASE / ".env")
+    token = str(token or "").strip()
+    if not token and not cur.get("SESURVEY_API_TOKEN"):
+        return "ยังไม่ได้กรอก token"
+    upd = {"SESURVEY_API_URL": url}
+    if token:
+        upd["SESURVEY_API_TOKEN"] = token
+    try:
+        save_env_keys(upd)
+    except Exception as e:
+        return f"เขียนไฟล์ตั้งค่าไม่ได้: {e}"
+    print(f"[settings] ตั้งค่าเชื่อมต่อ se-survey ใหม่: {url}")   # ⛔ ห้าม print token
+    return ""
+
+
+def sesurvey_test():
+    """ทดสอบ token — **อ่านอย่างเดียว** (GET รายการเคสที่รอนำเข้า) · คืน (ok, message)"""
+    cases, err = fetch_sesurvey_cases()
+    if err:
+        return False, err
+    return True, f"เชื่อมต่อได้ · มีเคสที่รอนำเข้า {len(cases or [])} เรื่อง"
+
+
 def sekey_status() -> dict:
     """สถานะทะเบียนงานคีย์กลาง — **ไม่คืนรหัส API ออกทางหน้าเว็บ** (คืนแค่ตั้งแล้วหรือยัง)"""
     env = _load_env_file(BASE / ".env")
@@ -197,7 +236,7 @@ def fetch_sesurvey_cases():
     proxy ฝั่ง server: เบราว์เซอร์เรียก webui (same-origin) ไม่ต้องรู้ token/ไม่ติด CORS"""
     url, token = _sesurvey_cfg()
     if not token:
-        return None, "ยังไม่ได้ตั้ง SESURVEY_API_TOKEN ใน .env"
+        return None, "ยังไม่ได้ตั้ง token ของระบบ se-survey — ตั้งได้ที่แท็บ ⚙ ตั้งค่า → ระบบ se-survey (ขอ token จากผู้ดูแลระบบ)"
     try:
         req = urllib.request.Request(
             f"{url}/api/integrations/cases",
@@ -305,7 +344,7 @@ def _sesurvey_post(path, payload=None, body=None, content_type=None, timeout=120
     """POST ไป se-survey พร้อม token — คืน (data, error)"""
     url, token = _sesurvey_cfg()
     if not token:
-        return None, "ยังไม่ได้ตั้ง SESURVEY_API_TOKEN ใน .env"
+        return None, "ยังไม่ได้ตั้ง token ของระบบ se-survey — ตั้งได้ที่แท็บ ⚙ ตั้งค่า → ระบบ se-survey (ขอ token จากผู้ดูแลระบบ)"
     headers = {"Authorization": f"Bearer {token}"}
     if payload is not None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -638,7 +677,7 @@ def fetch_sesurvey_xml(case_id: str):
     ใช้เป็น 'ไฟล์สำรอง' ไป import EMCS เองตอนบอทใช้ไม่ได้"""
     url, token = _sesurvey_cfg()
     if not token:
-        return None, "ยังไม่ได้ตั้ง SESURVEY_API_TOKEN ใน .env"
+        return None, "ยังไม่ได้ตั้ง token ของระบบ se-survey — ตั้งได้ที่แท็บ ⚙ ตั้งค่า → ระบบ se-survey (ขอ token จากผู้ดูแลระบบ)"
     try:
         req = urllib.request.Request(
             f"{url}/api/integrations/cases/{case_id}/export-xml",
@@ -1189,7 +1228,8 @@ class Handler(BaseHTTPRequestHandler):
                              "isurvey": account_status("ISURVEY"),
                              "emcs": account_status("EMCS"),
                              "isurvey_report": account_status("ISURVEY_REPORT"),
-                             "sekey": sekey_status()})
+                             "sekey": sekey_status(),
+                             "sesurvey": sesurvey_status()})
         elif u.path == "/isurvey-cases":
             q = parse_qs(u.query)
             rows, err = fetch_isurvey_cases(
@@ -1409,6 +1449,24 @@ class Handler(BaseHTTPRequestHandler):
                 return
             ok, err = sekey_test()
             self._send(200, {"test_ok": ok, "error": err, **sekey_status()})
+        elif u.path == "/sesurvey-account":
+            # การเชื่อมต่อระบบ se-survey (URL + token ของผู้ดูแล) — ตั้งจากหน้า operator ในเครื่องเท่านั้น
+            if self._cors_origin() is not None:
+                self._send(403, {"error": "ตั้งค่าได้จากหน้า operator ในเครื่องเท่านั้น"})
+                return
+            b = self._read_json() or {}
+            bad = save_sesurvey(str(b.get("url") or ""), str(b.get("token") or ""))
+            if bad:
+                self._send(500 if "เขียนไฟล์" in bad else 400, {"error": bad})
+                return
+            ok, msg = sesurvey_test()
+            self._send(200, {"saved": True, **sesurvey_status(), "test_ok": ok, "message": msg})
+        elif u.path == "/sesurvey-test":
+            if self._cors_origin() is not None:
+                self._send(403, {"error": "ทดสอบได้จากหน้า operator ในเครื่องเท่านั้น"})
+                return
+            ok, msg = sesurvey_test()
+            self._send(200, {"test_ok": ok, "message": msg, **sesurvey_status()})
         elif u.path == "/isurvey-login-test":
             if self._cors_origin() is not None:
                 self._send(403, {"error": "ทดสอบได้จากหน้า operator ในเครื่องเท่านั้น"})
@@ -2011,6 +2069,36 @@ PAGE = r"""<!doctype html>
        • <b>ยังไม่ตั้ง = ส่งงานเข้า EMCS ได้</b> แต่ ISURVEY ไม่ถูกติ๊กว่าคีย์แล้ว → เสี่ยงคีย์ซ้ำ<br>
        • <b>ไม่มีปุ่มทดสอบ</b> — ทดสอบ = ยิงจริง จะไปติ๊กเคลมทั้งที่ยังไม่ได้ทำ<br>
        • เก็บที่ <code>.env</code> เครื่องนี้ (ไม่ไปกับ USB) · เว้นรหัสว่าง = แก้แค่ชื่อผู้ใช้
+      </div>
+     </div>
+     <!-- ระบบ se-survey (เว็บกลาง) — ปุ่ม "นำเข้า EMCS" บนเว็บใช้ token นี้ดึงข้อมูลเคสมาให้บอท
+          เครื่องที่ติดตั้งบอทใหม่ไม่มี token → กดปุ่มแล้วขึ้น "ไม่พบ SESURVEY_API_TOKEN" (04/09/69) -->
+     <div class="card" style="margin-bottom:12px">
+      <b style="font-size:15px">🌐 ระบบ se-survey (เว็บกลาง)</b>
+      <div style="color:var(--muted);font-size:12.5px;margin:4px 0 10px">
+       ให้ปุ่ม "นำเข้า EMCS" บนเว็บ <b>survey.sesurvey.cloud</b> ส่งงานมาที่บอทเครื่องนี้ได้ —
+       token ผู้ดูแลระบบเป็นคนให้ (ทุกเครื่องใช้ค่าเดียวกัน ไม่ใช่บัญชีส่วนตัว)
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span class="fltlab">ที่อยู่ API</span>
+        <input type="text" id="ssurl" autocomplete="off" placeholder="https://api.sesurvey.cloud"
+               style="flex:1;min-width:0;padding:6px 8px">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="fltlab">token</span>
+        <input type="password" id="sskey" autocomplete="new-password" style="flex:1;min-width:0;padding:6px 8px">
+        <button type="button" id="sskeyeye" class="ghost"
+                style="flex:none;padding:6px 10px;font-size:12px">แสดง</button>
+      </div>
+      <div id="ssstate" style="font-size:12px;color:var(--muted);margin:6px 0 0"></div>
+      <div class="actions" style="margin-top:8px">
+       <button class="run" id="savess">💾 บันทึกและทดสอบเชื่อมต่อ</button>
+       <button class="ghost" id="testss">🔌 ทดสอบด้วยค่าที่บันทึกไว้</button>
+      </div>
+      <div id="ssmsg" style="font-size:12.5px;margin-top:8px"></div>
+      <div class="note" style="margin-top:10px">
+       • <b>ยังไม่ตั้ง = ปุ่ม "นำเข้า EMCS" บนเว็บใช้กับเครื่องนี้ไม่ได้</b> (บอทดึงข้อมูลเคสไม่ได้)<br>
+       • ทดสอบได้ปลอดภัย — แค่อ่านรายการเคสที่รอนำเข้า ไม่เขียนอะไร · เก็บที่ <code>.env</code> เครื่องนี้ (ไม่ไปกับ USB)
       </div>
      </div>
      <!-- ทะเบียนงานคีย์กลาง — งานที่ "ส่งแล้ว" ต้องไปโผล่ที่ key.sesurvey.cloud
@@ -3464,6 +3552,11 @@ async function loadKeyers(){
     $("#isvpwstate").textContent = pwText(isv.has_password);
     $("#emcsuser").value = em.username || "";
     $("#emcspwstate").textContent = pwText(em.has_password);
+    const ss = d.sesurvey || {};
+    $("#ssurl").value = ss.url || "https://api.sesurvey.cloud";
+    $("#ssstate").textContent = ss.has_token
+      ? "token: ตั้งไว้แล้ว (เว้นว่างไว้ = ใช้ token เดิม)"
+      : "token: ยังไม่ได้ตั้ง — ปุ่ม 'นำเข้า EMCS' บนเว็บจะใช้กับเครื่องนี้ไม่ได้";
     const sk = d.sekey || {};
     // เติมที่อยู่มาตรฐานให้เลยเมื่อยังไม่เคยตั้ง — เดิมโชว์เป็น placeholder จาง ๆ
     // ซึ่งหน้าตาเหมือนกรอกไว้แล้ว คนกดบันทึกแล้วงงว่าทำไมฟ้อง "ยังไม่ได้กรอกที่อยู่ระบบ"
@@ -3573,6 +3666,34 @@ async function skCall(url, body){
   }catch(e){ say(false, "ติดต่อโปรแกรมไม่ได้"); }
   finally{ btns.forEach(b => { b.disabled = false; }); }
 }
+$("#sskeyeye").addEventListener("click", () => {
+  const f = $("#sskey");
+  const show = f.type === "password";
+  f.type = show ? "text" : "password";
+  $("#sskeyeye").textContent = show ? "ซ่อน" : "แสดง";
+});
+async function ssCall(url, body){
+  const btns = [$("#savess"), $("#testss")], msg = $("#ssmsg");
+  const say = (ok, t) => { msg.innerHTML = '<span style="color:var(--' + (ok ? "ok" : "err") + ')">' + escHtml(t) + '</span>'; };
+  btns.forEach(b => { b.disabled = true; });
+  msg.textContent = "กำลังทดสอบเชื่อมต่อ…";
+  try{
+    const r = await fetch(url, body
+      ? {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}
+      : {method:"POST"});
+    const d = await r.json();
+    if (!r.ok) say(false, d.error || ("ผิดพลาด " + r.status));
+    else if (d.test_ok) say(true, d.message || "เชื่อมต่อ se-survey ได้");
+    else say(false, "บันทึกแล้ว แต่เชื่อมต่อไม่ได้: " + (d.message || d.error || "ไม่ทราบสาเหตุ"));
+    $("#sskey").value = "";
+    $("#sskey").type = "password";
+    $("#sskeyeye").textContent = "แสดง";
+    loadKeyers();
+  }catch(e){ say(false, "ติดต่อโปรแกรมไม่ได้"); }
+  finally{ btns.forEach(b => { b.disabled = false; }); }
+}
+$("#savess").addEventListener("click", () => ssCall("/sesurvey-account", {url:$("#ssurl").value.trim(), token:$("#sskey").value}));
+$("#testss").addEventListener("click", () => ssCall("/sesurvey-test", null));
 $("#savesk").addEventListener("click", () => {
   const u = $("#skurl").value.trim();
   if (!u){ $("#skmsg").textContent = "ยังไม่ได้กรอกที่อยู่ระบบ"; return; }

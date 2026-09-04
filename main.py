@@ -1358,7 +1358,7 @@ def run_sesurvey_import(cfg, args):
     if not raw_ref:
         raise SystemExit("--sesurvey-case ว่าง — ใส่เลขเคส (case id) หรือเลขเซอร์เวย์ (SETP-...)")
     if not cfg.sesurvey_api_token:
-        raise SystemExit("ไม่พบ SESURVEY_API_TOKEN ใน .env — ขอ token จากผู้ดูแลระบบ se-survey")
+        raise SystemExit("ไม่พบ SESURVEY_API_TOKEN ใน .env — เปิด start-webui.bat → แท็บ ⚙ ตั้งค่า → ระบบ se-survey แล้ววาง token (ขอจากผู้ดูแลระบบ)")
 
     hdrs = {"Authorization": f"Bearer {cfg.sesurvey_api_token}"}
     # auto-detect: ตัวเลขล้วน = case id (db); อื่น ๆ = เลขเซอร์เวย์ (survey_job_no เช่น SETP-...) → resolve
