@@ -298,12 +298,15 @@ def split_part_side(name) -> tuple[str, str]:
     (audit 03/09/69: 12/15 ชิ้นใน 3 เคสมีข้างท้ายชื่อ) · 'A' = ทั้งคู่/ไม่ระบุข้าง ตามความหมายเดิมของแอป
     """
     n = _s(name)
+    # คำว่า "ด้าน" ที่นำหน้าข้าง ('ครอบไฟตัดหมอกด้านซ้าย') ตัดทิ้งพร้อมข้าง — แต่ **ไม่ตัด "ข้าง"**
+    # เพราะ 'กระจกมองข้าง' เป็นชื่อชิ้นส่วนใน checklist (เคส #222, 04/09/69)
+    strip = lambda t: re.sub(r"ด้าน$", "", t.strip(" -+/")).strip(" -+/")
     m = _SIDE_BOTH.search(n)
     if m:
-        return n[:m.start()].strip(" -+/"), "A"
+        return strip(n[:m.start()]), "A"
     m = _SIDE_ONE.search(n)
     if m:
-        return n[:m.start()].strip(" -+/"), ("L" if m.group(1) == "ซ้าย" else "R")
+        return strip(n[:m.start()]), ("L" if m.group(1) == "ซ้าย" else "R")
     return n, "A"
 
 

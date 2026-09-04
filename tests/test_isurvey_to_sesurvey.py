@@ -98,6 +98,13 @@ def test_damage_level_and_side_split():
     ]
 
 
+def test_side_split_keeps_checklist_names():
+    assert conv.split_part_side("ครอบไฟตัดหมอกด้านซ้าย") == ("ครอบไฟตัดหมอก", "L")
+    assert conv.split_part_side("กระจกมองข้างขวา") == ("กระจกมองข้าง", "R")      # 'ข้าง' เป็นส่วนของชื่อ
+    assert conv.split_part_side("บันไดประตูข้างขวา") == ("บันไดประตูข้าง", "R")
+    assert conv.split_part_side("กันชนหน้า(ใหญ่)") == ("กันชนหน้า(ใหญ่)", "A")
+
+
 def test_photo_fee_unit_and_counts_inferred():
     ex = _build()["expenses"]
     assert (ex["photo_fee_count"], ex["photo_fee_price"]) == (10, 5)   # ยอดรวม 50 จำนวน 0 → 10 × 5
