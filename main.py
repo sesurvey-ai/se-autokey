@@ -169,6 +169,14 @@ def parse_args():
                    help="⛔ เปิดโหมด import จริงเข้า EMCS สำหรับ --sesurvey-case "
                         "(default ไม่ใส่ = dry-run). ยังคงวินัย draft-only: บอทหยุดที่ draft "
                         "คนกดส่งเอง. ใช้เมื่อสรุปการทดสอบร่วมกันแล้วเท่านั้น")
+    # ── โหมดสถานีนำเข้า (autokey/station.py): รับงานจากคิวของเว็บ se-survey ทีละเรื่อง ล็อกอิน EMCS ครั้งเดียว ──
+    p.add_argument("--station", action="store_true",
+                   help="โหมดสถานีนำเข้า EMCS: วนรับงานจากคิว 'ส่งเข้าคิว EMCS' ของเว็บ se-survey ทีละเรื่อง "
+                        "(ล็อกอิน EMCS ครั้งเดียวต่อกะ, draft-only) — ใส่ --dry-run เพื่อทดสอบท่อโดยไม่แตะ EMCS")
+    p.add_argument("--station-name", default="",
+                   help="ชื่อสถานีที่โชว์บนเว็บ (default = ชื่อเครื่อง)")
+    p.add_argument("--poll", type=int, default=10,
+                   help="โหมดสถานี: ถามคิวทุกกี่วินาทีเมื่อว่าง (default 10)")
     p.add_argument("--sesurvey-fill-existing", action="store_true",
                    help="เปิด draft ที่ import ไว้แล้ว (เคสที่ mark emcs_imported แล้ว) มาเติม "
                         "หน้าหลัก/คู่กรณี/รูป/ค่าใช้จ่าย + บันทึก — ไม่ import ซ้ำ ไม่สร้าง draft ใหม่ "
@@ -1725,11 +1733,17 @@ def main():
         pass
 
     args = parse_args()
-    cfg = load_config()
+    # สถานีนำเข้าใช้แค่บัญชี EMCS (+ token se-survey) — เครื่องสถานีไม่จำเป็นต้องมีบัญชี ISURVEY
+    cfg = load_config(require=("EMCS",)) if getattr(args, "station", False) else load_config()
     # เติม PID กันชื่อชนกันเมื่อรันหลายงานพร้อมกัน (เริ่มในวินาทีเดียวกันได้)
     set_log_file(cfg.runs_dir / "logs"
                  / f"run_{datetime.now():%Y%m%d_%H%M%S}_{os.getpid()}.log")
 
+    # --station: สถานีนำเข้า EMCS — วนรับงานจากคิวของเว็บ (ไม่จบเองจนกว่าจะกด Ctrl+C)
+    if getattr(args, "station", False):
+        from autokey.station import run_station
+        run_station(cfg, args)
+        return
     # --emcs-sync-status: กวาดอ่านสถานะ "ส่งงานแล้วหรือยัง" กลับมาอัปเดต se-survey แล้วจบ
     if getattr(args, "emcs_sync_status", False):
         run_emcs_sync_status(cfg, args)

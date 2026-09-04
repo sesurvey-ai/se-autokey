@@ -1197,3 +1197,19 @@ python -m autokey.license_ocr <รูป|โฟลเดอร์>        # ท�
 - endpoint: POST `/login-test` `/pending` `/pull` (header `X-Service-Token`) · GET `/healthz`
 - ทดสอบในเครื่อง 04/09/69: login-test ✓ · token ผิด 401 ✓ · รหัสผิด 502 ✓ · pending 14 วัน = 504 งาน ✓
 - ฝั่ง se-survey: env `ISURVEY_SERVICE_URL` `ISURVEY_SERVICE_TOKEN` (= PULL_SERVICE_TOKEN) `CRED_KEY` · หน้า /inspector/isurvey
+
+## สถานีนำเข้า EMCS (`--station`) — 04/09/69
+
+user ตัดสินให้บอทรันบน **เครื่อง Windows ที่จัดเตรียมไว้** (ไม่ใช่เซิร์ฟเวอร์) และให้หัวหน้ากด "📤 ส่งเข้าคิว EMCS"
+จากเว็บ se-survey ได้จากทุกเครื่อง — สถานีมารับงานเองทีละเรื่อง (`autokey/station.py`)
+
+- เริ่ม: `start-station.bat` (= `python -u main.py --station`) · ตัวเลือก `--station-name ชื่อ` `--poll วินาที` `--dry-run`
+- ต้องมีใน `.env`: บัญชี EMCS + `SESURVEY_API_TOKEN` (ตั้งได้ที่ webui → ⚙ ตั้งค่า → ระบบ se-survey) · **ไม่ต้องมีบัญชี ISURVEY**
+- ล็อกอิน EMCS **ครั้งเดียวต่อกะ** แล้ววนรับงานในหน้าต่างเดิม · ตรวจก่อนทุกงานว่ายังอยู่ในเซสชัน (เจอช่อง txtUserName = ล็อกอินใหม่)
+  · กลับหน้า MainPage ระหว่างเรื่อง · รีสตาร์ต Chrome ทุก 50 เรื่องหรือหลังงานพัง
+- ท่อกับเว็บ (service token): `POST /api/integrations/emcs-queue/claim {station}` → `POST .../{job}/heartbeat` ทุก 60 วิ →
+  `POST .../{job}/result {ok, esurvey_no | error, log_tail, screenshot_b64}` · เว็บถือว่าสถานีหายถ้าเงียบเกิน 40 นาที (คืนงานเข้าคิว ≤3 ครั้ง)
+- งานหนึ่งเรื่อง = flow เดียวกับ `--sesurvey-case --sesurvey-live` (meta → XML → รูป → `emcs.fill_imported` → mark emcs_imported)
+  แต่ **ไม่เรียก `emcs.run_import`** เพราะตัวนั้นล็อกอินใหม่ทุกครั้ง · `--dry-run` หยุดก่อนแตะ EMCS แล้วรายงาน "ผ่าน"
+- 2 สถานี = 2 บัญชี EMCS (EMCS ล็อกเรื่องต่อ username) · คิวฝั่งเว็บกันชนด้วย `FOR UPDATE SKIP LOCKED`
+- ⚠️ อย่ากด "นำเข้าด้วยบอทเครื่องนี้" บนเว็บจากเครื่องสถานีขณะสถานีรันอยู่ — จะเปิด Chrome ซ้อนด้วยบัญชีเดียวกัน
