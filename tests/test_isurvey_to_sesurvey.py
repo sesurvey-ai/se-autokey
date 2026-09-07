@@ -38,7 +38,9 @@ class FakeAPI:
                            "age": "29", "birthdate": "1996-09-18", "IDcard_no": "1200500072660",
                            "drv_provinceID": "20", "drv_amphurID": "2006", "lic_issue_provinceID": "48"}},
             7: {"Policy": {"policy_no": "525013111407", "assured_name": "บริษัท โตโยต้า ลีสซิ่ง (ประเทศไทย) จำกัด",
-                           "policy_TypeID": "ประเภท 1", "effective_date": "2025-10-12", "expiry_date": "2026-10-12"}},
+                           "policy_TypeID": "ประเภท 1", "effective_date": "2025-10-12", "expiry_date": "2026-10-12",
+                           "COMPULSORY_NO": "5260133511673", "ODDD": "1,000", "repair_code": "ซ่อมห้าง", "vehType": "110",
+                           "drv_name1": "นาย สถาพร จุลพันธ์", "drv_name2": "", "car_model": "YARIS CROSS HEV"}},
             8: {"Accident": {"notified_date": "2026-08-28", "notified_time": "14:38"}},
         }
         self.parts = [
@@ -163,6 +165,16 @@ def test_opponent_cost_adds_other_and_falls_back_to_record_when_parts_have_no_nu
     o = conv.build_case(api, "case1", {})["report"]["opposing_parties"][0]
     assert o["estimated_cost"] == "8200"     # รายชิ้นไม่มีตัวเลข → D_SPRP+D_LABOUR+D_OTH ของหน้าคู่กรณี
     assert len(o["damage"]) == 1
+
+
+def test_policy_tab7_extras_fill_web_fields():
+    r = _build()["report"]
+    assert r["prb_number"] == "5260133511673"          # กรมธรรม์ (พรบ.) → PRB_NUMBER
+    assert r["deductible"] == "1000"                  # ค่าเสียหายส่วนแรก ตัดคอมมา
+    assert r["repair_shop"] == "ซ่อมห้าง"
+    assert r["risk_code"] == "110"                    # รหัสภัยยานยนต์ (UseNo)
+    assert r["driver_by_policy"] == "นาย สถาพร จุลพันธ์"
+    assert r["car_model"]                             # แท็บ 3 ไม่มีรุ่น → ถอยไปแท็บ 7
 
 
 def test_insured_estimated_cost_sums_labour_and_parts():

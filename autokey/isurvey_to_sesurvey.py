@@ -417,6 +417,12 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "policy_type": _s(pol.get("policy_TypeID")),
         "policy_start": be_date(pol.get("effective_date") or t3.get("effective_date")),
         "policy_end": be_date(pol.get("expiry_date") or t3.get("expiry_date")),
+        # ── แท็บ 7 ส่วนที่เว็บมีช่องรับอยู่แล้ว (user ขอ 07/09/69) ──
+        "prb_number": _s(pol.get("COMPULSORY_NO")),                       # กรมธรรม์ (พรบ.) → XML PRB_NUMBER
+        "deductible": _s(pol.get("ODDD")).replace(",", ""),                # ค่าเสียหายส่วนแรก (รถประกัน) → XML DEDUCTIBLE
+        "repair_shop": _s(pol.get("repair_code")),                         # ซ่อมที่ (ซ่อมห้าง/ซ่อมอู่)
+        "risk_code": _s(pol.get("vehType")),                               # รหัสภัยยานยนต์ (UseNo เช่น 110) → XML RISK_CODE
+        "driver_by_policy": " / ".join(n for n in (_name(pol.get(f"drv_name{i}")) for i in range(1, 6)) if n),  # ชื่อผู้ขับขี่ตามกรมธรรม์
         "acc_date": be_date(acc.get("acc_date")),
         "acc_time": _hhmm(acc.get("acc_time")),
         "acc_place": _s(acc.get("acc_place"))[:200],
@@ -461,11 +467,12 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "license_plate": _s(t3.get("plate_no")),
         "car_province": province_name(t3.get("plate_provinceID")),
         "car_type": VEHTYPE_TO_CODE.get(veh, ""),
-        "car_brand": _s(t3.get("car_brand")),
-        "car_model": _s(t3.get("car_model")),
-        "car_color": _s(t3.get("car_color")),
-        "chassis_no": _s(t3.get("chassis_no")),
-        "engine_no": _s(t3.get("engine_no")),
+        # ข้อมูลรถ: แท็บ 3 ก่อน ว่างค่อยถอยไปแท็บ 7 (กรมธรรม์) — เคสจริงบางเคสแท็บ 3 ไม่มีรุ่นรถแต่แท็บ 7 มี (07/09/69)
+        "car_brand": _s(t3.get("car_brand")) or _s(pol.get("car_brand")),
+        "car_model": _s(t3.get("car_model")) or _s(pol.get("car_model")),
+        "car_color": _s(t3.get("car_color")) or _s(pol.get("car_color")),
+        "chassis_no": _s(t3.get("chassis_no")) or _s(pol.get("chassis_no")),
+        "engine_no": _s(t3.get("engine_no")) or _s(pol.get("engine_no")),
         "estimated_cost": _insured_cost(t3, parts),
         "driver_title": dtitle or ("คุณ" if dfirst else ""),
         "driver_name": _name(drv.get("drv_name")),
