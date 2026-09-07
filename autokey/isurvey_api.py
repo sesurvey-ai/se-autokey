@@ -493,10 +493,12 @@ class ISurveyAPI:
         d.arrive_time = disp.get("arrive_time", "")
         d.finish_date = _ddmmyyyy(disp.get("finish_date"))
         d.finish_time = disp.get("finish_time", "")
-        # "บันทึกความเห็นหัวหน้างาน" (แท็บ 1) → EMCS **ความเห็นของผู้ตรวจสอบ** (txtAcc_Comment)
-        # กติกา user 13/08/69 — เดิมลง "ผลการดำเนินงาน" (txtAcc_result) ซึ่งผิดความหมาย
-        # ผลการดำเนินงานปล่อยว่างให้คนกรอกเอง · ต้องแก้คู่กับ isurvey.py (เส้นอ่านจากหน้าจอ)
-        d.review_comment = t1.get("accident_summary", "")
+        # "บันทึกความเห็นหัวหน้างาน" (แท็บ 1) → EMCS **ผลการดำเนินงาน** (txtAcc_result หน้าค่าใช้จ่าย)
+        # กติกา user 07/09/69 — ยึดปุ่ม "นำเข้า ISURVEY" เป็นแม่แบบ ทั้งสองปุ่มต้องลง EMCS เหมือนกัน
+        # (13/08/69 เคยย้ายไป "ความเห็นของผู้ตรวจสอบ" txtAcc_Comment — ยกเลิกแล้ว; ช่องนั้นปล่อยว่าง
+        # เพราะเป็นการ "ย้าย" ไม่ใช่ก๊อป ไม่ให้ข้อความเดียวกันซ้ำ 2 ช่อง)
+        # ต้องแก้คู่กับ isurvey.py (เส้นอ่านจากหน้าจอ) + isurvey_to_sesurvey.py (ตัวแปลงไปเว็บ)
+        d.accident_summary = t1.get("accident_summary", "")
 
         # ---- Tab 2/8: Accident (ใช้ Notify — จังหวัด/อำเภอเป็นชื่อแล้ว) ----
         d.acc_date = _ddmmyyyy(notify.get("acc_date"))

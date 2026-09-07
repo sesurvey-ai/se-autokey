@@ -422,7 +422,10 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "acc_place": _s(acc.get("acc_place"))[:200],
         "acc_province": province_name(acc_prov_code),
         "acc_district": district_name(api, acc_amph_code, acc_prov_code),
-        "acc_detail": _s(acc.get("acc_detail")),
+        # รายละเอียดการเกิดเหตุ = 'ความคิดเห็นพนักงาน' แท็บ 2 (เหมือนปุ่ม "นำเข้า ISURVEY")
+        # acc_detail ของ ISURVEY เองไม่ใช้ — เป็นข้อความแม่แบบบริษัท (ติดต่อสาขา/ห้ามแนะนำอู่)
+        # + ข้อมูลกรมธรรม์ ไม่ใช่รายละเอียดเหตุ (verify 2026013071573, 07/09/69)
+        "acc_detail": _s(acc.get("surveyor_comment")),
         "acc_fault": acc_fault,
         "acc_cause": _s(acc.get("acc_type_desc")) or _s(row.get("acc_type_desc")),
         "claim_type": claim_type,
@@ -438,10 +441,14 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "acc_police_name": _s(acc.get("police_name")),
         "acc_police_station": _s(acc.get("police_station")),
         "acc_police_date": be_datetime(acc.get("police_rdate"), acc.get("police_rtime")),
-        # ── ความเห็น ──
-        # 'บันทึกความเห็นหัวหน้างาน' (แท็บ 1) = ความเห็นของผู้ตรวจสอบ (กติกา user 13/08/69)
-        "review_comment": _s(t1.get("accident_summary")),
-        "surveyor_comment": _s(acc.get("surveyor_comment")),
+        # ── ความเห็น (กติกา user 07/09/69: ยึดปุ่ม "นำเข้า ISURVEY" ให้ EMCS ออกมาเหมือนกัน) ──
+        # 'บันทึกความเห็นหัวหน้างาน' (แท็บ 1) → ผลการดำเนินงาน (survey_result → EMCS txtAcc_result)
+        # 'ความคิดเห็นพนักงาน' (แท็บ 2) → รายละเอียดการเกิดเหตุ (acc_detail ด้านบน)
+        # ความเห็นของผู้ตรวจสอบ / ความเห็นของเซอร์เวย์ ปล่อยว่าง — ย้าย ไม่ก๊อปซ้ำ
+        # (13/08/69 เคยลง review_comment — ยกเลิกแล้ว) หัวหน้าพิมพ์เพิ่มบนเว็บได้ จะตามไปตามชื่อช่อง
+        "survey_result": _s(t1.get("accident_summary")),
+        "review_comment": "",
+        "surveyor_comment": "",
         "notes": "",
     }
 

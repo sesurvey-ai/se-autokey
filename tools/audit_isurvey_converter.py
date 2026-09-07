@@ -214,6 +214,7 @@ def run_checks(payload: dict, T: dict) -> Audit:
     A.check_text("ตำรวจ", "acc_police_name", r.get("acc_police_name"), ML.get("POLICE_NAME"))
     A.check_text("ตำรวจ", "acc_police_station", r.get("acc_police_station"), ML.get("POLICE_STATION"))
     A.check_text("ความเห็น", "acc_detail", r.get("acc_detail"))
+    A.check_text("ความเห็น", "survey_result", r.get("survey_result"))
     A.check_text("ความเห็น", "review_comment", r.get("review_comment"))
     A.check_text("ความเห็น", "surveyor_comment", r.get("surveyor_comment"))
 

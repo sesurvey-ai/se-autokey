@@ -1154,7 +1154,8 @@ def _run_save_main(alerts, is_new, answered=False, click_ok=True, validform=None
     calls = {"manual": 0, "clicks": 0, "kw": {}, "label": ""}
     _orig = (emcs.wait_clickable, emcs.accept_alert, emcs.wait_for_manual_fill,
              emcs._refill_missing_fields, emcs._diagnose_save_click,
-             emcs.WebDriverWait, emcs._click_save_button, emcs._read_validform)
+             emcs.WebDriverWait, emcs._click_save_button, emcs._read_validform,
+             emcs._wait_alert_or_refresh)
     seq = list(alerts)
 
     def _alert(d, timeout=30):
@@ -1187,6 +1188,14 @@ def _run_save_main(alerts, is_new, answered=False, click_ok=True, validform=None
     emcs._click_save_button = _click
     emcs._read_validform = lambda d: (
         validform or {"ok": None, "err": "", "missing": [], "control": "", "alert": ""})
+
+    # 0baf841 (03/09/69): หลังคลิก save_main อ่าน alert ผ่าน _wait_alert_or_refresh (รอ alert
+    # หรือรู้ว่าแค่ refresh) ไม่ใช่ accept_alert ตรง ๆ แล้ว — driver ปลอมไม่มี alert/execute_script
+    # จึงต้องจำลองตัวนี้ให้กินลิสต์ alerts ชุดเดียวกัน (ข้อความ = มี alert · Exception = เงียบ)
+    def _wait_alert(d, timeout, grace=2.0):
+        v = seq.pop(0) if seq else _sel_exc.TimeoutException()
+        return ("none", "") if isinstance(v, Exception) else ("alert", v)
+    emcs._wait_alert_or_refresh = _wait_alert
     try:
         out = emcs.save_main_form(_FakeDriver({}), claim_data.ClaimData(),
                                   is_new=is_new)
@@ -1195,7 +1204,8 @@ def _run_save_main(alerts, is_new, answered=False, click_ok=True, validform=None
     finally:
         (emcs.wait_clickable, emcs.accept_alert, emcs.wait_for_manual_fill,
          emcs._refill_missing_fields, emcs._diagnose_save_click,
-         emcs.WebDriverWait, emcs._click_save_button, emcs._read_validform) = _orig
+         emcs.WebDriverWait, emcs._click_save_button, emcs._read_validform,
+         emcs._wait_alert_or_refresh) = _orig
     return out, calls["manual"], calls["clicks"], calls
 
 import selenium.common.exceptions as _sel_exc  # noqa: E402
@@ -2841,8 +2851,9 @@ def _t_saved_without_alert():
                 return _El()
             raise NoSuchElementException(value)
 
-    _orig = (_e._click_save_button, _e.accept_alert)
+    _orig = (_e._click_save_button, _e.accept_alert, _e._wait_alert_or_refresh)
     _e._click_save_button = lambda *a, **k: True          # คลิกติด
+    _e._wait_alert_or_refresh = lambda d, timeout, grace=2.0: ("none", "")   # เงียบ ไม่มี alert
     def _no_alert(*a, **k):                               # แต่ EMCS เงียบ
         raise TimeoutException("จำลอง: alert ยังไม่มา")
     _e.accept_alert = _no_alert
@@ -2852,7 +2863,7 @@ def _t_saved_without_alert():
     except BaseException as e:
         return False, f"{type(e).__name__}: {e}"
     finally:
-        _e._click_save_button, _e.accept_alert = _orig
+        _e._click_save_button, _e.accept_alert, _e._wait_alert_or_refresh = _orig
 
 _ok_saved, _saved_out = _t_saved_without_alert()
 check("บันทึกหน้าหลัก: บันทึกผ่านแล้วแต่ alert มาช้า → ถือว่าสำเร็จ ไม่กดซ้ำ ไม่ตาย",
@@ -3774,6 +3785,51 @@ emcs._fill_age_after_birthdate(_ad2, "wuCale_Dri_BirthDay_txtCalendar", "txtDri_
 check("อายุ: ISURVEY ว่าง → ไม่แตะช่อง (ค่าเดิมบน draft อยู่ครบ)",
       _ad2.ops == [] and _ad2.age.v == "40", str(_ad2.ops))
 _br.reset_filled()
+
+
+# EMCS กลืน '•' (bullet) ทั้งตัวเหมือน em-dash — เจอจริง 12 ครั้งในเส้น se-survey (20-21/08/69)
+# 'สรุป รายละเอียด • อุบัติเหตุ…' → 'สรุป รายละเอียด  อุบัติเหตุ…' → ตรวจกลับฟ้องไม่ตรง → ประตูส่งงานปิด
+check("EMCS กลืน '•': แทนด้วย '-' ในช่องความเห็น (คงโครง list)",
+      browser._emcs_safe("txtAcc_result", "สรุป • ข้อ 1 • ข้อ 2") == "สรุป - ข้อ 1 - ข้อ 2",
+      repr(browser._emcs_safe("txtAcc_result", "สรุป • ข้อ 1 • ข้อ 2")))
+check("EMCS กลืน '•': ช่องนอกรายการไม่ถูกแตะ",
+      browser._emcs_safe("txtDri_Address", "a • b") == "a • b")
+
+# ---- กติกาจับคู่ข้อความ 4 ช่อง (user 07/09/69) — ยึดปุ่ม "นำเข้า ISURVEY" เป็นแม่แบบ
+# ทั้งสองปุ่มต้องลง EMCS เหมือนกัน: แท็บ 1 "บันทึกความเห็นหัวหน้างาน" → ผลการดำเนินงาน (txtAcc_result)
+# แท็บ 2 "ความคิดเห็นพนักงาน" → รายละเอียดการเกิดเหตุ (txtAcc_Detail) · ความเห็นผู้ตรวจสอบ/เซอร์เวย์ ว่าง
+# (13/08/69 เคยลง review_comment — ยกเลิก) verify เคลม 2026013071573 ----
+from autokey import isurvey_api as _isv_api_mod  # noqa: E402
+_api_src = _insp.getsource(_isv_api_mod.ISurveyAPI.read_claim)
+check("ข้อความ ISURVEY(API): บันทึกความเห็นหัวหน้างาน → accident_summary (ผลการดำเนินงาน)",
+      'd.accident_summary = t1.get("accident_summary"' in _api_src
+      and 'd.review_comment = t1.get("accident_summary"' not in _api_src)
+check("ข้อความ ISURVEY(API): ความคิดเห็นพนักงาน แท็บ 2 → acc_detail (รายละเอียดการเกิดเหตุ)",
+      'd.acc_detail = acc2.get("surveyor_comment"' in _api_src)
+from autokey import isurvey as _isv_scrape  # noqa: E402
+_scr_src = _insp.getsource(_isv_scrape)
+check("ข้อความ ISURVEY(scrape): บันทึกความเห็นหัวหน้างาน → accident_summary เหมือนเส้น API",
+      'data.accident_summary = get_value(driver, "accident_summary-inputEl")' in _scr_src
+      and 'data.review_comment = get_value(driver, "accident_summary-inputEl")' not in _scr_src
+      and 'data.acc_detail = get_value(driver, "tab2_surveyor_comment-inputEl")' in _scr_src)
+from autokey import isurvey_to_sesurvey as _conv  # noqa: E402
+_conv_src = _insp.getsource(_conv.build_case)
+check("ตัวแปลง→เว็บ: รายละเอียดการเกิดเหตุ = ความคิดเห็นพนักงาน แท็บ 2 (ไม่ใช้ acc_detail แม่แบบของ ISURVEY)",
+      '"acc_detail": _s(acc.get("surveyor_comment"))' in _conv_src
+      and '"acc_detail": _s(acc.get("acc_detail"))' not in _conv_src)
+check("ตัวแปลง→เว็บ: บันทึกความเห็นหัวหน้างาน → survey_result (ผลการดำเนินงาน) ไม่ใช่ review_comment",
+      '"survey_result": _s(t1.get("accident_summary"))' in _conv_src
+      and '"review_comment": _s(t1.get("accident_summary"))' not in _conv_src)
+check("ตัวแปลง→เว็บ: ความเห็นผู้ตรวจสอบ/เซอร์เวย์ ว่าง (ย้าย ไม่ก๊อปซ้ำ)",
+      '"review_comment": "",' in _conv_src and '"surveyor_comment": "",' in _conv_src)
+# ปลายทางเส้น se-survey จับคู่ตามชื่อ → ค่าตั้งต้นจากตัวแปลงต้องออกมาเท่ากับเส้น ISURVEY ทุกช่อง
+_d_rule = claim_data.ClaimData()
+_main._populate_claim_from_report(_d_rule, {'acc_detail': 'รายงานพนักงาน', 'survey_result': 'ความเห็นหัวหน้า',
+                                            'review_comment': '', 'surveyor_comment': ''})
+check("สองปุ่มเท่ากัน: (รายละเอียดเหตุ, ผลการดำเนินงาน, ความเห็นผู้ตรวจ, ความเห็นเซอร์เวย์) ตรงกัน",
+      (_d_rule.acc_detail, _d_rule.accident_summary, _d_rule.review_comment, _d_rule.surveyor_comment)
+      == ('รายงานพนักงาน', 'ความเห็นหัวหน้า', '', ''),
+      repr((_d_rule.acc_detail, _d_rule.accident_summary, _d_rule.review_comment, _d_rule.surveyor_comment)))
 
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

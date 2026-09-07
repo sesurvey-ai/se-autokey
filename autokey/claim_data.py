@@ -176,12 +176,16 @@ class ClaimData:
     arrive_time: str = ""          # เวลาถึงที่เกิดเหตุ
     finish_date: str = ""          # วันเสร็จงาน
     finish_time: str = ""          # เวลาเสร็จงาน
-    # ⚠️ 2 ช่องนี้เติมมาคนละทางแล้วแต่ต้นทาง — อย่าสลับปลายทางที่ emcs.py
-    #    se-survey: survey_result → accident_summary · review_comment → review_comment (ตรงชื่อ)
-    #    ISURVEY  : ไม่มี "ผลการดำเนินงาน" มีแต่ "บันทึกความเห็นหัวหน้างาน" (แท็บ 1)
-    #               ซึ่งลง review_comment ตั้งแต่ 13/08/69 → accident_summary จึงว่างเสมอ
-    #               ในเส้น ISURVEY และผลการดำเนินงานบน EMCS ปล่อยให้คนกรอกเอง
-    accident_summary: str = ""     # ผลการดำเนินงาน → EMCS txtAcc_result (มาจาก se-survey เท่านั้น)
+    # ⚠️ กติกา user 07/09/69 — ยึดปุ่ม "นำเข้า ISURVEY" เป็นแม่แบบ ทั้งสองเส้นต้องลง EMCS เหมือนกัน
+    #    ISURVEY  : แท็บ 1 "บันทึกความเห็นหัวหน้างาน" → accident_summary (ผลการดำเนินงาน)
+    #               แท็บ 2 "ความคิดเห็นพนักงาน" (surveyor_comment) → acc_detail (รายละเอียดการเกิดเหตุ)
+    #               review_comment / surveyor_comment ปล่อยว่าง (ย้าย ไม่ก๊อปซ้ำ) · acc_detail ของ
+    #               ISURVEY เองไม่ใช้ (เป็นข้อความแม่แบบบริษัท + ข้อมูลกรมธรรม์)
+    #    se-survey: จับคู่ตามชื่อช่องบนเว็บ (survey_result → accident_summary · review_comment →
+    #               review_comment · surveyor_comment → surveyor_comment) — ตัวแปลง
+    #               isurvey_to_sesurvey ตั้งค่าตั้งต้นบนเว็บตามกติกาข้างบน จึงได้ผลเดียวกัน
+    #    (13/08/69 เคยลง review_comment — ยกเลิกแล้ว) — อย่าสลับปลายทางที่ emcs.py
+    accident_summary: str = ""     # ผลการดำเนินงาน → EMCS txtAcc_result (หน้าค่าใช้จ่าย)
     review_comment: str = ""       # ความเห็นผู้ตรวจสอบ → EMCS txtAcc_Comment
     surveyor_comment: str = ""     # ความเห็นของเซอร์เวย์ (se-survey surveyor_comment) → EMCS txtSurv_Comment (หน้าค่าใช้จ่าย)
 

@@ -264,6 +264,10 @@ def accept_alert(driver, timeout=30) -> str:
 #   → ตัดดอกจันทิ้งตั้งแต่ต้นทาง (user เคาะ 03/09/69) ให้ตรงกับที่ EMCS เก็บจริง
 #     ไม่งั้นตัวตรวจกลับฟ้อง "ไม่ตรง" ทุกใบ จนคนเลิกอ่านผลตรวจ
 #
+# 07/09/69 ไล่ log ตรวจกลับทั้งหมด (234 บรรทัด) เจอ bullet หายทั้งตัวแบบเดียวกับ em-dash
+#   'สรุป รายละเอียด • อุบัติเหตุ…' → 'สรุป รายละเอียด  อุบัติเหตุ…'  (12 ครั้ง เส้น se-survey 20-21/08/69)
+#   → แทนด้วย '-' คงโครง list ไว้ (ยังไม่แตะ ',' ที่หายเป็นบางครั้ง — หลักฐานยังไม่สม่ำเสมอ)
+#
 # แก้ที่ EMCS ไม่ได้ → แปลงเป็นตัวที่ "รอด" ก่อนพิมพ์ "เฉพาะช่องที่ระบุไว้"
 # (user เลือกเอง 13/08/69) · ข้อมูลต้นทางใน se-survey ไม่ถูกแตะ — คนเปิดดูบนเว็บ/แอป
 # ยังเห็น "2+" เหมือนเดิม
@@ -287,6 +291,7 @@ EMCS_EATS_FIELDS = {
 PLUS_WORD = "บวก"   # ⛔ ต้องตรงกับ POLICY_TYPE_NAME ใน surv_xml.py
 PCT_WORD = "เปอร์เซ็นต์"
 EM_DASH = "—"
+BULLET = "•"
 
 
 def _emcs_safe(elem_id, value: str) -> str:
@@ -297,7 +302,7 @@ def _emcs_safe(elem_id, value: str) -> str:
     (เทียบตรงตัวอย่างเดียวจะพลาดคู่กรณีทั้งหมด ซึ่งเป็นที่ที่ "2+" โผล่บ่อยที่สุด)
     """
     eid = str(elem_id or "")
-    if not any(c in value for c in ("+", "%", EM_DASH, "*")):
+    if not any(c in value for c in ("+", "%", EM_DASH, "*", BULLET)):
         return value
     if not any(eid == f or eid.endswith("_" + f) for f in EMCS_EATS_FIELDS):
         return value
@@ -319,6 +324,10 @@ def _emcs_safe(elem_id, value: str) -> str:
         # ที่ EMCS เก็บจริง ซึ่งกลืนมันหายอยู่แล้ว (user เคาะ 03/09/69)
         changed.append(f"ตัด '*' ทิ้ง {out.count('*')} ตัว")
         out = out.replace("*", "")
+    if BULLET in out:
+        # bullet หายทั้งตัวเหมือน em-dash (เหลือช่องว่างคู่) → ยัติภังค์ คงโครง list เดิม
+        changed.append(f"• → '-' {out.count(BULLET)} จุด")
+        out = out.replace(BULLET, "-")
     log(f"   ~ {elem_id}: {' · '.join(changed)} (EMCS กลืนอักขระพวกนี้ตอนบันทึก)")
     return out
 
