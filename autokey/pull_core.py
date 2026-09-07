@@ -85,11 +85,15 @@ def list_pending(api: ISurveyAPI, date_from: str = "", date_to: str = "",
             "surveyor_name": x.get("empcode") or "",
             "acc_province": x.get("acc_province") or "",
             "plate_no": x.get("plate_no") or "",
+            # เวลา 3 จุดของงาน (user ขอ 07/09/69): จ่ายงาน → สำรวจเสร็จ → ส่งรายงาน — หน้าเว็บโชว์ จ่ายงาน + ส่งรายงาน
+            "dispatch_dt": x.get("dispatch_dt") or "",
             "finish_dt": x.get("finish_dt") or "",
+            "send_report_dt": x.get("sendReport_dt") or "",
             "status": x.get("stt_desc") or "",
             "emcs_sent": str(x.get("EMCSstatus") or "") == ISURVEY_EMCS_SENT,
         })
-    rows.sort(key=lambda r: str(r.get("finish_dt") or ""), reverse=True)
+    # เรียงตามเวลาส่งรายงานล่าสุด (งานที่ยังไม่ส่งรายงานใช้เวลาสำรวจเสร็จแทน)
+    rows.sort(key=lambda r: str(r.get("send_report_dt") or r.get("finish_dt") or ""), reverse=True)
     return rows
 
 
