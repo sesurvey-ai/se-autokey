@@ -3831,5 +3831,10 @@ check("สองปุ่มเท่ากัน: (รายละเอีย�
       == ('รายงานพนักงาน', 'ความเห็นหัวหน้า', '', ''),
       repr((_d_rule.acc_detail, _d_rule.accident_summary, _d_rule.review_comment, _d_rule.surveyor_comment)))
 
+# ---- ค่ารูปบนหน้าค่าใช้จ่าย EMCS: ISURVEY ส่ง PHOTO_NUM=0 → แตกตามกติกาเหมา 5 บาท/รูป (user 07/09/69: 50 = 10 × 5) ----
+check("ค่ารูป EMCS: ยอด 50 ไม่มีจำนวน → 10 รูป × 5", emcs.photo_split(50, 0) == (10, 5.0), repr(emcs.photo_split(50, 0)))
+check("ค่ารูป EMCS: มีจำนวน 10 ยอด 50 → 10 × 5", emcs.photo_split(50, 10) == (10, 5.0))
+check("ค่ารูป EMCS: ยอดหาร 5 ไม่ลงตัว → 1 × ยอด", emcs.photo_split(53, 0) == (1, 53.0))
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

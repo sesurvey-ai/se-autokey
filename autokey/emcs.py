@@ -4225,8 +4225,7 @@ def fill_fee_table(driver, bill: dict):
     photo_total = _money(bill.get("photo"))
     photo_num = int(_money(bill.get("photo_num")))
     if photo_total > 0:
-        n = photo_num or 1
-        unit = round(photo_total / n, 2)
+        n, unit = photo_split(photo_total, photo_num)
         # ⚠️ ยอดรวมคอลัมน์ "จำนวนเงินเสนอ" ของ EMCS คิดแถวค่ารูปถ่ายเป็น *ราคา/หน่วย*
         #    ไม่ใช่ยอดของแถว (5×50 → รวมขึ้น 750 แทน 950) — ทดสอบสลับลำดับกรอก
         #    (ราคาก่อน/จำนวนก่อน) แล้ว **ได้ 750 เท่ากันทั้งสองแบบ = ไม่ใช่ปัญหาลำดับ**
@@ -4395,6 +4394,24 @@ def _save_and_exit_billing(driver, leave: bool = True, data=None):
     else:
         log("EMCS: ค้างอยู่ในเรื่องไว้ก่อน (ปุ่ม 'ส่งงานใหม่' อยู่ในหน้านี้) — "
             "ออกจากเรื่องหลังรู้ผลว่าจะส่งหรือไม่ส่ง")
+
+
+PHOTO_STD_UNIT = 5.0   # กติกาเหมาค่ารูป 5 บาท/รูป (เหมือน isurvey_to_sesurvey.PHOTO_STD_UNIT)
+
+
+def photo_split(total: float, num: int) -> tuple:
+    """(จำนวนรูป, ราคาต่อรูป) สำหรับกรอก EMCS จากยอดรวม + จำนวนรูปของ XML/ISURVEY
+
+    ISURVEY ส่ง PHOTO_NUM=0 แทบทุกเคสทั้งที่มียอด → เดิมกรอก 1 รูป × 50 (user ทัก 07/09/69: ต้องเป็น 10 รูป × 5)
+    จำนวนไม่มา + ยอดหาร 5 ลงตัว = แตกตามกติกาเหมา 5 บาท/รูป · หารไม่ลงตัวค่อยถอยไป 1 รูป × ยอด
+    (กติกาเดียวกับตัวแปลง isurvey_to_sesurvey._photo_split)"""
+    total = float(total or 0)
+    num = int(num or 0)
+    if num > 0:
+        return num, round(total / num, 2)
+    if total > 0 and total % PHOTO_STD_UNIT == 0:
+        return int(total // PHOTO_STD_UNIT), PHOTO_STD_UNIT
+    return 1, round(total, 2)
 
 
 def fill_billing(driver, data: ClaimData, full_billing: bool = True,
