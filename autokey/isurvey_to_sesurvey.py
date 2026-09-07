@@ -328,6 +328,20 @@ def _money_sum(*vals) -> float:
     return total
 
 
+def _policy_info(pol: dict) -> dict:
+    """แท็บ 7 ทั้งชุดแบบสะอาด: ตัด None/'null'/id ภายในของ ISURVEY ออก เหลือค่าที่มีความหมายให้หน้าเว็บวาด"""
+    skip = {"cl_poID", "caseID"}
+    out = {}
+    for k, v in (pol or {}).items():
+        if k in skip:
+            continue
+        sv = _s(v)
+        if sv == "" or sv.lower() in ("null", "none"):
+            continue
+        out[k] = sv
+    return out
+
+
 def _insured_cost(t3: dict, parts: list):
     """ความเสียหายประมาณ (บาท) ของรถประกัน = Σ(ค่าแรง + ค่าอะไหล่) รายชิ้น + อื่น ๆ (D_OTH)
     user ขอ 04/09/69 ให้รวมจากตาราง "ข้อมูลความเสียหาย" ของ ISURVEY (คอลัมน์ค่าแรง/ค่าอะไหล่) —
@@ -423,6 +437,9 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "repair_shop": _s(pol.get("repair_code")),                         # ซ่อมที่ (ซ่อมห้าง/ซ่อมอู่)
         "risk_code": _s(pol.get("vehType")),                               # รหัสภัยยานยนต์ (UseNo เช่น 110) → XML RISK_CODE
         "driver_by_policy": " / ".join(n for n in (_name(pol.get(f"drv_name{i}")) for i in range(1, 6)) if n),  # ชื่อผู้ขับขี่ตามกรมธรรม์
+        # ทั้งชุดของแท็บ 7 (วงเงิน/ร.ย./ผู้รับผลประโยชน์/ค้างชำระ/เงื่อนไข) → survey_reports.policy_info (JSONB, migration 053)
+        # หน้าเคสมีปุ่ม "ข้อมูลกรมธรรม์" เปิดดูแบบเดียวกับแท็บ 7 — user ขอ 07/09/69
+        "policy_info": _policy_info(pol),
         "acc_date": be_date(acc.get("acc_date")),
         "acc_time": _hhmm(acc.get("acc_time")),
         "acc_place": _s(acc.get("acc_place"))[:200],

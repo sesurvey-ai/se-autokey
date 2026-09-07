@@ -175,6 +175,9 @@ def test_policy_tab7_extras_fill_web_fields():
     assert r["risk_code"] == "110"                    # รหัสภัยยานยนต์ (UseNo)
     assert r["driver_by_policy"] == "นาย สถาพร จุลพันธ์"
     assert r["car_model"]                             # แท็บ 3 ไม่มีรุ่น → ถอยไปแท็บ 7
+    info = r["policy_info"]                           # ทั้งชุดของแท็บ 7 สำหรับปุ่ม "ข้อมูลกรมธรรม์"
+    assert info["COMPULSORY_NO"] == "5260133511673" and info["repair_code"] == "ซ่อมห้าง"
+    assert "drv_name2" not in info and "cl_poID" not in info     # ช่องว่าง/ id ภายในถูกตัด
 
 
 def test_insured_estimated_cost_sums_labour_and_parts():
