@@ -31,7 +31,8 @@ class FakeAPI:
                 "accident_summary": "ความเห็นหัวหน้า"},
             2: {"Accident": {"acc_date": "2026-08-22", "acc_time": "10:00", "acc_provinceID": "20", "acc_amphurID": "2006",
                              "acc_place": "บริษัท ทดสอบ จำกัด", "acc_detail": "รายละเอียด",
-                             "acc_type_desc": "ชนวัสดุ/สิ่งของ เช่น เสา,กำแพง,ประตู ฯลฯ", "surveyor_comment": "ความเห็นช่าง"}},
+                             "acc_type_desc": "ชนวัสดุ/สิ่งของ เช่น เสา,กำแพง,ประตู ฯลฯ", "surveyor_comment": "ความเห็นช่าง",
+                             "remark": "ค่าพาหนะ 800 บาท"}},
             3: {"vehTID": "3", "plate_no": "9กจ6163", "plate_provinceID": "10", "car_brand": "FORD", "car_color": "เทา",
                 "D_TOTAL_COST": "8000",
                 "Driver": {"drv_name": "วิไลรัตน์ อินเทพ", "drv_gender": "F", "lic_typeID": "15", "relation": "ลูกจ้าง",
@@ -178,6 +179,14 @@ def test_policy_tab7_extras_fill_web_fields():
     info = r["policy_info"]                           # ทั้งชุดของแท็บ 7 สำหรับปุ่ม "ข้อมูลกรมธรรม์"
     assert info["COMPULSORY_NO"] == "5260133511673" and info["repair_code"] == "ซ่อมห้าง"
     assert "drv_name2" not in info and "cl_poID" not in info     # ช่องว่าง/ id ภายในถูกตัด
+
+
+def test_tab2_remark_goes_to_source_remark_only():
+    """หมายเหตุแท็บ 2 → source_remark (แสดงอย่างเดียวบนหน้าเคส) — ห้ามปนกับรายละเอียดการเกิดเหตุ (user 08/09/69)"""
+    r = _build()["report"]
+    assert r["source_remark"] == "ค่าพาหนะ 800 บาท"
+    assert r["acc_detail"] == "ความเห็นช่าง"                 # ยังมาจาก surveyor_comment เหมือนเดิม
+    assert "800" not in r["acc_detail"]
 
 
 def test_insured_estimated_cost_sums_labour_and_parts():

@@ -449,6 +449,9 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         # acc_detail ของ ISURVEY เองไม่ใช้ — เป็นข้อความแม่แบบบริษัท (ติดต่อสาขา/ห้ามแนะนำอู่)
         # + ข้อมูลกรมธรรม์ ไม่ใช่รายละเอียดเหตุ (verify 2026013071573, 07/09/69)
         "acc_detail": _s(acc.get("surveyor_comment")),
+        # "หมายเหตุ" แท็บ 2 (ค่าพาหนะ/นัดหมาย/เงื่อนไขที่ช่างจดไว้) — โชว์ใต้รายละเอียดการเกิดเหตุบนหน้าเคส
+        # ⛔ แสดงอย่างเดียว ไม่เข้า EMCS/XML (user 08/09/69) · คอลัมน์ survey_reports.source_remark (migration 056)
+        "source_remark": _s(acc.get("remark")),
         "acc_fault": acc_fault,
         "acc_cause": _s(acc.get("acc_type_desc")) or _s(row.get("acc_type_desc")),
         "claim_type": claim_type,
