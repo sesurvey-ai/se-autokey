@@ -14,6 +14,8 @@ POST (JSON) — ทุกอันต้องมี X-Service-Token:
   /login-test  {username, password}                          → {ok, name}
   /pending     {username, password, date_from?, date_to?, status?}  → {ok, cases: [...]}   (status "" = ทุกสถานะ · ไม่ส่ง = รอตรวจข้อมูล)
   /pull        {username, password, claim, survey_no, created_by?, with_photos?} → {ok, result}
+  /close       {username, password, claim, survey_no, comment?, rates?, dry_run?} → {ok, result}
+               = กด "ยืนยันการตรวจสอบ" (ปิดงาน → จบงาน) แทนหัวหน้า หลังอนุมัติบนเว็บ (08/09/69) · dry_run ไม่ส่ง = True
 GET /healthz → {ok: true}
 """
 from __future__ import annotations
@@ -27,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from autokey import pull_core  # noqa: E402
+from autokey import isurvey_close, pull_core  # noqa: E402
 
 TOKEN = os.environ.get("PULL_SERVICE_TOKEN", "")
 SESURVEY_URL = os.environ.get("SESURVEY_API_URL", "https://api.sesurvey.cloud").rstrip("/")
@@ -99,6 +101,19 @@ class Handler(BaseHTTPRequestHandler):
                 if err:
                     return self._send(502, {"ok": False, "error": err})
                 _log(f"[pull] {username}: เคลม {claim} → เคส #{(result or {}).get('caseId')}")
+                return self._send(200, {"ok": True, "result": result})
+            if path == "/close":
+                # เขียนกลับ ISURVEY: ความเห็นหัวหน้า + ตารางค่าสำรวจ + "ปิดการตรวจสอบ" — ด้วยบัญชีของหัวหน้าที่อนุมัติ
+                # dry_run เป็นค่าเริ่มต้น (ไม่ส่ง = ไม่ยิง) — ฝั่ง backend เป็นคนตัดสินว่าเปิดยิงจริงหรือยัง
+                claim = str(body.get("claim") or "").strip()
+                if not claim:
+                    return self._send(400, {"ok": False, "error": "ต้องมีเลขเคลม"})
+                api = pull_core.make_client(username, password)
+                result = isurvey_close.close_case(
+                    api, claim, str(body.get("survey_no") or "").strip(),
+                    comment=body.get("comment"), rates=body.get("rates"),
+                    dry_run=bool(body.get("dry_run", True)))
+                _log(f"[close] {username}: เคลม {claim} → {'dry-run' if result.get('dry_run') else 'ปิดงานแล้ว'}")
                 return self._send(200, {"ok": True, "result": result})
             return self._send(404, {"ok": False, "error": "not found"})
         except RuntimeError as e:          # login ไม่ผ่าน / หาเคลมไม่เจอ — ข้อความอ่านได้ ส่งกลับตรง ๆ
