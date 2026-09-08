@@ -189,6 +189,28 @@ def test_tab2_remark_goes_to_source_remark_only():
     assert "800" not in r["acc_detail"]
 
 
+def test_oss_job_uses_oss_surveyor_name_phone_and_keeps_damage_memo():
+    """งานจ้างบริษัทนอก (useOSS=Y): ชื่อช่าง/เบอร์อยู่ที่ OSS_* ไม่ใช่ surveyor_name (เคลม 2026013169747, 08/09/69)"""
+    fake = FakeAPI()
+    c = fake.tabs[1]["Claim"]
+    c.update({"useOSS": "Y", "surveyor_name": "หจก ศรีราชาเคลม เซอร์วิส", "OSS_company": "หจก ศรีราชาเคลม เซอร์วิส",
+              "OSS_SurveyorName": "เสกสรร ดาพันธ์", "OSS_phone": "0842614351"})
+    fake.tabs[3]["damage_memo"] = "1 คิวบังโคลนหลังซ้าย ครูดA 2 ฝาถังน้ำมัน A"
+    out = conv.build_case(fake, "case1", {})
+    r = out["report"]
+    assert r["acc_surveyor"] == "เสกสรร ดาพันธ์ - หจก ศรีราชาเคลม เซอร์วิส"
+    assert r["surveyor_name"] == r["acc_surveyor"]
+    assert r["acc_surveyor_phone"] == "0842614351"       # ไม่มี emp_phone ในแถวรายงาน → ใช้เบอร์ OSS
+    assert out["surveyorCode"] == ""                    # ไม่ใช่ SE → ไม่ผูกช่างในระบบเรา
+    assert r["damage_description"] == "1 คิวบังโคลนหลังซ้าย ครูดA 2 ฝาถังน้ำมัน A"
+
+
+def test_se_job_damage_memo_also_kept_and_surveyor_unchanged():
+    r = _build()["report"]
+    assert r["acc_surveyor"].startswith("SEC")            # งาน SE เหมือนเดิม
+    assert "damage_description" in r
+
+
 def test_insured_estimated_cost_sums_labour_and_parts():
     r = _build()["report"]
     assert r["estimated_cost"] == 10500                      # 3000+1500 + 6000 (D_TOTAL_COST 8000 ของ ISURVEY ถูกทับเพราะรายชิ้นมีตัวเลข)

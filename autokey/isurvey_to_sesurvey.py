@@ -419,7 +419,15 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         warnings.append(f'ประเภทเคลม "{label}" ไม่มีตัวเลือกที่ตรงกันบนเว็บ — เลือกเองก่อนอนุมัติ')
 
     surv_name = _s(claim.get("surveyor_name"))
-    sv_code = surveyor_code(surv_name)
+    # งานจ้างบริษัทนอก (OSS, useOSS=Y): ISURVEY เก็บ "ชื่อบริษัท" ไว้ใน surveyor_name ส่วนชื่อคน/เบอร์อยู่ที่
+    # OSS_SurveyorName / OSS_phone (เจอจริงเคลม 2026013169747 หจก ศรีราชาเคลม — ช่างชื่อ/เบอร์ว่างทั้งคู่, 08/09/69)
+    oss = _s(claim.get("useOSS")).upper() == "Y"
+    oss_phone = ""
+    if oss:
+        person, company = _s(claim.get("OSS_SurveyorName")), _s(claim.get("OSS_company")) or surv_name
+        surv_name = f"{person} - {company}" if person and company else (person or company)
+        oss_phone = _s(claim.get("OSS_phone"))
+    sv_code = surveyor_code(surv_name)          # OSS ไม่มีรหัส SE → '' = ไม่ผูกช่างในระบบเรา
 
     report: dict = {
         "survey_job_no": _s(claim.get("survey_no")) or _s(row.get("survey_no")),
@@ -452,12 +460,15 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         # "หมายเหตุ" แท็บ 2 (ค่าพาหนะ/นัดหมาย/เงื่อนไขที่ช่างจดไว้) — โชว์ใต้รายละเอียดการเกิดเหตุบนหน้าเคส
         # ⛔ แสดงอย่างเดียว ไม่เข้า EMCS/XML (user 08/09/69) · คอลัมน์ survey_reports.source_remark (migration 056)
         "source_remark": _s(acc.get("remark")),
+        # "รายละเอียดความเสียหาย" ของรถประกัน (แท็บ 3 damage_memo) — งาน OSS ไม่มีรายการชิ้นส่วน มีแต่ข้อความนี้
+        # (เช่น "1 คิวบังโคลนหลังซ้าย ครูดA 2 ฝาถังน้ำมัน A") ไม่ดึงมา = หัวหน้าไม่เห็นความเสียหายเลย (08/09/69)
+        "damage_description": _s(t3.get("damage_memo")),
         "acc_fault": acc_fault,
         "acc_cause": _s(acc.get("acc_type_desc")) or _s(row.get("acc_type_desc")),
         "claim_type": claim_type,
         "acc_surveyor": _name(surv_name),
         "surveyor_name": _name(surv_name),
-        "acc_surveyor_phone": _s(row.get("emp_phone")),
+        "acc_surveyor_phone": _s(row.get("emp_phone")) or oss_phone,
         # ── ไทม์ไลน์ 4 จุด ──
         "acc_customer_report_date": be_datetime(noti.get("notified_date"), noti.get("notified_time")),
         "acc_insurance_notify_date": be_datetime(disp.get("dispatch_date"), disp.get("dispatch_time")),
