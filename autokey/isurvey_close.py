@@ -237,6 +237,13 @@ def close_case(api: ISurveyAPI, claim: str, survey_no: str = "", comment: str | 
     ยิงจริง: ตอบ success แล้ว **อ่านกลับ** ยืนยันว่าเป็น "จบงาน" จริง ไม่เชื่อแค่ข้อความตอบ
     """
     case = _find_case(api, claim, survey_no)
+    # ปิดไปแล้ว (หัวหน้าปิดมือก่อนหน้า / ยิงซ้ำ) = ไม่ใช่ความผิดพลาด — คืนสถานะให้ backend จดว่า "ปิดแล้ว" ได้เลย
+    if _s(case.get("close_datetime")) or _s(case.get("sttcase_ID")) == CLOSED_STATUS:
+        return {"ok": True, "dry_run": False, "closed": True, "skipped": "already_closed",
+                "close_datetime": _s(case.get("close_datetime")),
+                "case": {"caseID": _s(case.get("caseID")), "claim_no": _s(case.get("claim_no")),
+                         "survey_no": _s(case.get("survey_no")), "status_before": _s(case.get("sttcase_ID"))},
+                "message": f"งานนี้ปิดบน ISURVEY ไปก่อนแล้ว{(' เมื่อ ' + _s(case.get('close_datetime'))) if _s(case.get('close_datetime')) else ''}"}
     why = check_can_close(case)
     if why:
         raise RuntimeError(why)
