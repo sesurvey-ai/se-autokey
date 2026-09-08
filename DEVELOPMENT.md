@@ -1208,7 +1208,12 @@ python -m autokey.license_ocr <รูป|โฟลเดอร์>        # ท�
 
 - รัน: `PULL_SERVICE_TOKEN=… SESURVEY_API_URL=… SESURVEY_API_TOKEN=<INTEGRATION_TOKEN> python pull_service.py` (port 8790)
 - Docker: `Dockerfile.pull` (python:3.12-slim + requirements-pull.txt) — Dokploy: Build Type Dockerfile, path `Dockerfile.pull`
-- endpoint: POST `/login-test` `/pending` `/pull` (header `X-Service-Token`) · GET `/healthz`
+- endpoint: POST `/login-test` `/pending` `/pull` `/close` (header `X-Service-Token`) · GET `/healthz`
+- `/close` (08/09/69) = กด "ยืนยันการตรวจสอบ" บน ISURVEY แทนหัวหน้า หลังอนุมัติบนเว็บ se-survey — `autokey/isurvey_close.py`
+  ประกอบฟอร์มแท็บ 1 (87 ช่อง) จาก `getcaseinfo tab-1_clone` แล้ว POST `supervisor/confirmcase.php` (คำสั่งเดียวกับปุ่ม `tab1_save`
+  ที่ดักจากหน้าเว็บจริง) · เขียนทับ: `accident_summary` (ความเห็นหัวหน้า) · ตารางค่าสำรวจ SUR_/INS_ (ส่งเฉพาะฝั่งที่มี) · `supervisor_summary=close_case`
+  · ปิดเฉพาะ status 40/99 ที่ยังไม่ปิด · `dry_run` เป็นค่าเริ่มต้น (ประกอบแล้วคืน ไม่ยิง) — backend se-survey เปิดยิงจริงด้วย ENV `ISURVEY_CLOSE_LIVE=1`
+  · เทส: `python tests/test_isurvey_close.py`
 - ทดสอบในเครื่อง 04/09/69: login-test ✓ · token ผิด 401 ✓ · รหัสผิด 502 ✓ · pending 14 วัน = 504 งาน ✓
 - ฝั่ง se-survey: env `ISURVEY_SERVICE_URL` `ISURVEY_SERVICE_TOKEN` (= PULL_SERVICE_TOKEN) `CRED_KEY` · หน้า /inspector/isurvey
 
