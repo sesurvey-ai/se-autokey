@@ -62,8 +62,18 @@ def _int(v) -> str:
         return "0"
 
 
-def build_payload(t1: dict, comment: str | None = None, rates: dict | None = None) -> dict:
+# รายการตรวจสอบ 5 ข้อ — รหัสตรงกับ inputValue ใน tabsummary.js ของ ISURVEY (อ่านจากไฟล์จริง 08/09/69)
+#   claimform Y/N · chassis Y/N · driver_license Y/N · document D=ใบรับรองความเสียหาย C=บัตรติดต่อ N=ไม่ออกเอกสาร · other ข้อความ
+_CHK = (("claimform", "chk_claimform", {"Y", "N"}), ("chassis", "chk_chassisNo", {"Y", "N"}),
+        ("driver_license", "chk_drvLic", {"Y", "N"}), ("document", "chk_prtDoc", {"D", "C", "N"}))
+
+
+def build_payload(t1: dict, comment: str | None = None, rates: dict | None = None,
+                  checklist: dict | None = None) -> dict:
     """ประกอบฟอร์มแท็บ 1 (87 ช่อง) จากผล getcaseinfo tab-1 + สิ่งที่จะเขียนทับ
+
+    checklist (ไม่ส่ง = คงของเดิม): {claimform, chassis, driver_license, document, other} รหัสตาม _CHK
+    ข้อที่ว่างในของเรา = คงค่าเดิมของ ISURVEY (ไม่ล้าง) · รหัสที่ไม่รู้จัก = ไม่ส่ง
 
     rates (ไม่ส่ง = คงตารางเดิม):
       {"sur": {invest, trans, dist, other, photo, tel, insure, daily, claim, cartow, deduct},
@@ -192,11 +202,12 @@ def build_payload(t1: dict, comment: str | None = None, rates: dict | None = Non
     p["tab1_SUR_TOTAL_NET-inputEl"] = f"{sur_total:.2f}"
     p["tab1_INS_TOTAL_NET-inputEl"] = f"{round(ins_total + ins_vat, 2):.2f}"
     p["memo"] = _s(bill.get("memo"))
-    p["chk_claimform"] = _s(t1.get("chk_claimform"))
-    p["chk_chassisNo"] = _s(t1.get("chk_chassisNo"))
-    p["chk_drvLic"] = _s(t1.get("chk_drvLic"))
-    p["chk_prtDoc"] = _s(t1.get("chk_prtDoc"))
-    p["chk_other"] = _s(t1.get("chk_other"))
+    chk = checklist if isinstance(checklist, dict) else {}
+    for ours, theirs, allowed in _CHK:
+        v = _s(chk.get(ours)).upper()
+        p[theirs] = v if v in allowed else _s(t1.get(theirs))
+    other = _s(chk.get("other"))
+    p["chk_other"] = other if other else _s(t1.get("chk_other"))
     p["supervisor_summary"] = "close_case"                 # "ปิดการตรวจสอบ" — กติกา user 08/09/69
     p["tab1_deduct_amount"] = _int(sur_in.get("deduct")) if use_sur else "0"
     return p
@@ -230,7 +241,7 @@ def check_can_close(case: dict) -> str | None:
 
 
 def close_case(api: ISurveyAPI, claim: str, survey_no: str = "", comment: str | None = None,
-               rates: dict | None = None, dry_run: bool = True) -> dict:
+               rates: dict | None = None, dry_run: bool = True, checklist: dict | None = None) -> dict:
     """ปิดงาน 1 เรื่อง — คืน {ok, dry_run, case, payload, message, closed}
 
     dry_run=True: ประกอบคำสั่งครบแล้วคืนให้ดู **ไม่ยิง** (ค่าเริ่มต้น — เปิดยิงจริงต้องสั่งชัดเจน)
@@ -251,7 +262,7 @@ def close_case(api: ISurveyAPI, claim: str, survey_no: str = "", comment: str | 
     t1 = api.get_tab(cid, 1)
     if not (t1.get("Claim") or {}).get("claim_no"):
         raise RuntimeError(f"ISURVEY: อ่านแท็บ 1 ของ caseID {cid} ไม่ได้")
-    payload = build_payload(t1, comment=comment, rates=rates)
+    payload = build_payload(t1, comment=comment, rates=rates, checklist=checklist)
     info = {"caseID": cid, "claim_no": _s(case.get("claim_no")), "survey_no": _s(case.get("survey_no")),
             "status_before": _s(case.get("sttcase_ID")), "surveyor": _s(case.get("surveyor_name"))}
     if dry_run:

@@ -122,6 +122,18 @@ def test_one_side_only_keeps_other_side_from_isurvey():
     assert p["tab1_deduct_amount"] == "0"
 
 
+def test_checklist_maps_to_chk_codes_and_blank_keeps_original():
+    chk = {"claimform": "N", "chassis": "Y", "driver_license": "", "document": "C", "other": "ขอสำเนาทะเบียนเพิ่ม"}
+    p = ic.build_payload(t1_fixture(), checklist=chk)
+    assert p["chk_claimform"] == "N" and p["chk_chassisNo"] == "Y"
+    assert p["chk_drvLic"] == "Y"                    # ว่างในของเรา → คงค่าเดิมของ ISURVEY (Y)
+    assert p["chk_prtDoc"] == "C" and p["chk_other"] == "ขอสำเนาทะเบียนเพิ่ม"
+    p2 = ic.build_payload(t1_fixture(), checklist={"document": "X"})   # รหัสแปลก = ไม่ส่ง คงเดิม (D)
+    assert p2["chk_prtDoc"] == "D"
+    p3 = ic.build_payload(t1_fixture())                                # ไม่ส่ง checklist = เหมือนเดิมทุกช่อง
+    assert (p3["chk_claimform"], p3["chk_prtDoc"], p3["chk_other"]) == ("Y", "D", "")
+
+
 def test_no_vat_when_inc_vat_n():
     t1 = t1_fixture()
     t1["bill"]["INC_VAT"] = "N"

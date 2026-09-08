@@ -14,7 +14,7 @@ POST (JSON) — ทุกอันต้องมี X-Service-Token:
   /login-test  {username, password}                          → {ok, name}
   /pending     {username, password, date_from?, date_to?, status?}  → {ok, cases: [...]}   (status "" = ทุกสถานะ · ไม่ส่ง = รอตรวจข้อมูล)
   /pull        {username, password, claim, survey_no, created_by?, with_photos?} → {ok, result}
-  /close       {username, password, claim, survey_no, comment?, rates?, dry_run?} → {ok, result}
+  /close       {username, password, claim, survey_no, comment?, rates?, checklist?, dry_run?} → {ok, result}
                = กด "ยืนยันการตรวจสอบ" (ปิดงาน → จบงาน) แทนหัวหน้า หลังอนุมัติบนเว็บ (08/09/69) · dry_run ไม่ส่ง = True
 GET /healthz → {ok: true}
 """
@@ -112,7 +112,7 @@ class Handler(BaseHTTPRequestHandler):
                 result = isurvey_close.close_case(
                     api, claim, str(body.get("survey_no") or "").strip(),
                     comment=body.get("comment"), rates=body.get("rates"),
-                    dry_run=bool(body.get("dry_run", True)))
+                    dry_run=bool(body.get("dry_run", True)), checklist=body.get("checklist"))
                 _log(f"[close] {username}: เคลม {claim} → {'dry-run' if result.get('dry_run') else 'ปิดงานแล้ว'}")
                 return self._send(200, {"ok": True, "result": result})
             return self._send(404, {"ok": False, "error": "not found"})
