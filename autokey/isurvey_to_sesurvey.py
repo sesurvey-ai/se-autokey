@@ -401,6 +401,14 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
 
     acc_prov_code = _s(acc.get("acc_provinceID")) or _s(claim.get("acc_provinceID"))
     acc_amph_code = _s(acc.get("acc_amphurID")) or _s(claim.get("acc_amphurID"))
+    # ── สถานที่ออกตรวจสอบ (แท็บ 2 survey_* — แท็บ 1 Claim มีจังหวัด/อำเภอชุดเดียวกันสำรอง) ──
+    # ISURVEY แยก "สถานที่ออกตรวจสอบ / จังหวัด / เขต-อำเภอ / ตำบล ที่ตรวจสอบ" ออกจากสถานที่เกิดเหตุ
+    # (เคลม 2026013072661: เกิดเหตุ กทม./สวนหลวง แต่ช่างออกตรวจที่ ชลบุรี/บางละมุง) และเรทค่าบริการต้องคิดจาก
+    # ที่ออกตรวจ — ชุดเดียวกับที่ extension se-billing ใช้ (tab1_survey_provinceID/amphurID/tumbonID) · user ขอ 09/09/69
+    # → survey_reports.survey_place/survey_province/survey_district/survey_subdistrict (migration 058)
+    sv_prov_code = _s(acc.get("survey_provinceID")) or _s(claim.get("survey_provinceID"))
+    sv_amph_code = _s(acc.get("survey_amphurID")) or _s(claim.get("survey_amphurID"))
+    sv_tumbon_code = _s(acc.get("survey_tumbonID")) or _s(claim.get("survey_tumbonID"))
 
     # ── ผลคดี ──
     verdict = api.master("masterClaimVerdict", "cvdID", "claim_verdict").get(
@@ -453,6 +461,12 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "acc_place": _s(acc.get("acc_place"))[:200],
         "acc_province": province_name(acc_prov_code),
         "acc_district": district_name(api, acc_amph_code, acc_prov_code),
+        # สถานที่ออกตรวจสอบ — เว็บใช้คิดเรทก่อนสถานที่เกิดเหตุ (ว่าง = เว็บถอยไปใช้ที่เกิดเหตุ)
+        "survey_place": _s(acc.get("survey_place"))[:200],
+        "survey_province": province_name(sv_prov_code),
+        "survey_district": district_name(api, sv_amph_code, sv_prov_code),
+        # ชื่อตำบลล้วน ("บ่อวิน") จาก masterTumbon — ตรงกับที่ se-survey ใช้จับคู่เรทตำบลพิเศษ
+        "survey_subdistrict": api._tumbon(sv_tumbon_code) if sv_tumbon_code else "",
         # รายละเอียดการเกิดเหตุ = 'ความคิดเห็นพนักงาน' แท็บ 2 (เหมือนปุ่ม "นำเข้า ISURVEY")
         # acc_detail ของ ISURVEY เองไม่ใช้ — เป็นข้อความแม่แบบบริษัท (ติดต่อสาขา/ห้ามแนะนำอู่)
         # + ข้อมูลกรมธรรม์ ไม่ใช่รายละเอียดเหตุ (verify 2026013071573, 07/09/69)

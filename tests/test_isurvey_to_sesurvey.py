@@ -32,7 +32,10 @@ class FakeAPI:
             2: {"Accident": {"acc_date": "2026-08-22", "acc_time": "10:00", "acc_provinceID": "20", "acc_amphurID": "2006",
                              "acc_place": "บริษัท ทดสอบ จำกัด", "acc_detail": "รายละเอียด",
                              "acc_type_desc": "ชนวัสดุ/สิ่งของ เช่น เสา,กำแพง,ประตู ฯลฯ", "surveyor_comment": "ความเห็นช่าง",
-                             "remark": "ค่าพาหนะ 800 บาท"}},
+                             "remark": "ค่าพาหนะ 800 บาท",
+                             # สถานที่ออกตรวจสอบ คนละที่กับที่เกิดเหตุ (พนัสนิคม) — ออกตรวจที่ ศรีราชา/บ่อวิน
+                             "survey_place": "ลานจอดรถ นิคมฯ บ่อวิน", "survey_provinceID": "20",
+                             "survey_amphurID": "2007", "survey_tumbonID": "200708"}},
             3: {"vehTID": "3", "plate_no": "9กจ6163", "plate_provinceID": "10", "car_brand": "FORD", "car_color": "เทา",
                 "D_TOTAL_COST": "8000",
                 "Driver": {"drv_name": "วิไลรัตน์ อินเทพ", "drv_gender": "F", "lic_typeID": "15", "relation": "ลูกจ้าง",
@@ -80,7 +83,7 @@ class FakeAPI:
     def opponent_parts(self, cid, ikey):
         return [{"part": "ประตูหน้าซ้าย", "type": "บุบ,", "level": "B", "labour": "1500", "parts": "0", "memo": ""},
                 {"part": "กระจกมองข้างซ้าย", "type": "แตก,", "level": "A", "labour": "", "parts": "800", "memo": ""}] if ikey == "k4" else []
-    def _tumbon(self, c): return ""
+    def _tumbon(self, c): return {"200708": "บ่อวิน"}.get(str(c or ""), "")
     def _amphur(self, c): return ""
     def _prov(self, c): return ""
 
@@ -248,6 +251,25 @@ def test_verdict_claim_type_and_places():
     assert r["acc_province"] == "ชลบุรี" and r["acc_district"] == "อำเภอพนัสนิคม"
     assert r["car_province"] == "กรุงเทพ ฯ" and r["car_type"] == "T"
     assert r["driver_license_place"] == "นครพนม"
+
+
+def test_survey_location_mapped_for_rate():
+    """สถานที่ออกตรวจสอบ (แท็บ 2 survey_*) → survey_place/province/district/subdistrict — เว็บคิดเรทจากชุดนี้ก่อน (09/09/69)"""
+    r = _build()["report"]
+    assert r["survey_place"] == "ลานจอดรถ นิคมฯ บ่อวิน"
+    assert r["survey_province"] == "ชลบุรี" and r["survey_district"] == "อำเภอศรีราชา"
+    assert r["survey_subdistrict"] == "บ่อวิน"          # ชื่อล้วน ไม่มี "ตำบล" นำ — se-survey จับคู่เรทตำบลพิเศษด้วยชื่อ
+    assert r["acc_district"] == "อำเภอพนัสนิคม"          # ไม่ปนกับสถานที่เกิดเหตุ
+
+
+def test_survey_location_blank_when_isurvey_has_none():
+    """งานที่ ISURVEY ไม่มีสถานที่ออกตรวจสอบ (เจอจริง 2026013058298) → ว่างทุกช่อง ให้เว็บถอยไปใช้ที่เกิดเหตุ"""
+    api = FakeAPI()
+    acc = api.tabs[2]["Accident"]
+    for k in ("survey_place", "survey_provinceID", "survey_amphurID", "survey_tumbonID"):
+        acc[k] = None
+    r = conv.build_case(api, "case1", {})["report"]
+    assert r["survey_place"] == "" and r["survey_province"] == "" and r["survey_district"] == "" and r["survey_subdistrict"] == ""
 
 
 if __name__ == "__main__":
