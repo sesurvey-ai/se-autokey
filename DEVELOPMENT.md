@@ -1253,3 +1253,7 @@ user ต้องการทางลัด: นำเข้าแล้วก�
     se-survey 09/09/69) · งานมือถือ (`mobile`) ข้าม (ไม่มีในนั้น ยิงไปก็ล้ม) · se-key บันทึกทุกต้นทาง ·
     backend เก่าที่ไม่ส่ง source มา = แจ้งเหมือนเดิม (fail-open ทางเดิม)
 - **ยังไม่ทำ**: ปุ่มนี้ในช่องกรอกเลขเคสด้านบน / ปุ่ม "นำเข้าที่เลือก" (คิวหลายเคส) / โหมดสถานี (`--station`) ยัง draft-only ทั้งหมด
+- **ประเภทเคลมจากเว็บ** (`_populate_claim_from_report`, 09/09/69): radio F/D/A/C → `claim_type` รหัส ISURVEY 1/2/1/3
+  (`main._WEB_CLAIM_TYPE` = กลับด้าน `CLAIM_MTYPE_MAP`; A งานนัดหมาย ไม่มีรหัส ISURVEY → นับเป็นเคลมสด) — เดิมว่าง
+  ทำให้ทุกงานจากเว็บขึ้นเตือน "ประเภทเคลม = ไม่ทราบประเภท (ว่าง)" ตอนเสนอส่ง · เส้น se-survey ไม่เรียก `fill_claim_type`
+  (XML import ตั้ง SURV_CLAIM_TYPE บน EMCS เอง) ค่านี้จึงมีผลแค่ fresh_claim_note / resolve_loss_type(auto) / สรุปบนจอ

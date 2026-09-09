@@ -3940,5 +3940,25 @@ if _node:
 else:
     print("[SKIP] ไม่มี node ในเครื่อง — ข้าม syntax check JS ของหน้าเว็บ")
 
+
+# ---- ประเภทเคลมจากเว็บ se-survey (F/D/A/C) → รหัส ISURVEY ใน ClaimData (user 09/09/69) ----
+# เดิมเส้น se-survey ปล่อย claim_type ว่าง → ทุกงานขึ้นเตือน "ประเภทเคลม = ไม่ทราบประเภท (ว่าง)" ตอนเสนอส่ง
+def _ct_from_web(code):
+    _d = claim_data.ClaimData()
+    _main._populate_claim_from_report(_d, {"claim_type": code})
+    return _d
+check("ประเภทเคลมจากเว็บ: D (เคลมแห้ง) → '2' และไม่ขึ้นคำเตือนเคลมสด",
+      _ct_from_web("D").claim_type == "2" and _ct_from_web("d").fresh_claim_note() == "")
+check("ประเภทเคลมจากเว็บ: F (เคลมสด) → '1' คำเตือนบอกชื่อประเภทถูก ไม่ใช่ 'ไม่ทราบประเภท'",
+      _ct_from_web("F").claim_type == "1" and "เคลมสด" in _ct_from_web("F").fresh_claim_note()
+      and "ไม่ทราบประเภท" not in _ct_from_web("F").fresh_claim_note())
+check("ประเภทเคลมจากเว็บ: A (งานนัดหมาย) นับเป็นเคลมสด '1' · C (ติดตาม) → '3'",
+      _ct_from_web("A").claim_type == "1" and _ct_from_web("C").claim_type == "3")
+check("ประเภทเคลมจากเว็บ: รหัสไม่รู้จัก/ว่าง → ไม่เขียนทับค่าเดิม",
+      _ct_from_web("X").claim_type == "" and _ct_from_web("").claim_type == "")
+check("ประเภทเคลมจากเว็บ: กลับด้านกับตัวแปลง ISURVEY→เว็บ ตรงกันทุกคู่",
+      all(_main._WEB_CLAIM_TYPE[web] == isv.lstrip("0")
+          for isv, web in _conv.CLAIM_MTYPE_MAP.items()))
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

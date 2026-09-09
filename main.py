@@ -761,6 +761,13 @@ def _populate_injuries_from_report(data, rep):
         data.injuries = out
 
 
+# ประเภทเคลมบนเว็บ se-survey (radio F/D/A/C) → รหัส ISURVEY claim_MtypeID ที่ ClaimData.claim_type ใช้
+# (CLAIM_TYPE_NAMES: 1 เคลมสด / 2 เคลมแห้ง / 3 ติดตาม / 4 เจรจาสินไหม) — กลับด้านของ
+# isurvey_to_sesurvey.CLAIM_MTYPE_MAP · A = งานนัดหมาย ไม่มีรหัสใน ISURVEY (งานพวกนี้ต้นทาง
+# ISURVEY ติดเป็น 'เคลมสด' มาตลอด — ดู appointment_hint) จึงนับเป็นเคลมสดเหมือนกัน
+_WEB_CLAIM_TYPE = {"F": "1", "D": "2", "A": "1", "C": "3"}
+
+
 def _populate_claim_from_report(data, rep):
     """เติม ClaimData จาก report (ค่าไทยของ se-survey) ให้ fill_* กรอกหน้าหลัก EMCS ได้ครบ —
     XML import ตั้งค่าไว้บางส่วน แต่ fill_* ต้องมีค่าไทยใน ClaimData เพื่อเลือก dropdown บังคับ
@@ -814,6 +821,9 @@ def _populate_claim_from_report(data, rep):
     data.acc_date = gv('acc_date')
     data.acc_time = gv('acc_time')
     data.acc_result = gv('acc_fault')
+    # ประเภทเคลม — เดิมปล่อยว่าง ทำให้ทุกงานจากเว็บขึ้นเตือน "เคลมสด: ประเภทเคลม = ไม่ทราบประเภท (ว่าง)"
+    # ตอนเสนอส่ง (user 09/09/69) · แมปแล้ว fresh_claim_note/resolve_loss_type ตัดสินเคลมแห้ง/สดได้ตรง
+    data.claim_type = _WEB_CLAIM_TYPE.get(gv('claim_type').upper(), "") or data.claim_type
     # EMCS บังคับ 2 อย่างนี้เมื่อผลคดี = "รถคู่กรณีเป็นฝ่ายผิด" — ไม่มี = save draft ไม่ผ่าน
     data.acc_fault_opponent_no = gv('acc_fault_opponent_no')
     data.opo_results = gv('acc_claim_opponent')          # comma-separated จากแอป
