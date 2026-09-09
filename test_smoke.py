@@ -3853,5 +3853,92 @@ check("นำเข้า SE-Survey: ไม่ถามเลือกรูป 
 _ui = _insp.getsource(emcs.upload_images)
 check("upload_images: ask=False = อัปทุกรูปโดยไม่ถาม (เส้น ISURVEY ยังถาม)", "ask: bool = True" in _ui and "if ask:" in _ui)
 
+
+# ---- ปุ่ม "⚡ นำเข้า EMCS + ส่งงานใหม่" (แท็บ SE Survey — user 09/09/69): นำเข้าแล้วกดส่งต่อทันที
+# โดยยังคงปุ่ม "นำเข้า EMCS" เดิม (draft แล้วหยุดให้ตรวจ) ไว้คู่กัน ----
+import webui as _wui  # noqa: E402
+_spawned = []
+_orig_spawn = _wui._spawn
+_wui._spawn = lambda cmd, title, kind, claims: (_spawned.append((cmd, title)) or (1, None))
+try:
+    _wui.start_sesurvey_run({"case_id": "73", "mode": "import", "live": True, "autosend": True})
+    _wui.start_sesurvey_run({"case_id": "73", "mode": "import", "live": False, "autosend": True})
+    _wui.start_sesurvey_run({"case_id": "73", "mode": "fill-existing", "autosend": True})
+    _wui.start_sesurvey_run({"case_id": "73", "mode": "import", "live": True})
+finally:
+    _wui._spawn = _orig_spawn
+(_c_auto, _t_auto), (_c_dry, _), (_c_fill, _), (_c_live, _t_live) = _spawned
+check("autosend: import+live+autosend → --sesurvey-live + --sesurvey-autosend + ป้าย 'นำเข้า + ส่งงาน'",
+      "--sesurvey-live" in _c_auto and "--sesurvey-autosend" in _c_auto and "นำเข้า + ส่งงาน" in _t_auto,
+      " ".join(_c_auto[3:]))
+check("autosend: dry-run ไม่มีทางส่ง (autosend ถูกทิ้ง)",
+      "--sesurvey-autosend" not in _c_dry and "--sesurvey-live" not in _c_dry)
+check("autosend: โหมดกู้/ซ่อม ไม่รับ autosend", "--sesurvey-autosend" not in _c_fill)
+check("autosend: ปุ่ม 'นำเข้า EMCS' เดิม ยัง draft-only", "--sesurvey-autosend" not in _c_live and "นำเข้าจริง" in _t_live)
+_route_src = _insp.getsource(_wui.Handler._post)   # route ทั้งหมดอยู่ใน _post
+check("autosend: จาก origin ภายนอก (ปุ่มบนเว็บ se-survey) บังคับ autosend=False — กดส่งให้เลยได้เฉพาะหน้า operator",
+      'params["autosend"] = False' in _route_src
+      and _route_src.index('params["autosend"] = False') < _route_src.index("run_id, err = start_sesurvey_run(params)"))
+_osrc_auto = _insp.getsource(_main._offer_submit)
+check("autosend: _offer_submit โหมด auto ไม่เรียก wait_for_submit แต่ยังผ่านประตูตรวจกลับก่อน submit_report",
+      "if auto:" in _osrc_auto
+      and _osrc_auto.index("default_submit_selection(") < _osrc_auto.index("last_verify_mismatches")
+      < _osrc_auto.index("emcs.submit_report("))
+check("autosend: มี review_notes (ข้อที่บอทกรอกแทนไม่ได้) → ไม่ส่งอัตโนมัติ เก็บ draft",
+      'notes = getattr(data, "review_notes", []) or []' in _osrc_auto
+      and _osrc_auto.index("if notes:") < _osrc_auto.index("default_submit_selection("))
+check("autosend: ตรวจกลับไม่ตรง → บอกการ์ดว่าไม่ได้ส่ง (ไม่ขึ้น 'เสร็จแล้ว ✅' หลอก)",
+      "ไม่กดส่ง — ค่าบนหน้า EMCS ไม่ตรงที่กรอก" in _osrc_auto)
+check("autosend: เคสไม่ได้มาจาก ISURVEY → ข้ามแจ้ง ISURVEY แต่ยังลง se-key + mark กลับเว็บหลัง EMCS ยืนยัน",
+      "if notify_isurvey:" in _osrc_auto
+      and _osrc_auto.index("after_sent(msg)") < _osrc_auto.index("if notify_isurvey:")
+      < _osrc_auto.index("sekey_client.enabled(cfg)"))
+_rsi = _insp.getsource(_main.run_sesurvey_import)
+check("autosend: หลัง mark นำเข้าแล้ว → _offer_submit(auto=True) + แจ้ง ISURVEY ตาม cases.source + mark 'ส่งแล้ว' กลับเว็บ",
+      "_offer_submit(driver, cfg, data, esurvey, auto=True, notify_isurvey=notify" in _rsi
+      and "_mark_emcs_submitted(cfg, case_id, hdrs, esurvey, msg)" in _rsi
+      and 'src in ("", "isurvey_xml", "isurvey_live")' in _rsi
+      and _rsi.index("_mark_emcs_imported(cfg, case_id, hdrs, esurvey)\n") < _rsi.index("if autosend:"))
+import types as _types_auto  # noqa: E402
+try:
+    _main.run_sesurvey_import(_types_auto.SimpleNamespace(sesurvey_api_token=""),
+                              _types_auto.SimpleNamespace(sesurvey_case="73", sesurvey_live=False,
+                                                          sesurvey_autosend=True))
+    _auto_err = ""
+except SystemExit as e:
+    _auto_err = str(e)
+check("autosend: --sesurvey-autosend โดยไม่มี --sesurvey-live → หยุดพร้อมบอกเหตุผล",
+      "--sesurvey-live" in _auto_err, _auto_err[:80])
+_argv_keep = sys.argv
+sys.argv = ["main.py", "--sesurvey-case", "73", "--sesurvey-live", "--sesurvey-autosend"]
+try:
+    _a_auto = _main.parse_args()
+finally:
+    sys.argv = _argv_keep
+check("autosend: parse_args รับ --sesurvey-autosend", getattr(_a_auto, "sesurvey_autosend", False) is True)
+check("autosend: ประเภทงาน default = งานต้น / SESV ตาม prefix (สูตรเดียวกับแผงเลือกบนเว็บ)",
+      _br.default_submit_selection("SEABI-1")["base_type"] == "งานต้น"
+      and _br.default_submit_selection("sesv-9")["base_type"] == "SESV"
+      and _br.default_submit_selection("")["mix"] == [] and _br.default_submit_selection("")["batch"] is False)
+check("autosend: wait_for_submit ใช้สูตร default ตัวเดียวกัน",
+      "default_submit_selection(survey_no)" in _insp.getsource(_br.wait_for_submit))
+
+
+# ---- JS ทั้งหน้าเว็บต้องผ่าน syntax check ของ node — กันสตริงขาด/quote หลุด ----
+# เจอจริง 09/09/69: confirm ของปุ่ม "นำเข้า + ส่งงาน" มีขึ้นบรรทัดจริงในสตริง + title มี ' ในสตริงที่ครอบด้วย '
+# → JS ทั้งหน้าพัง (ทุกปุ่มใช้ไม่ได้) แต่เทสข้อความเดิมจับไม่ได้ · ไม่มี node ในเครื่อง = ข้าม ไม่ล้ม
+import shutil as _shutil_js  # noqa: E402
+import subprocess as _subp_js  # noqa: E402
+_node = _shutil_js.which("node")
+if _node:
+    _scripts = __import__("re").findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", _page, __import__("re").S)
+    _js_path = pathlib.Path(tempfile.mkdtemp()) / "page.js"
+    _js_path.write_text("\n;\n".join(_scripts), encoding="utf-8")
+    _r_js = _subp_js.run([_node, "--check", str(_js_path)], capture_output=True, text=True, encoding="utf-8")
+    check(f"หน้าเว็บ: JS ทั้งหน้าผ่าน node --check ({len(_scripts)} บล็อก)", _r_js.returncode == 0,
+          ((_r_js.stderr or "").strip().splitlines() or [""])[-1][:120] if _r_js.returncode else "")
+else:
+    print("[SKIP] ไม่มี node ในเครื่อง — ข้าม syntax check JS ของหน้าเว็บ")
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

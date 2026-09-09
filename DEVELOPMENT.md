@@ -1232,3 +1232,24 @@ user ตัดสินให้บอทรันบน **เครื่อง
   แต่ **ไม่เรียก `emcs.run_import`** เพราะตัวนั้นล็อกอินใหม่ทุกครั้ง · `--dry-run` หยุดก่อนแตะ EMCS แล้วรายงาน "ผ่าน"
 - 2 สถานี = 2 บัญชี EMCS (EMCS ล็อกเรื่องต่อ username) · คิวฝั่งเว็บกันชนด้วย `FOR UPDATE SKIP LOCKED`
 - ⚠️ อย่ากด "นำเข้าด้วยบอทเครื่องนี้" บนเว็บจากเครื่องสถานีขณะสถานีรันอยู่ — จะเปิด Chrome ซ้อนด้วยบัญชีเดียวกัน
+
+## ปุ่ม "⚡ นำเข้า EMCS + ส่งงานใหม่" (แท็บ SE Survey) — 09/09/69
+
+user ต้องการทางลัด: นำเข้าแล้วกดส่งเลย โดย **ยังคงปุ่ม "⚡ นำเข้า EMCS" เดิม** (สร้าง draft แล้วหยุดให้ตรวจก่อนส่ง) ไว้คู่กัน
+
+- **เว็บ**: ปุ่มสีส้มในแถวเคส → confirm แรง ๆ (ส่งแล้วแก้ไม่ได้ / ถ้าจะตรวจก่อนใช้ปุ่มเดิม) →
+  `POST /api/import-sesurvey {mode: import, live: true, autosend: true}` → `start_sesurvey_run` ต่อ `--sesurvey-autosend`
+  (เฉพาะ import+live; dry-run/โหมดกู้ ไม่รับ) · การ์ดติดป้าย "นำเข้า + ส่งงาน"
+  · **cross-origin (ปุ่มบนเว็บ se-survey) บังคับ autosend=False** — กดส่งให้เลยได้เฉพาะหน้า operator ในเครื่อง
+- **บอท** (`run_sesurvey_import`): `--sesurvey-autosend` ต้องคู่ `--sesurvey-live` · หลัง draft สำเร็จ + mark emcs-imported →
+  `_offer_submit(auto=True, notify_isurvey=…, after_sent=…)`
+  · `auto=True` ไม่เรียก `wait_for_submit` ใช้ประเภทงาน default (`browser.default_submit_selection`: SESV ตาม prefix ไม่งั้น งานต้น
+    — สูตรเดียวกับค่า default ของแผงเลือกบนเว็บ)
+  · **ประตูเดิมครบ**: ตรวจกลับไม่ตรง = ไม่ส่ง (เพิ่ม `announce_send_failed` ให้การ์ดแดง — เดิมการ์ดขึ้น "เสร็จแล้ว ✅" หลอกทั้งที่ยังไม่ส่ง)
+    · มี `review_notes` (ข้อที่บอทกรอกแทนไม่ได้) = ไม่ส่งอัตโนมัติ เก็บ draft · ส่งไม่ผ่าน = การ์ดแดงเหมือนเดิม
+  · หลัง EMCS ยืนยันส่งแล้ว: `_mark_emcs_submitted` → เว็บ `POST /cases/{id}/emcs-status {submitted: true}`
+    (ป้าย "ส่งประกันแล้ว" ทันที ไม่รอรอบกวาด `--emcs-sync-status`)
+  · **แจ้ง ISURVEY เฉพาะ `cases.source ∈ {isurvey_xml, isurvey_live}`** (meta จาก `GET /cases/{id}` — เพิ่ม `source` ฝั่ง backend
+    se-survey 09/09/69) · งานมือถือ (`mobile`) ข้าม (ไม่มีในนั้น ยิงไปก็ล้ม) · se-key บันทึกทุกต้นทาง ·
+    backend เก่าที่ไม่ส่ง source มา = แจ้งเหมือนเดิม (fail-open ทางเดิม)
+- **ยังไม่ทำ**: ปุ่มนี้ในช่องกรอกเลขเคสด้านบน / ปุ่ม "นำเข้าที่เลือก" (คิวหลายเคส) / โหมดสถานี (`--station`) ยัง draft-only ทั้งหมด

@@ -946,6 +946,14 @@ def announce_sent(claim: str, esurvey: str = "", keyer: str = ""):
         flush=True)
 
 
+def default_submit_selection(survey_no: str = "") -> dict:
+    """ประเภทงานเริ่มต้นตอนส่ง: SESV ถ้าเลขเซอร์เวย์ขึ้นต้น SESV ไม่งั้น งานต้น (ไม่รวมงาน ไม่มี mix)
+    ใช้ทั้งค่า default ของแผงเลือกบนเว็บ / console กด Enter / โหมดส่งอัตโนมัติ
+    (ปุ่ม "นำเข้า EMCS + ส่งงานใหม่" — ต้องเป็นสูตรเดียวกันทุกทาง)"""
+    base = "SESV" if str(survey_no or "").strip().upper().startswith("SESV") else "งานต้น"
+    return {"base_type": base, "batch": False, "mix": []}
+
+
 def wait_for_submit(claim, survey_no="", reason=""):
     """หลังกรอกครบ (live session) — รอผู้ใช้ตรวจ draft + เลือกประเภทงาน แล้วสั่งส่ง
     กลไกเดียวกับ wait_for_manual_fill (marker + รอ stdin /continue):
@@ -954,8 +962,7 @@ def wait_for_submit(claim, survey_no="", reason=""):
     - console: กด Enter = ส่งด้วย default (งานต้น / SESV ถ้าเลขขึ้นต้น SESV)
     - ไม่มีคนเฝ้า (EOF): คืน None → เก็บเป็น draft ไม่ส่ง (พฤติกรรมเดิม)
     คืน dict {base_type, batch, mix} ถ้าสั่งส่ง / None ถ้าไม่ส่ง (เก็บ draft)"""
-    default_base = ("SESV" if str(survey_no or "").strip().upper().startswith("SESV")
-                    else "งานต้น")
+    default_base = default_submit_selection(survey_no)["base_type"]
     log_plain("")
     log(f"⏸️  กรอกครบแล้ว (เคลม {claim}) — ตรวจ draft ให้เรียบร้อย แล้วสั่งส่งงาน")
     log("     → ตรวจความถูกต้องในหน้าต่าง EMCS (Chrome) ก่อน แล้ว"
@@ -973,7 +980,7 @@ def wait_for_submit(claim, survey_no="", reason=""):
     if line == "":
         log("     (ไม่มีการตอบกลับ — เก็บเป็น draft ไม่ส่งงาน ตรวจ/กดส่งเองภายหลังได้)")
         return None
-    sel = {"base_type": default_base, "batch": False, "mix": []}
+    sel = default_submit_selection(survey_no)
     try:                                   # console กด Enter เปล่า → ใช้ default
         d = json.loads(line)
         if isinstance(d, dict):

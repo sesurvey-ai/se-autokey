@@ -42,6 +42,7 @@ from autokey import emcs, isurvey, isurvey_api, joblog
 from autokey.browser import (
     announce_send_failed,
     announce_sent,
+    default_submit_selection,
     log,
     log_plain,
     make_driver,
@@ -169,6 +170,11 @@ def parse_args():
                    help="⛔ เปิดโหมด import จริงเข้า EMCS สำหรับ --sesurvey-case "
                         "(default ไม่ใส่ = dry-run). ยังคงวินัย draft-only: บอทหยุดที่ draft "
                         "คนกดส่งเอง. ใช้เมื่อสรุปการทดสอบร่วมกันแล้วเท่านั้น")
+    p.add_argument("--sesurvey-autosend", action="store_true",
+                   help="ใช้คู่ --sesurvey-live (ปุ่ม 'นำเข้า EMCS + ส่งงานใหม่' บนเว็บ — user 09/09/69): "
+                        "สร้าง draft เสร็จแล้วกด 'ส่งงานใหม่' + แจ้ง ISURVEY (เฉพาะเคสจาก ISURVEY) "
+                        "+ บันทึก se-key ต่อทันที ไม่หยุดให้ตรวจ — ยังผ่านด่านตรวจกลับ: "
+                        "ค่าบนหน้า EMCS ไม่ตรงที่กรอก = ไม่ส่ง เก็บ draft")
     # ── โหมดสถานีนำเข้า (autokey/station.py): รับงานจากคิวของเว็บ se-survey ทีละเรื่อง ล็อกอิน EMCS ครั้งเดียว ──
     p.add_argument("--station", action="store_true",
                    help="โหมดสถานีนำเข้า EMCS: วนรับงานจากคิว 'ส่งเข้าคิว EMCS' ของเว็บ se-survey ทีละเรื่อง "
@@ -1255,6 +1261,24 @@ def _mark_emcs_imported(cfg, case_id, hdrs, esurvey: str):
         log(f"⚠️ แจ้ง se-survey (emcs-imported) ไม่ได้: {e} — mark ด้วยมือภายหลัง")
 
 
+def _mark_emcs_submitted(cfg, case_id, hdrs, esurvey: str, status_text: str = ""):
+    """แจ้ง se-survey ว่าเคสนี้ "ส่งงานให้ประกันแล้ว" (emcs_submitted_at) — ใช้หลังบอทกดส่งเอง
+    (โหมดนำเข้า + ส่งงานใหม่) ป้ายบนเว็บเปลี่ยนทันที ไม่ต้องรอรอบกวาด --emcs-sync-status
+    endpoint เดียวกับรอบกวาด: emcs_submitted_at ตั้งครั้งแรกครั้งเดียว ยิงซ้ำไม่เลื่อนเวลา"""
+    import requests
+    try:
+        r = requests.post(f"{cfg.sesurvey_api_url}/api/integrations/cases/{case_id}/emcs-status",
+                          headers=hdrs, timeout=20,
+                          json={"submitted": True, "esurvey_no": esurvey or "",
+                                "status_text": (status_text or "ส่งงานแล้ว")[:100]})
+        if r.ok:
+            log("✓ แจ้ง se-survey ว่าส่งงานให้ประกันแล้ว")
+        else:
+            log(f"⚠️ แจ้ง se-survey (emcs-status) ไม่สำเร็จ: HTTP {r.status_code} — รอบกวาดสถานะจะตามให้")
+    except Exception as e:
+        log(f"⚠️ แจ้ง se-survey (emcs-status) ไม่ได้: {e} — รอบกวาดสถานะจะตามให้")
+
+
 def run_emcs_sync_status(cfg, args):
     """กวาดอ่าน "ส่งงานให้ประกันแล้วหรือยัง" ของทุกเคสที่นำเข้า EMCS ไปแล้ว  **อ่านอย่างเดียว**
 
@@ -1366,6 +1390,9 @@ def run_sesurvey_import(cfg, args):
     raw_ref = str(args.sesurvey_case).strip()
     if not raw_ref:
         raise SystemExit("--sesurvey-case ว่าง — ใส่เลขเคส (case id) หรือเลขเซอร์เวย์ (SETP-...)")
+    autosend = bool(getattr(args, "sesurvey_autosend", False))
+    if autosend and not getattr(args, "sesurvey_live", False):
+        raise SystemExit("--sesurvey-autosend ต้องใช้คู่กับ --sesurvey-live (dry-run ไม่มีอะไรให้ส่ง)")
     if not cfg.sesurvey_api_token:
         raise SystemExit("ไม่พบ SESURVEY_API_TOKEN ใน .env — เปิด start-webui.bat → แท็บ ⚙ ตั้งค่า → ระบบ se-survey แล้ววาง token (ขอจากผู้ดูแลระบบ)")
 
@@ -1506,7 +1533,8 @@ def run_sesurvey_import(cfg, args):
 
     per_run_dl = cfg.download_dir / "_dl" / str(os.getpid())
     driver = make_driver(detach=True, download_dir=per_run_dl)
-    banner(f"LIVE: นำเข้าเคส #{case_id} เข้า EMCS (บริษัทรหัส {ins_code}) — draft-only")
+    banner(f"LIVE: นำเข้าเคส #{case_id} เข้า EMCS (บริษัทรหัส {ins_code}) — "
+           + ("นำเข้า + ส่งงานใหม่ (กดส่งต่อทันทีหลัง draft เสร็จ)" if autosend else "draft-only"))
     try:
         # หน้าค่าใช้จ่ายกรอกเต็ม — ความเห็น + เรทราคา ยกมาจาก se-survey
         #
@@ -1539,6 +1567,20 @@ def run_sesurvey_import(cfg, args):
     # draft ถูกสร้างใน EMCS แล้ว = เลขเคลมนี้ถือว่า "นำเข้าแล้ว" ต่อให้คนยังไม่กดส่ง
     # (กัน import รอบสองมาสร้าง draft ซ้ำที่เลขเคลมเดิม)
     _mark_emcs_imported(cfg, case_id, hdrs, esurvey)
+
+    if autosend:
+        # ปุ่ม "นำเข้า EMCS + ส่งงานใหม่" (user 09/09/69): ไม่หยุดให้ตรวจ — กดส่งต่อทันที
+        # ประตูเดิมยังอยู่ครบใน _offer_submit (ตรวจกลับไม่ตรง = ไม่ส่ง · ส่งไม่ผ่าน = การ์ดแดง)
+        # แจ้ง ISURVEY เฉพาะเคสที่มาจาก ISURVEY (cases.source) — งานมือถือไม่มีในนั้น ยิงไปก็ล้ม
+        src = str(meta.get("source") or "").strip()
+        notify = src in ("", "isurvey_xml", "isurvey_live")   # backend เก่าไม่ส่ง source = ทำเหมือนเดิม
+        if not notify:
+            log(f"   ℹ️ เคสมาจาก '{src}' ไม่ใช่ ISURVEY — หลังส่งจะไม่แจ้ง ISURVEY (บันทึก se-key ตามปกติ)")
+        banner("LIVE: draft สร้างแล้ว" + (f" (e-Survey {esurvey})" if esurvey else "")
+               + " — โหมด 'นำเข้า + ส่งงานใหม่': กดส่งต่อทันที")
+        _offer_submit(driver, cfg, data, esurvey, auto=True, notify_isurvey=notify,
+                      after_sent=lambda msg: _mark_emcs_submitted(cfg, case_id, hdrs, esurvey, msg))
+        return
 
     banner(f"LIVE: สร้าง draft ใน EMCS สำเร็จ"
            + (f" (e-Survey {esurvey})" if esurvey else "")
@@ -1635,11 +1677,19 @@ def _sekey_dup_skip(cfg, data) -> str:
     return ""
 
 
-def _offer_submit(driver, cfg, data, esurvey: str = ""):
+def _offer_submit(driver, cfg, data, esurvey: str = "", auto: bool = False,
+                  notify_isurvey: bool = True, after_sent=None):
     """A1: หลังกรอกครบ (live session, ปุ่ม 'ส่งงานใหม่' พร้อม) — รอผู้ใช้ตรวจ draft
     แล้วสั่งส่ง → กด 'ส่งงานใหม่' ให้ + แจ้ง ISURVEY + บันทึก se-key.
     ไม่สั่ง (EOF/ปิด) = เก็บเป็น draft
-    เคลมสด (มีคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน) ก็เสนอส่งได้ — แต่เตือนให้ตรวจหนักกว่า"""
+    เคลมสด (มีคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน) ก็เสนอส่งได้ — แต่เตือนให้ตรวจหนักกว่า
+
+    auto=True (ปุ่ม "นำเข้า EMCS + ส่งงานใหม่" — user 09/09/69): ไม่หยุดรอคน กดส่งทันทีด้วย
+      ประเภทงาน default (default_submit_selection) — ผู้ใช้ยืนยันตั้งแต่กดปุ่มบนเว็บแล้ว
+      ยังผ่านประตูเดิมทุกด่าน: ตรวจกลับไม่ตรง = ไม่ส่ง · มี review_notes (ข้อที่บอทกรอกแทนไม่ได้)
+      = ไม่ส่ง เก็บ draft ให้คนตรวจ · ส่งไม่ผ่าน = การ์ดแดง
+    notify_isurvey=False: ข้ามการแจ้ง ISURVEY (เคสที่ไม่ได้มาจาก ISURVEY เช่นงานมือถือ se-survey)
+    after_sent(msg): เรียกทันทีที่ EMCS ยืนยันว่าส่งแล้ว (เช่น mark กลับเว็บ se-survey)"""
     block = data.fresh_claim_note()
     reason = ("" if block == "" else
               f"⚠️ เคลมสด: {block} — ตรวจคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน + ราคา "
@@ -1648,13 +1698,31 @@ def _offer_submit(driver, cfg, data, esurvey: str = ""):
     # (เตือนบนการ์ด ไม่หยุดกลางทาง — user 2026-08-06)
     for _n in getattr(data, "review_notes", []) or []:
         reason = (reason + "\n" if reason else "") + f"⚠️ {_n}"
-    sel = wait_for_submit(data.claim_value, survey_no=data.invoice_value, reason=reason)
-    if not sel:
-        # ไม่ส่ง = จบแค่ draft → ต้องออกจากเรื่องเพื่อปลดล็อกให้คนอื่นเปิดต่อได้
-        # (บอทค้างอยู่ในเรื่องมาถึงตรงนี้เพราะปุ่ม 'ส่งงานใหม่' อยู่ในหน้านั้น)
-        log("เก็บเป็น draft — ยังไม่ส่งงาน (browser เปิดค้าง ตรวจ/กดส่งเองได้)")
-        emcs.leave_report(driver)
-        return
+    if auto:
+        # โหมดส่งอัตโนมัติ: คำเตือน (เคลมสด ฯลฯ) ลง log ให้เห็น แต่ไม่หยุด — ยกเว้น review_notes
+        # = ข้อที่บอท "กรอกแทนไม่ได้" ต้องมีคนตัดสิน → ไม่ส่งอัตโนมัติ (ส่งแล้วแก้ไม่ได้)
+        for _line in [x for x in reason.split("\n") if x.strip()]:
+            log(f"   {_line}")
+        notes = getattr(data, "review_notes", []) or []
+        if notes:
+            log("⛔ โหมดส่งอัตโนมัติ: มีข้อที่บอทกรอกแทนไม่ได้ — ไม่กดส่งให้ เก็บเป็น draft "
+                "(ตรวจ/แก้บน EMCS แล้วกด 'ส่งงานใหม่' เอง)")
+            joblog.record("send_blocked", data.claim_value, data.invoice_value, esurvey=esurvey,
+                          note=("ส่งอัตโนมัติ: มีข้อที่ต้องตรวจ — " + " · ".join(notes))[:160])
+            announce_send_failed(data.claim_value,
+                                 ("ไม่ส่งอัตโนมัติ — มีข้อที่ต้องตรวจก่อน: " + " · ".join(notes))[:200])
+            return
+        sel = default_submit_selection(data.invoice_value)
+        log(f"▶️ ส่งงานอัตโนมัติ (เคลม {data.claim_value}, ประเภทงาน {sel['base_type']}) "
+            "— ตามคำสั่งปุ่ม 'นำเข้า EMCS + ส่งงานใหม่' (ไม่หยุดให้ตรวจ)")
+    else:
+        sel = wait_for_submit(data.claim_value, survey_no=data.invoice_value, reason=reason)
+        if not sel:
+            # ไม่ส่ง = จบแค่ draft → ต้องออกจากเรื่องเพื่อปลดล็อกให้คนอื่นเปิดต่อได้
+            # (บอทค้างอยู่ในเรื่องมาถึงตรงนี้เพราะปุ่ม 'ส่งงานใหม่' อยู่ในหน้านั้น)
+            log("เก็บเป็น draft — ยังไม่ส่งงาน (browser เปิดค้าง ตรวจ/กดส่งเองได้)")
+            emcs.leave_report(driver)
+            return
     # ⛔ เฟส 2 กั้นเฟส 3 — อ่านหน้า EMCS กลับมาแล้วค่าไม่ตรงกับที่กรอก = ห้ามกดส่ง
     #    ไม่ว่าใครสั่ง · ส่งแล้วถอยไม่ได้ และของที่ส่งจะไม่ใช่ของที่คนรับรอง
     #    ไม่ leave_report — ปล่อยหน้าค้างไว้ให้คนที่เพิ่งสั่งส่งแก้แล้วกดเองได้ทันที
@@ -1669,6 +1737,10 @@ def _offer_submit(driver, cfg, data, esurvey: str = ""):
         log("   → ตรวจ/แก้ในหน้าต่าง EMCS แล้วกด 'ส่งงานใหม่' เองได้ (หน้ายังเปิดค้างไว้)")
         joblog.record("send_blocked", data.claim_value, data.invoice_value,
                       esurvey=esurvey, note=f"อ่านกลับไม่ตรง {len(bad)} ช่อง")
+        # การ์ดต้องไม่ขึ้น 'เสร็จแล้ว ✅' ทั้งที่ยังไม่ได้ส่ง (เจอจริง 2026013166152: คนคิดว่าส่งแล้ว)
+        announce_send_failed(data.claim_value,
+                             f"ไม่กดส่ง — ค่าบนหน้า EMCS ไม่ตรงที่กรอก {len(bad)} ช่อง "
+                             f"({bad[0].get('id')}) ตรวจ/แก้แล้วกด 'ส่งงานใหม่' เอง")
         return
     ok, msg = emcs.submit_report(driver, cfg, data.claim_value, esurvey=esurvey)
     if not ok:
@@ -1687,13 +1759,22 @@ def _offer_submit(driver, cfg, data, esurvey: str = ""):
                   esurvey=esurvey, keyer=keyer,
                   work_type=sel["base_type"] + (" +งานรวม" if sel["batch"] else ""),
                   note=msg)
+    if after_sent:
+        try:
+            after_sent(msg)
+        except Exception as e:
+            log(f"   ⚠️ แจ้งสถานะ 'ส่งแล้ว' กลับต้นทางไม่สำเร็จ ({type(e).__name__}: {e})")
     # SESV เคลมเงินบน iSurvey ด้วยเลข SESV ไม่ได้ → แจ้งด้วย SEABI invoice ตัวแรก (mix[0])
     report_invoice = (sel["mix"][0] if (sel["base_type"] == "SESV" and sel["mix"])
                       else data.invoice_value)
-    res = isurvey_report.report_sent(cfg, data.claim_value, report_invoice,
-                                     keyer=keyer, when=when)
-    log((f"✅ แจ้ง ISURVEY สำเร็จ (คนคีย์ {keyer})" if res["ok"]
-         else "❌ แจ้ง ISURVEY ไม่สำเร็จ") + f" — {res['text'][:140]}")
+    if notify_isurvey:
+        res = isurvey_report.report_sent(cfg, data.claim_value, report_invoice,
+                                         keyer=keyer, when=when)
+        log((f"✅ แจ้ง ISURVEY สำเร็จ (คนคีย์ {keyer})" if res["ok"]
+             else "❌ แจ้ง ISURVEY ไม่สำเร็จ") + f" — {res['text'][:140]}")
+    else:
+        res = {"ok": True, "status": 0, "text": "ข้ามการแจ้ง ISURVEY (เคสไม่ได้มาจาก ISURVEY)"}
+        log(f"   ℹ️ {res['text']}")
 
     # บันทึกงานที่เสร็จลงฐานข้อมูลกลาง se-key — ตามประเภทงานที่ผู้ใช้เลือก
     # (งานรวม/SESV = หลาย row); mark "ส่งแล้ว" ถ้าแจ้ง ISURVEY สำเร็จ
