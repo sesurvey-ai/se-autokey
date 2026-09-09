@@ -1081,7 +1081,8 @@ def _run_fill_existing(cfg, args, case_id, hdrs, meta):
     try:
         emcs.fill_existing_report(driver, cfg, data, esurvey=esurvey,
                                   images_folder=img_folder, loss_type=loss_type,
-                                  severity=severity, full_billing=True)
+                                  severity=severity, full_billing=True,
+                                  select_images=False)   # รูปจากเว็บ se-survey อัปทั้งหมด ไม่ถามเลือก (09/09/69)
     except Exception as e:
         log(f"❌ เติม draft เดิม เคส {case_id}: {type(e).__name__}: {e}")
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"fill_existing_{case_id}")
@@ -1516,9 +1517,11 @@ def run_sesurvey_import(cfg, args):
         # ช่องไหนต้นทางว่าง fill_billing ข้ามให้เอง ไม่ทับของที่คนกรอกไว้ใน EMCS
         # allow_continuation=False — กติกา user: งานครั้งที่ 2 ของเคสจาก se-survey
         # หัวหน้ากรอกเอง บอททำเฉพาะครั้งที่ 1 (เส้น ISURVEY ยังทำงานต่อเนื่องตามปกติ)
+        # select_images=False — หัวหน้าจัดรูป/หมวดบนเว็บ se-survey มาแล้ว ไม่ต้องกดเลือกรูปซ้ำบนบอท (user เคาะ 09/09/69)
         esurvey = emcs.run_import(driver, cfg, data, images_folder=img_folder,
                                   insurer_code=ins_code, full_billing=True, loss_type=loss_type,
-                                  severity=severity, allow_continuation=False)
+                                  severity=severity, allow_continuation=False,
+                                  select_images=False)
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"sesurvey_{case_id}")
         # draft อาจถูกสร้างไปแล้วก่อนพัง (ลบใน EMCS ไม่ได้) — ต้อง mark ฝั่ง se-survey

@@ -3836,5 +3836,22 @@ check("ค่ารูป EMCS: ยอด 50 ไม่มีจำนวน → 
 check("ค่ารูป EMCS: มีจำนวน 10 ยอด 50 → 10 × 5", emcs.photo_split(50, 10) == (10, 5.0))
 check("ค่ารูป EMCS: ยอดหาร 5 ไม่ลงตัว → 1 × ยอด", emcs.photo_split(53, 0) == (1, 53.0))
 
+# ---- ปุ่ม "นำเข้า SE-Survey" (user เคาะ 09/09/69): รูปเข้าเลย · เขียนเฉพาะที่ต่าง · กด OK ทันที ----
+_ixs = _insp.getsource(emcs.import_xml_report)
+check("import XML: รอผลด้วย _wait_import_dialog (ไม่รอ alert 10 วิ + หน่วง 2.5 วิ ก่อนกด OK)",
+      "_wait_import_dialog(driver" in _ixs and "accept_alert(driver, timeout=10)" not in _ixs
+      and "time.sleep(2.5)" not in _ixs)
+_wid = _insp.getsource(emcs._wait_import_dialog)
+check("_wait_import_dialog: โพลถี่ 0.25 วิ + อ่าน innerText ทั้ง modal + กัน confirm ทำลายข้อมูล",
+      "time.sleep(0.25)" in _wid and "innerText" in _wid and "DestructiveAlert" in _wid)
+_fis = _insp.getsource(emcs.fill_imported)
+check("fill_imported: หลัง import เขียนเฉพาะช่องที่ต่าง (SKIP_UNCHANGED) + ปิดธงเสมอ + ส่ง ask ให้รูป",
+      _fis.index("set_skip_unchanged(True)") < _fis.index("fill_severity(driver, severity)")
+      and "set_skip_unchanged(False)" in _fis and "ask=select_images" in _fis)
+_msrc = _insp.getsource(__import__("main").run_sesurvey_import)
+check("นำเข้า SE-Survey: ไม่ถามเลือกรูป (select_images=False)", "select_images=False" in _msrc)
+_ui = _insp.getsource(emcs.upload_images)
+check("upload_images: ask=False = อัปทุกรูปโดยไม่ถาม (เส้น ISURVEY ยังถาม)", "ask: bool = True" in _ui and "if ask:" in _ui)
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

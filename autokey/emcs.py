@@ -1403,6 +1403,69 @@ def _close_sweetalert(driver, timeout: int = 10) -> str:
     return text
 
 
+def _wait_import_dialog(driver, timeout: float = 60.0):
+    """หลังกด 'นำเข้าข้อมูล': รอผลจาก EMCS แล้วกดปิดทันทีที่โผล่ — คืน (ข้อความเต็มของ modal, ข้อความสั้น)
+
+    EMCS ตอบเป็น SweetAlert (HTML) ไม่ใช่ alert ของเบราว์เซอร์ · เดิมรอ alert 10 วิ + หน่วง 2.5 วิ
+    ก่อนไปหา swal → กด OK ช้า ~14 วิ ทุกครั้ง (user ทัก 09/09/69 · log #242: กดนำเข้า 09:50:11 → OK 09:50:25)
+    → โพลทั้งสองแบบพร้อมกันทุก 0.25 วิ เจออะไรก่อนก็จัดการทันที (alert แบบเก่าถ้ามีก็ยังรองรับ
+    ผ่าน accept_alert ซึ่งมีตัวกัน confirm ทำลายข้อมูลอยู่แล้ว)"""
+    t0 = time.time()
+    end = t0 + timeout
+    native = ""
+    while time.time() < end:
+        try:
+            driver.switch_to.alert          # ไม่มี alert → NoAlertPresentException
+            native = accept_alert(driver, timeout=2) or native
+            continue                        # ปิด alert แล้ว อาจมี swal ตามมา — วนต่อ
+        except Exception as e:
+            if type(e).__name__ == "DestructiveAlert":
+                raise
+        full = ""
+        try:
+            full = driver.execute_script(
+                "var m=document.querySelector('.swal-modal,.sweet-alert,.swal-overlay');"
+                "if(!m||!m.getClientRects().length)return '';return m.innerText||'';") or ""
+        except Exception:
+            full = ""
+        if full.strip():
+            short = ""
+            try:
+                els = driver.find_elements(By.CSS_SELECTOR, ".swal-text")
+                if els and els[0].is_displayed():
+                    short = els[0].text.strip()
+            except Exception:
+                pass
+            clicked = False
+            try:
+                for sb in driver.find_elements(By.CSS_SELECTOR, ".swal-button"):
+                    if sb.is_displayed():
+                        sb.click()
+                        clicked = True
+                        break
+            except Exception:
+                pass
+            if clicked:
+                log(f"   ✓ ปิดหน้าต่างผลนำเข้าหลัง {time.time() - t0:.1f} วิ")
+                # เผื่อมีหน้าต่างซ้อน (ยืนยัน → ผล) ก่อนเข้าหน้าฟอร์ม — ปิดให้ด้วยแบบไม่หน่วง
+                for _ in range(20):
+                    try:
+                        if "frmSurvey.aspx" in driver.current_url:
+                            break
+                        for sb in driver.find_elements(By.CSS_SELECTOR, ".swal-button"):
+                            if sb.is_displayed():
+                                sb.click()
+                                log("   ✓ ปิดหน้าต่างซ้อนอีก 1 ชั้น")
+                                break
+                    except Exception:
+                        pass
+                    time.sleep(0.25)
+                return full.strip(), (short or full.strip())
+        time.sleep(0.25)
+    log(f"   ⚠️ ไม่เห็นหน้าต่างผลนำเข้าภายใน {timeout:.0f} วิ")
+    return "", native
+
+
 def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) -> str:
     """นำเข้า SURV_REPORT XML เข้า EMCS แทนการกรอกฟอร์มหลักเอง (ปุ่ม imbFileImport_XML)
 
@@ -1475,21 +1538,9 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
             "แนบไฟล์ XML เข้า inpImport ไม่ติดหลังลอง 6 รอบ — ตรวจหน้า Import File XML")
     log(f"   ✓ ไฟล์ติดแล้ว: {attached} → กดนำเข้าข้อมูล")
     driver.execute_script("document.getElementById('btnImport').click();")
-    try:
-        accept_alert(driver, timeout=10)               # เผื่อมี JS confirm
-    except Exception:
-        pass
-    # จับ swal เต็มก่อนปิด — server-side validation ส่งตารางรายละเอียด (field ที่ผิด) มาใน content span
-    # ซึ่ง _close_sweetalert จับแค่หัวเรื่อง ไม่รวม span → อ่าน innerText ของ modal ทั้งก้อน
-    time.sleep(2.5)
-    swal_full = ""
-    try:
-        swal_full = driver.execute_script(
-            "var m=document.querySelector('.swal-modal,.sweet-alert,.swal-overlay');"
-            "return m ? m.innerText : '';") or ""
-    except Exception:
-        pass
-    swal = _close_sweetalert(driver, timeout=12) or ""
+    # รอผล import แล้วกดปิดทันทีที่โผล่ (alert เก่า/SweetAlert อย่างใดอย่างหนึ่ง) — อ่าน innerText ทั้ง modal
+    # เพราะ server-side validation ส่งตารางรายละเอียด (field ที่ผิด) มาใน content span ไม่ใช่แค่หัวเรื่อง
+    swal_full, swal = _wait_import_dialog(driver, timeout=60)
     if swal_full:
         log(f"   [import swal] {swal_full[:600]}")
     elif swal:
@@ -1504,7 +1555,7 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
         raise RuntimeError(
             "นำเข้า XML แล้วไม่เข้าหน้าฟอร์ม (frmSurvey) — "
             f"ข้อความระบบ: {(swal_full or swal)[:400]!r}") from e
-    m = re.search(r"S\d{9,13}", swal or "")
+    m = re.search(r"S\d{9,13}", (swal_full or "") + " " + (swal or ""))
     log("EMCS: นำเข้า XML สำเร็จ → ฟอร์มแก้ (frmSurvey)"
         + (f" e-Survey {m.group(0)}" if m else ""))
     return m.group(0) if m else ""
@@ -3815,7 +3866,7 @@ def _replace_current_round_images(driver) -> bool:
 def upload_images(driver, folder, image_type: str = "รูปรถประกัน", only=None,
                   n_opponents: int = 0, n_injuries: int = 0, n_assets: int = 0,
                   single_type: str = "", dedupe: bool = True,
-                  replace_round: bool = False):
+                  replace_round: bool = False, ask: bool = True):
     """อัปโหลดรูปทั้งหมด: รูปรถประกัน (หลัก) + บุคคลที่สาม (tp_veh/tp_person/tp_prop)
 
     - รูปรถประกัน: เลือกประเภท image_type ('รูปรถประกัน') — only คุมว่าจะอัปรูปไหน
@@ -3848,8 +3899,14 @@ def upload_images(driver, folder, image_type: str = "รูปรถประก
         # (อัปอัตโนมัติตามโฟลเดอร์ tp_veh/tp_person/tp_prop) ถ้าไม่บอก ตัวเลขบนจอ
         # จะไม่ตรงกับที่ขึ้น EMCS จริง — user ทักเอง: มี 33 ใบ แต่จอบอก 26 (2026013063304)
         if only is None:
-            extra = sum(len(b[1]) for b in (opp_batches + inj_batches + asset_batches))
-            only = wait_for_image_select(folder, files, extra=extra)
+            if ask:
+                extra = sum(len(b[1]) for b in (opp_batches + inj_batches + asset_batches))
+                only = wait_for_image_select(folder, files, extra=extra)
+            else:
+                # ask=False: งานจากเว็บ se-survey — หัวหน้าจัดรูป/หมวดบนเว็บมาแล้ว ไม่ต้องให้กดเลือกซ้ำ
+                # (user เคาะ 09/09/69: "ยกเลิกกดปุ่มอัปโหลดรูป ให้รูปเข้าได้เลย") — เส้น ISURVEY ยังถามเหมือนเดิม
+                log(f"EMCS: อัปโหลดรูปทั้งหมด {len(files)} รูปอัตโนมัติ (ไม่ถามเลือกรูป — "
+                    "หัวหน้าเลือกรูปบนเว็บ se-survey แล้ว)")
         if only is not None:
             chosen = set(only)
             files = [f for f in files if f in chosen]
@@ -5210,7 +5267,7 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
                   loss_type: str = "auto", image_type: str = "รูปรถประกัน",
                   severity: str = "เบา", force_new: bool = False,
                   full_billing: bool = True, insurer_code: str = None,
-                  allow_continuation: bool = True) -> str:
+                  allow_continuation: bool = True, select_images: bool = True) -> str:
     """กรอกเคลมผ่านโหมด "นำเข้า XML": ให้ EMCS import ฟอร์มหลักจาก SURV_REPORT XML
     แล้วบอทอุดช่องว่าง/แก้ที่ import ทำพลาด + กรอกส่วนที่ import ไม่แตะ
 
@@ -5249,57 +5306,66 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
     # ผู้เรียกต้องรู้เลข e-Survey เพื่อ mark ฝั่ง se-survey ให้ตรงความจริง ไม่งั้น
     # --sesurvey-fill-existing จะไม่ยอมทำงาน ("ยังไม่เคย import") ทั้งที่ draft เกิดแล้ว
     fill_imported.last_draft_esurvey = esurvey
-    main_window = driver.current_window_handle
-    resolved_loss = resolve_loss_type(data, loss_type)
-
-    # อุดช่องว่าง/แก้ที่ import ทำพลาด (reuse fill_* เดิม — ค่าจาก ClaimData แหล่งเดียวกับ XML)
-    # ไม่แตะ ประเภทเคลม/บริษัท/กรมธรรม์ (import ตั้งถูกแล้ว + เลี่ยง postback layout เคลมสด)
-    set_rule_context(claim=data.claim_value, survey_no=data.invoice_value, page="หน้าหลัก")
-    reset_filled()          # เริ่มจำค่าที่กรอกของหน้าหลัก (เฟส 2 — อ่านกลับมาเทียบ)
-    fill_severity(driver, severity)
-    fill_car(driver, data)        # แก้ ddlCType (code-based) + จังหวัด/ยี่ห้อ
-    # import เซ็ตจังหวัดแต่ไม่ cascade อำเภอ → บังคับจังหวัดว่างก่อน fill (เลือกใหม่จริง)
-    _recascade_province(driver, "ddlDri_ProvinceID")
-    fill_driver(driver, data)     # แก้ คำนำหน้า + แยกชื่อ-สกุล + อำเภอผู้ขับขี่
-    _recascade_province(driver, "ddlAcc_ProvinceID")
-    fill_accident(driver, data, loss_type=resolved_loss)  # อำเภอเกิดเหตุ + ลักษณะความเสียหาย
-    fill_verdict(driver, data)
-
-    _fill_policy_extras(driver, data)
-
-    _set_or_clear_claim_ref(driver, data.notify_value)
-
+    # import เติมฟอร์มหลักไว้ ~90% แล้ว → เขียนเฉพาะช่องที่ค่าต่างจริง (โหมดเดียวกับ fill_existing_report)
+    # เดิมเลือก/พิมพ์ทับทุกช่องซ้ำแม้ค่าตรงอยู่แล้ว (log #242 09/09/69: จังหวัด/ยี่ห้อ/สี/คำนำหน้า/อำเภอ/ผลคดี
+    # ขึ้น "ตรงเป๊ะ" แล้วยังเลือกใหม่ = postback ฟรีทุกช่อง) — user ทักว่ากรอกซ้ำ · ช่องที่ import ทำพลาด/ทิ้งว่าง
+    # (คำนำหน้า, อำเภอ, ประเภทรถ, ลักษณะความเสียหาย, หนัก/เบา) ค่าจะต่างจึงยังถูกแก้ตามเดิม
+    set_skip_unchanged(True)
     try:
-        saved = save_main_form(driver, data, button_id="btnUpdate", is_new=False)
-    except Exception:
-        _verify_after_save(driver, data, "หน้าหลัก (บันทึกไม่ผ่าน)")
-        raise
-    _verify_after_save(driver, data, "หน้าหลัก")
-    verify_car_saved(driver, data,
-                     lambda: save_main_form(driver, data, button_id="btnUpdate",
-                                            is_new=False))
-    esurvey = esurvey or saved
-    if not esurvey:
+        main_window = driver.current_window_handle
+        resolved_loss = resolve_loss_type(data, loss_type)
+
+        # อุดช่องว่าง/แก้ที่ import ทำพลาด (reuse fill_* เดิม — ค่าจาก ClaimData แหล่งเดียวกับ XML)
+        # ไม่แตะ ประเภทเคลม/บริษัท/กรมธรรม์ (import ตั้งถูกแล้ว + เลี่ยง postback layout เคลมสด)
+        set_rule_context(claim=data.claim_value, survey_no=data.invoice_value, page="หน้าหลัก")
+        reset_filled()          # เริ่มจำค่าที่กรอกของหน้าหลัก (เฟส 2 — อ่านกลับมาเทียบ)
+        fill_severity(driver, severity)
+        fill_car(driver, data)        # แก้ ddlCType (code-based) + จังหวัด/ยี่ห้อ
+        # import เซ็ตจังหวัดแต่ไม่ cascade อำเภอ → บังคับจังหวัดว่างก่อน fill (เลือกใหม่จริง)
+        _recascade_province(driver, "ddlDri_ProvinceID")
+        fill_driver(driver, data)     # แก้ คำนำหน้า + แยกชื่อ-สกุล + อำเภอผู้ขับขี่
+        _recascade_province(driver, "ddlAcc_ProvinceID")
+        fill_accident(driver, data, loss_type=resolved_loss)  # อำเภอเกิดเหตุ + ลักษณะความเสียหาย
+        fill_verdict(driver, data)
+
+        _fill_policy_extras(driver, data)
+
+        _set_or_clear_claim_ref(driver, data.notify_value)
+
         try:
-            esurvey = continuation_esurvey(
-                find_existing_reports(driver, data.claim_value),
-                data.invoice_value) or ""
+            saved = save_main_form(driver, data, button_id="btnUpdate", is_new=False)
         except Exception:
-            esurvey = ""
+            _verify_after_save(driver, data, "หน้าหลัก (บันทึกไม่ผ่าน)")
+            raise
+        _verify_after_save(driver, data, "หน้าหลัก")
+        verify_car_saved(driver, data,
+                         lambda: save_main_form(driver, data, button_id="btnUpdate",
+                                                is_new=False))
+        esurvey = esurvey or saved
+        if not esurvey:
+            try:
+                esurvey = continuation_esurvey(
+                    find_existing_reports(driver, data.claim_value),
+                    data.invoice_value) or ""
+            except Exception:
+                esurvey = ""
 
-    # ส่วนที่ import ไม่เติม: คู่กรณี (สร้าง row เปล่า)/ผู้บาดเจ็บ/ทรัพย์สิน + ความเสียหาย
-    fill_third_parties(driver, data)
-    fill_damage_list(driver, data, main_window)
-    fill_injuries(driver, data)
-    fill_assets(driver, data)
+        # ส่วนที่ import ไม่เติม: คู่กรณี (สร้าง row เปล่า)/ผู้บาดเจ็บ/ทรัพย์สิน + ความเสียหาย
+        fill_third_parties(driver, data)
+        fill_damage_list(driver, data, main_window)
+        fill_injuries(driver, data)
+        fill_assets(driver, data)
 
-    if images_folder is not None:
-        upload_images(driver, images_folder, image_type=image_type,
-                      n_opponents=len(data.third_parties or []),
-                      n_injuries=len(data.injuries or []),
-                      n_assets=len(data.assets or []))
+        if images_folder is not None:
+            upload_images(driver, images_folder, image_type=image_type,
+                          n_opponents=len(data.third_parties or []),
+                          n_injuries=len(data.injuries or []),
+                          n_assets=len(data.assets or []),
+                          ask=select_images)
 
-    fill_billing(driver, data, full_billing=full_billing, leave=False)
+        fill_billing(driver, data, full_billing=full_billing, leave=False)
+    finally:
+        set_skip_unchanged(False)   # ธงเป็น global — ห้ามค้างไปถึงงานถัดไปในโปรเซสเดียวกัน
     return esurvey
 
 
@@ -5307,7 +5373,7 @@ def run_import(driver, cfg, data: ClaimData, images_folder=None,
                loss_type: str = "auto", image_type: str = "รูปรถประกัน",
                severity: str = "เบา", force_new: bool = False,
                full_billing: bool = True, insurer_code: str = None,
-               allow_continuation: bool = True) -> str:
+               allow_continuation: bool = True, select_images: bool = True) -> str:
     """login แล้วกรอกเคลมเดียวผ่านโหมดนำเข้า XML
 
     allow_continuation=False → เจอ "งานครั้งที่ 2" แล้วหยุด ไม่กรอกให้
@@ -5317,13 +5383,13 @@ def run_import(driver, cfg, data: ClaimData, images_folder=None,
                          loss_type=loss_type, image_type=image_type,
                          severity=severity, force_new=force_new,
                          full_billing=full_billing, insurer_code=insurer_code,
-                         allow_continuation=allow_continuation)
+                         allow_continuation=allow_continuation, select_images=select_images)
 
 
 def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",
                          images_folder=None, loss_type: str = "auto",
                          image_type: str = "รูปรถประกัน", severity: str = "เบา",
-                         full_billing: bool = True) -> str:
+                         full_billing: bool = True, select_images: bool = True) -> str:
     """เปิด draft 'ที่มีอยู่แล้ว' (import มาแล้ว) → เติมหน้าหลัก + คู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน/
     ความเสียหาย/รูป/ค่าใช้จ่าย → บันทึก (btnUpdate) — **ไม่ import ซ้ำ ไม่สร้าง draft ใหม่ ไม่กดส่งงาน**
 
@@ -5381,7 +5447,7 @@ def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",
                           n_opponents=len(data.third_parties or []),
                           n_injuries=len(data.injuries or []),
                           n_assets=len(data.assets or []),
-                          replace_round=True)
+                          replace_round=True, ask=select_images)
         fill_billing(driver, data, full_billing=full_billing, leave=False)
     finally:
         set_skip_unchanged(False)   # ธงเป็น global — ห้ามค้างไปถึงงานถัดไปในโปรเซสเดียวกัน
