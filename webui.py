@@ -2684,6 +2684,7 @@ async function poll(){
     for (const r of data.runs){ seen.add(String(r.id)); renderRun(r); }
     for (const id of Object.keys(cards)){ if (!seen.has(String(id))) removeCard(id); }
     updateWaitBar(data.runs);
+    releaseSeSent(data.runs);
     runBtn.disabled = data.active >= data.max;
     capBadge.textContent = "กำลังรัน " + data.active + "/" + data.max;
     capBadge.className = "badge " + (data.active > 0 ? "running" : "idle");
@@ -2727,6 +2728,23 @@ runBtn.addEventListener("click", async () => {
 const seRunBtn = $("#serunbtn"), seDryBtn = $("#sedrybtn"), seCaseInput = $("#secase");
 const seCasesBox = $("#secasesbox"), loadCasesBtn = $("#loadcasesbtn");
 const seSent = new Set();   // case id ที่กดส่งเข้า AutoKey แล้วในรอบนี้ (กันกดซ้ำ)
+// งาน SE-Survey จบแล้ว → ปลดล็อกปุ่มของเคสนั้น (user เจอ #282 10/09/69: import XML ถูก EMCS ปัดตก แต่ปุ่ม "นำเข้า"
+// หายเพราะ seSent จำว่ากดไปแล้ว ต้องรีเฟรชหน้าถึงกดใหม่ได้) — พัง/หยุด/ส่งไม่ผ่าน = คืนปุ่ม · สำเร็จ = โหลดรายการใหม่
+// ให้ขึ้น "นำเข้าแล้ว" (ด่านกันนำเข้าซ้ำจริงอยู่ฝั่ง server 3 ชั้น ไม่ได้พึ่ง seSent)
+const seRunSeen = new Set();
+function releaseSeSent(runs){
+  let reload = false, rerender = false;
+  for (const r of runs){
+    if (seRunSeen.has(r.id) || r.status === "running" || r.status === "waiting") continue;
+    seRunSeen.add(r.id);
+    const m = /--sesurvey-case\s+(\S+)/.exec(r.cmd || "");
+    if (!m) continue;
+    seSent.delete(m[1]);
+    if (r.status === "done" && !r.send_failed) reload = true; else rerender = true;
+  }
+  if (reload && !loadCasesBtn.disabled) loadCasesBtn.click();
+  else if (rerender) renderSeCasesFromCache();
+}
 
 async function startSesurvey(caseId, claimNo, mode, live, autosend){
   caseId = String(caseId||"").trim();
