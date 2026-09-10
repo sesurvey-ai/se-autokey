@@ -642,6 +642,28 @@ def _report_damage_items(raw):
     return out
 
 
+def _opponent_birth_age(birthdate, age) -> dict:
+    """วันเกิด/อายุคู่กรณีจากเว็บ → ค่าที่ EMCS รับ (บังคับทั้งคู่ วันเกิดต้องเป็นวันที่ อายุต้องเป็นตัวเลข)
+
+    หัวหน้าตรวจบนเว็บใส่ "-" ให้คู่กรณี "รอตรวจสอบ" ตามกติกาช่องข้อความบังคับ แต่ 2 ช่องนี้ใส่ "-" ไม่ได้
+    (แอปมือถือเป็นตัวเลือกวันที่ จึงไม่มีปัญหา) — user เคาะ 10/09/69:
+      · วันเกิดไม่ใช่วันที่ ("-"/ว่าง) → **วันนี้** และถ้าอายุก็ไม่ใช่ตัวเลข → **0**
+      · วันเกิดถูกแต่อายุไม่ใช่ตัวเลข → ปล่อยว่าง ให้ EMCS คำนวณจากวันเกิดเอง (onblur ของช่องวันเกิด)
+      · มาถูกทั้งคู่ → กรอกตามจริง
+    """
+    bd = str(birthdate or "").strip()
+    ag = str(age or "").strip()
+    valid_bd = bool(re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}", bd)) or bool(re.match(r"^\d{4}-\d{2}-\d{2}", bd))
+    valid_age = bool(re.fullmatch(r"\d{1,3}", ag))
+    if not valid_bd:
+        t = datetime.now()
+        bd = f"{t.day:02d}/{t.month:02d}/{t.year + 543}"
+        ag = ag if valid_age else "0"
+    elif not valid_age:
+        ag = ""
+    return {"birthdate": bd, "age": ag}
+
+
 def _populate_third_parties_from_report(data, rep):
     """สร้าง data.third_parties จาก opposing_parties (ค่าไทยของ se-survey) แทน XML (ที่ให้ code) —
     fill_third_parties อ่าน veh_type (ไทย เช่น 'เก๋ง') + insurer (ชื่อเต็ม) เพื่อเลือก dropdown บังคับ
@@ -687,8 +709,8 @@ def _populate_third_parties_from_report(data, rep):
             # ที่อยู่ "เจ้าของรถ" — เดิมไม่ map ทำให้ตกไป fallback = ที่อยู่ผู้ขับขี่ (คนละคนได้)
             "opo_address": str(o.get("owner_address") or "").strip(),
             "gender": str(o.get("gender") or "").strip(),
-            "age": str(o.get("age") or "").strip(),
-            "birthdate": str(o.get("birthdate") or "").strip(),
+            # วันเกิด/อายุ: "-" จากเว็บ → วันนี้/0 (ดู _opponent_birth_age — user เคาะ 10/09/69)
+            **_opponent_birth_age(o.get("birthdate"), o.get("age")),
             "address": str(o.get("address") or "").strip(),
             "phone": str(o.get("phone") or "").strip(),
             "idcard": str(o.get("cid") or "").strip(),
