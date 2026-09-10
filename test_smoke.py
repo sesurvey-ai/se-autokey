@@ -735,7 +735,7 @@ check("diff_claim_data: ข้าม xml_file",
 # ---- 15. keyer_for: คนคีย์ตามเลขท้ายเลขเคลม ----
 from autokey import isurvey_report as _rep  # noqa: E402
 check("keyer ลงท้าย 5 = วิสุดา", _rep.keyer_for("2026013145915") == "วิสุดา ดอนหมัน")
-check("keyer ลงท้าย 2 = กัญญารัตน์", _rep.keyer_for("2026013145682") == "กัญญารัตน์ เสนคำ")
+check("keyer ลงท้าย 2 = ศราวุธ (user เปลี่ยนคนคีย์ 10/09/69)", _rep.keyer_for("2026013145682") == "ศราวุธ จำปีคง")
 check("keyer ลงท้าย 0 = วรนุช", _rep.keyer_for("2026013145910") == "วรนุช น้ำพุ")
 check("keyer ลงท้าย 9 = สุทิษา", _rep.keyer_for("2026013145919") == "สุทิษา พงษ์แขก")
 check("keyer ว่าง → ''", _rep.keyer_for("") == "" and _rep.keyer_for("abc") == "")

@@ -162,6 +162,9 @@ def parse_args():
                         "ก่อน (gate) ถ้ายังไม่ส่งจะไม่ยิง (ไม่อ่าน/ไม่กรอกฝั่งหน้า)")
     p.add_argument("--dry-run", action="store_true",
                    help="ใช้กับ --report-isurvey: ตรวจ gate + โชว์ payload แต่ไม่ยิงจริง")
+    p.add_argument("--trust-joblog", action="store_true",
+                   help="ใช้กับ --report-isurvey: ถ้าสมุดงานบันทึกว่าเคลมนี้ 'ส่งงานแล้ว' (บอทเพิ่งส่งเอง) "
+                        "ให้ยิงแจ้ง ISURVEY ได้เลยโดยไม่เปิด Chrome ไปตรวจ EMCS ซ้ำ (ปุ่ม 'แจ้ง ISURVEY อีกครั้ง' ใช้ทางนี้)")
     p.add_argument("--sesurvey-case", default="",
                    help="ดึงงานจากระบบ se-survey ด้วยเลขเคส (case id) หรือเลขเซอร์เวย์ (SETP-...; auto-detect): "
                         "โหลด SURV_REPORT XML จาก api.sesurvey.cloud แล้วเข้า flow นำเข้า XML ของ EMCS — "
@@ -1597,31 +1600,64 @@ def run_sesurvey_import(cfg, args):
            + " — ตรวจงาน + กรอกค่าใช้จ่าย + กดส่งเอง (บอทไม่กดส่งให้)")
 
 
+def _joblog_sent_row(claim: str, invoice: str = ""):
+    """แถวล่าสุดของเคลมนี้ในสมุดงาน ถ้าเป็น 'sent' (บอทเพิ่งส่ง EMCS สำเร็จเอง) — ไม่ใช่ = None
+    ใหม่สุดชนะ: ถ้าหลังจากส่งแล้วมี send_failed/draft ตามมา ถือว่ายังไม่ยืนยัน ต้องไปเปิด EMCS ดูจริง"""
+    for row in joblog.read_jobs(limit=5000, q=claim):
+        if str(row.get("claim", "")) != claim:
+            continue
+        if invoice and str(row.get("invoice", "")) not in ("", invoice):
+            continue
+        return row if row.get("event") == "sent" else None
+    return None
+
+
 def run_report_isurvey(cfg, args):
     """แจ้ง ISURVEY ว่าเคลม 'ส่งงานแล้ว' — gate ด้วยสถานะ EMCS ก่อนเสมอ
-    (ถ้ายังไม่กดส่งงานใหม่ใน EMCS จะข้าม ไม่ยิง)"""
+    (ถ้ายังไม่กดส่งงานใหม่ใน EMCS จะข้าม ไม่ยิง)
+
+    --trust-joblog (10/09/69): เคลมที่สมุดงานบันทึก 'sent' ไว้ (บอทเพิ่งกดส่งงานใหม่สำเร็จเองแล้วแจ้ง ISURVEY
+    ไม่ผ่านเพราะ timeout) ไม่ต้องเปิด Chrome ไปอ่านสถานะ EMCS ซ้ำ — ปุ่ม "แจ้ง ISURVEY อีกครั้ง" ใช้ทางนี้
+    (user 10/09/69: ห้ามไปยุ่งกับงานบน EMCS ที่ส่งเสร็จแล้ว) · เคลมที่สมุดงานไม่ยืนยันยังผ่านด่าน EMCS เหมือนเดิม"""
     from autokey import isurvey_report
     targets = build_targets(args)
+    trusted = {}
+    if getattr(args, "trust_joblog", False):
+        for claim, invoice in targets:
+            row = _joblog_sent_row(claim, invoice)
+            if row:
+                trusted[(claim, invoice)] = row
+    need_driver = any((c, i) not in trusted for c, i in targets)
     per_run_dl = cfg.download_dir / "_dl" / str(os.getpid())
-    driver = make_driver(detach=True, download_dir=per_run_dl)
+    driver = make_driver(detach=True, download_dir=per_run_dl) if need_driver else None
     results = []
     try:
-        emcs.login(driver, cfg)
+        if driver is not None:
+            emcs.login(driver, cfg)
         for claim, invoice in targets:
             banner(f"แจ้ง ISURVEY: เคลม {claim}")
-            # ส่งเลขใบแจ้งหนี้ไปด้วย = ตัวแยกเรื่อง (1 เคลมมีได้หลายเรื่อง/หลายครั้งที่)
-            info = emcs.report_status(driver, claim, survey_no=invoice)
-            st = (info or {}).get("status", "").strip()
-            if not info:
-                log("⏭️ ข้าม — ไม่พบเรื่องของเคลมนี้ใน EMCS (หรือแยกเรื่องไม่ออก)")
-                results.append((claim, "⏭️", "ไม่พบเรื่อง/แยกเรื่องไม่ออก"))
-                continue
-            # whitelist เท่านั้น — สถานะที่ไม่รู้จักถือว่า "ยังไม่ยืนยัน" ไม่ใช่ "ส่งแล้ว"
-            if st not in emcs.SUBMITTED_STATUSES:
-                log(f"⏭️ ข้าม — ยังไม่ยืนยันว่าส่งงานแล้ว (สถานะ: {st or 'อ่านไม่ได้'})")
-                results.append((claim, "⏭️", f"ยังไม่ยืนยันว่าส่ง ({st or 'อ่านสถานะไม่ได้'})"))
-                continue
-            log(f"✓ EMCS ส่งงานแล้ว (สถานะ: {st})")
+            row = trusted.get((claim, invoice))
+            if row is not None:
+                # สมุดงานยืนยันว่า EMCS ส่งแล้ว (บอทเป็นคนกดเอง) → ไม่แตะ EMCS อีก
+                st = "ส่งแล้ว (สมุดงาน)"
+                info = {"status": st, "survey_no": row.get("invoice") or invoice,
+                        "esurvey": row.get("esurvey", "")}
+                log(f"✓ สมุดงานบันทึกว่า EMCS ส่งงานแล้วเมื่อ {row.get('ts', '?')} "
+                    f"(e-Survey {row.get('esurvey') or '-'}) — ไม่เปิด EMCS ซ้ำ")
+            else:
+                # ส่งเลขใบแจ้งหนี้ไปด้วย = ตัวแยกเรื่อง (1 เคลมมีได้หลายเรื่อง/หลายครั้งที่)
+                info = emcs.report_status(driver, claim, survey_no=invoice)
+                st = (info or {}).get("status", "").strip()
+                if not info:
+                    log("⏭️ ข้าม — ไม่พบเรื่องของเคลมนี้ใน EMCS (หรือแยกเรื่องไม่ออก)")
+                    results.append((claim, "⏭️", "ไม่พบเรื่อง/แยกเรื่องไม่ออก"))
+                    continue
+                # whitelist เท่านั้น — สถานะที่ไม่รู้จักถือว่า "ยังไม่ยืนยัน" ไม่ใช่ "ส่งแล้ว"
+                if st not in emcs.SUBMITTED_STATUSES:
+                    log(f"⏭️ ข้าม — ยังไม่ยืนยันว่าส่งงานแล้ว (สถานะ: {st or 'อ่านไม่ได้'})")
+                    results.append((claim, "⏭️", f"ยังไม่ยืนยันว่าส่ง ({st or 'อ่านสถานะไม่ได้'})"))
+                    continue
+                log(f"✓ EMCS ส่งงานแล้ว (สถานะ: {st})")
             survey_no = info.get("survey_no") or invoice
             keyer = isurvey_report.keyer_for(claim)
             when = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1661,7 +1697,8 @@ def run_report_isurvey(cfg, args):
             log((f"✅ บันทึกลง se-key DB {_n} row" if _n == len(_r)
                  else f"⚠️ บันทึก se-key DB {_n}/{len(_r)} row"))
     finally:
-        driver.quit()
+        if driver is not None:
+            driver.quit()
     banner("สรุปการแจ้ง ISURVEY" + (" (dry-run ไม่ยิงจริง)" if args.dry_run else ""))
     for c, icon, detail in results:
         log_plain(f"  {icon} {c} — {detail}")

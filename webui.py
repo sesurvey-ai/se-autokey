@@ -1395,7 +1395,9 @@ class Handler(BaseHTTPRequestHandler):
             if not re.fullmatch(r"\d{8,20}", claim):
                 self._send(400, {"error": f"เลขเคลมไม่ถูกต้อง: {claim!r}"})
                 return
-            run_id, err = _spawn([sys.executable, "-u", "main.py", "--claim", claim, "--report-isurvey", "-y"],
+            # --trust-joblog: บอทเพิ่งส่ง EMCS สำเร็จเอง (สมุดงานมี 'sent') → ยิง ISURVEY เลย ไม่เปิด Chrome/EMCS ซ้ำ
+            run_id, err = _spawn([sys.executable, "-u", "main.py", "--claim", claim, "--report-isurvey",
+                                  "--trust-joblog", "-y"],
                                  f"แจ้ง ISURVEY: เคลม {claim}", "report-isurvey", [claim])
             if err:
                 self._send(409, {"error": err})
