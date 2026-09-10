@@ -7,7 +7,7 @@ subprocess ทุกอย่างจึงทำงานเหมือนร
 
 รองรับ "รันหลายงานพร้อมกัน" — แต่ละงานเป็น subprocess + หน้าต่าง Chrome แยกกัน
 (ISURVEY บัญชีเดียวเปิดได้หลาย session) มีการ์ด log + ปุ่มหยุด/ดำเนินการต่อ
-แยกของแต่ละงาน จำกัดจำนวนงานพร้อมกันด้วย SE_MAX_CONCURRENT (default 4)
+แยกของแต่ละงาน จำกัดจำนวนงานพร้อมกันด้วย SE_MAX_CONCURRENT (default 6)
 
 วิธีใช้:
     python webui.py            # เปิดที่ http://127.0.0.1:8765
@@ -729,7 +729,8 @@ SEND_FAIL_MARKER = "@@JOB_SEND_FAIL@@"   # ต้องตรงกับ autoke
 DUP_MARKER = "@@JOB_DUP@@"               # ต้องตรงกับ autokey/browser.py (เคลมมีเรื่องใน EMCS แล้ว ไม่ได้สร้างซ้ำ)
 
 # จำนวนงานที่รันพร้อมกันได้สูงสุด (กันเปิด Chrome เยอะเกินจนเครื่องค้าง)
-MAX_CONCURRENT = int(os.environ.get("SE_MAX_CONCURRENT", "4") or "4")
+# 10/09/69: default 4 → 6 — user ยืนยัน EMCS ล็อกอินพร้อมกันได้ (ไม่เตะ session) และเครื่องรัน Chrome ได้หลายตัว
+MAX_CONCURRENT = int(os.environ.get("SE_MAX_CONCURRENT", "6") or "6")
 
 # ---------------------------------------------------------------------------
 # สถานะการรัน — เก็บได้หลายงานพร้อมกัน (keyed by run_id)
@@ -1858,6 +1859,7 @@ PAGE = r"""<!doctype html>
         <span id="secount" style="color:var(--muted);font-size:13px"></span>
         <button class="run" id="sechkall" style="margin-left:auto;padding:7px 12px;font-size:13px;background:#64748b">🔍 ตรวจที่เลือก</button>
         <button class="run" id="serunall" style="padding:7px 12px;font-size:13px">⚡ นำเข้าที่เลือก</button>
+        <button class="run" id="serunallsend" style="padding:7px 12px;font-size:13px;background:#b45309" title="นำเข้าแล้วกดส่งงานใหม่ให้ทันที ทุกเคสที่เลือก — ส่งแล้วแก้ไม่ได้">⚡ นำเข้า + ส่งงานใหม่ ที่เลือก</button>
       </div>
       <div id="sequeue" hidden style="margin:8px 0;padding:8px 10px;border-radius:8px;background:#0f172a11;font-size:13px"></div>
       <div id="secasesbox" class="caselist" style="margin-top:12px"></div>
@@ -2950,6 +2952,7 @@ function updateSeCount(){
   const n = seSelected().length;
   $("#secount").textContent = n ? ("เลือกไว้ " + n + " เคส") : "";
   $("#serunall").textContent = n ? ("⚡ นำเข้าที่เลือก (" + n + ")") : "⚡ นำเข้าที่เลือก";
+  $("#serunallsend").textContent = n ? ("⚡ นำเข้า + ส่งงานใหม่ ที่เลือก (" + n + ")") : "⚡ นำเข้า + ส่งงานใหม่ ที่เลือก";
 }
 $("#sehideimported").addEventListener("change", renderSeCasesFromCache);
 $("#seall").addEventListener("change", e => {
@@ -2987,54 +2990,78 @@ $("#sechkall").addEventListener("click", async () => {
   for (const c of sel) await checkSeCase(c.dataset.id);
 });
 
-// คิวนำเข้า — รันทีละเคสเสมอ (EMCS ล็อกเรื่องรายตัว + โควตารูปเป็นของเคลม)
-$("#serunall").addEventListener("click", async () => {
+// ── นำเข้าที่เลือก: ยิงพร้อมกันตามเพดาน (SE_MAX_CONCURRENT) ไม่ต่อคิวทีละเคส — user เคาะ 10/09/69
+//    (เดิมรันทีละเคสเพราะเข้าใจว่า EMCS ล็อกรายเรื่อง — แต่คนละเรื่องกันอยู่แล้ว · user ยืนยัน EMCS ล็อกอิน
+//    พร้อมกันได้ ไม่เตะ session และเครื่องรัน Chrome ได้หลายตัว) · เต็มเพดาน = รอที่ว่างแล้วเริ่มเคสถัดไปเอง
+//    autosend=true = ปุ่ม "นำเข้า + ส่งงานใหม่ ที่เลือก" (กติกาเดียวกับปุ่มรายเคส: ส่งแล้วแก้ไม่ได้)
+async function runSelectedBatch(autosend){
   const sel = seSelected();
   if (!sel.length){ alert("ยังไม่ได้เลือกเคส"); return; }
-  if (!confirm("นำเข้า EMCS จริง " + sel.length + " เคส (สร้าง draft) ?\n\n"
-      + "• รันทีละเคส กรอกฟอร์ม + อัปรูป + บันทึก draft — ไม่กดส่งงาน\n"
-      + "• draft ที่สร้างลบไม่ได้ (ยกเลิกได้อย่างเดียว)")) return;
+  const label = autosend ? "นำเข้า EMCS + ส่งงานใหม่" : "นำเข้า EMCS จริง (สร้าง draft)";
+  if (!confirm(label + " " + sel.length + " เคส พร้อมกัน?\n\n"
+      + "• เริ่มพร้อมกันได้ตามเพดานงาน (ดู 'กำลังรัน x/y' ด้านบน) ที่เหลือเริ่มเองทันทีที่มีที่ว่าง\n"
+      + (autosend ? "• draft เสร็จแล้วกดส่งงานใหม่ให้ทันที — ส่งแล้วแก้ไม่ได้ (ตรวจกลับไม่ตรง = ไม่ส่ง เก็บ draft)"
+                  : "• สร้าง draft แล้วหยุด — ตรวจบน EMCS แล้วกดส่งงานเอง (draft ลบไม่ได้ ยกเลิกได้อย่างเดียว)"))) return;
   const qBox = $("#sequeue");
   qBox.hidden = false;
-  $("#serunall").disabled = true; $("#sechkall").disabled = true;
-  let done = 0;
+  const btns = [$("#serunall"), $("#serunallsend"), $("#sechkall")];
+  btns.forEach(b => b.disabled = true);
+  // ตรวจความพร้อมทุกเคสก่อน (เร็ว ไม่แตะ EMCS) — ไม่พร้อม = ข้ามเคสนั้น ไม่หยุดทั้งชุด
+  const ready = [], skipped = [];
   for (const c of sel){
     const id = c.dataset.id;
-    qBox.innerHTML = 'ตรวจเคส #' + escHtml(id) + ' (' + (done + 1) + '/' + sel.length + ')…';
-    const chk = await checkSeCase(id);              // ตรวจก่อนทุกเคส — ไม่พร้อมก็ข้าม
-    if (chk && !chk.ready){
-      qBox.innerHTML = '<span style="color:var(--err)">⛔ เคส #' + escHtml(id)
-        + ' ยังไม่พร้อม (ดูรายละเอียดใต้เคส) — หยุดคิว</span>';
-      break;
+    qBox.innerHTML = 'ตรวจความพร้อม #' + escHtml(id) + ' (' + (ready.length + skipped.length + 1) + '/' + sel.length + ')…';
+    const chk = await checkSeCase(id);
+    if (chk && !chk.ready) skipped.push(id); else ready.push(c);
+  }
+  const started = new Map();   // run_id → case id
+  const failed = [];
+  for (const c of ready){
+    const id = c.dataset.id;
+    for (let attempt = 0; attempt < 400; attempt++){        // รอที่ว่างได้นาน (2 วิ × 400 ≈ 13 นาที)
+      let active = 0, max = 1;
+      try{ const {data} = await postJSON("/poll", {offsets}); active = data.active; max = data.max; }catch(e){}
+      if (active < max){
+        try{
+          const {ok, data} = await postJSON("/api/import-sesurvey",
+                                            {case_id: id, mode: "import", live: true, autosend: !!autosend});
+          if (ok){ started.set(data.run_id, id); seSent.add(String(id)); c.checked = false; break; }
+          if (!/เต็มขีดจำกัด/.test(data.error || "")){ failed.push("#" + id + ": " + (data.error || "เริ่มงานไม่สำเร็จ")); break; }
+          // แข่งกับงานอื่นจนเต็มพอดี → วนรอต่อ
+        }catch(e){ failed.push("#" + id + ": ติดต่อเซิร์ฟเวอร์ไม่ได้"); break; }
+      }
+      qBox.innerHTML = 'เริ่มแล้ว ' + started.size + '/' + ready.length + ' เคส · เต็มเพดาน ' + active + '/' + max
+        + ' — รอที่ว่างเพื่อเริ่ม #' + escHtml(id) + (skipped.length ? ' · ข้ามที่ยังไม่พร้อม ' + skipped.length : '');
+      await new Promise(r => setTimeout(r, 2000));
     }
-    qBox.innerHTML = 'กำลังนำเข้า #' + escHtml(id) + ' (' + (done + 1) + '/' + sel.length + ')…'
-      + '<div style="color:var(--muted);margin-top:4px">รันทีละเคส — EMCS ล็อกเรื่องรายตัว</div>';
-    let runId = null;
-    try{
-      const {ok, data} = await postJSON("/api/import-sesurvey",
-                                        {case_id: id, mode: "import", live: true});
-      if (!ok){ qBox.innerHTML = '<span style="color:var(--err)">#' + escHtml(id) + ': '
-                + escHtml(data.error || "เริ่มงานไม่สำเร็จ") + ' — หยุดคิว</span>'; break; }
-      runId = data.run_id;
-    }catch(e){ qBox.innerHTML = '<span style="color:var(--err)">ติดต่อเซิร์ฟเวอร์ไม่ได้ — หยุดคิว</span>'; break; }
-    while (true){
-      await new Promise(r => setTimeout(r, 1500));
-      let st = null;
-      try{
-        const {data} = await postJSON("/poll", {});
-        st = (data.runs || []).find(x => x.id === runId);
-      }catch(e){ /* เน็ตสะดุด — วนรอต่อ */ }
-      if (st && st.status !== "running") break;
-    }
-    done++;
-    c.checked = false;
-    seSent.add(String(id));
+    qBox.innerHTML = 'เริ่มแล้ว ' + started.size + '/' + ready.length + ' เคส (รันพร้อมกัน)'
+      + (skipped.length ? ' · ข้ามที่ยังไม่พร้อม ' + skipped.length : '');
+    poll();
   }
   updateSeCount();
-  if (done === sel.length) qBox.innerHTML = '✅ นำเข้าครบ ' + done + '/' + sel.length
-    + ' เคส — ตรวจ draft บน EMCS แล้วกดส่งงานเอง';
-  $("#serunall").disabled = false; $("#sechkall").disabled = false;
-});
+  renderSeCasesFromCache();
+  // รอทุกงานที่เริ่มไว้จบ แล้วสรุป (การ์ดแต่ละใบโชว์ผลของตัวเองอยู่แล้ว)
+  while (started.size){
+    await new Promise(r => setTimeout(r, 2500));
+    let runs = null;
+    try{ const {data} = await postJSON("/poll", {offsets}); runs = data.runs || []; }catch(e){ continue; }
+    const still = [...started.keys()].filter(rid => {
+      const st = runs.find(x => x.id === rid);
+      return st && (st.status === "running" || st.status === "waiting");
+    });
+    qBox.innerHTML = 'กำลังรัน ' + still.length + ' งาน · จบแล้ว ' + (started.size - still.length) + '/' + started.size
+      + (skipped.length ? ' · ข้ามที่ยังไม่พร้อม ' + skipped.length : '');
+    if (!still.length) break;
+  }
+  qBox.innerHTML = '✅ จบแล้ว ' + started.size + ' เคส'
+    + (autosend ? ' — ดูผลส่งงานที่การ์ดแต่ละใบ' : ' — ตรวจ draft บน EMCS แล้วกดส่งงานเอง')
+    + (skipped.length ? '<div style="color:var(--warn)">ข้าม (ยังไม่พร้อม): #' + skipped.map(escHtml).join(', #') + '</div>' : '')
+    + (failed.length ? '<div style="color:var(--err)">' + failed.map(escHtml).join('<br>') + '</div>' : '');
+  btns.forEach(b => b.disabled = false);
+  if (!loadCasesBtn.disabled) loadCasesBtn.click();
+}
+$("#serunall").addEventListener("click", () => runSelectedBatch(false));
+$("#serunallsend").addEventListener("click", () => runSelectedBatch(true));
 loadCasesBtn.addEventListener("click", async () => {
   loadCasesBtn.disabled = true;
   seCasesBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">กำลังโหลด…</div>';

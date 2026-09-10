@@ -37,7 +37,7 @@
 webui.py               หน้าเว็บ launcher (stdlib ล้วน) — เรียก main.py ผ่าน subprocess
                        (stdin=PIPE, env SE_WEBUI=1) แล้วสตรีม stdout ขึ้นเว็บ;
                        รันหลายงานพร้อมกันได้ (_runs keyed by run_id, เพดาน
-                       SE_MAX_CONCURRENT=4) UI การ์ดต่องาน; routes POST
+                       SE_MAX_CONCURRENT=6) UI การ์ดต่องาน; routes POST
                        /run /poll /stop /continue /forget;
                        จับ marker @@MANUAL_FILL@@ → สถานะ waiting → โชว์ปุ่ม "ดำเนินการต่อ"
 start-webui.bat        ดับเบิลคลิกเปิด webui.py ผ่าน runtime\python.exe (ถ้าไม่มี = fallback ไป python ของเครื่อง)
