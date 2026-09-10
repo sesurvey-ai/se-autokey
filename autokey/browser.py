@@ -921,6 +921,7 @@ SUBMIT_MARKER = "@@READY_SUBMIT@@"  # ต้องตรงกับค่าใ
 SENT_MARKER = "@@JOB_SENT@@"        # ต้องตรงกับค่าใน webui.py (ส่งงานสำเร็จแล้ว)
 SEND_FAIL_MARKER = "@@JOB_SEND_FAIL@@"   # ต้องตรงกับค่าใน webui.py (กดส่งแล้วไม่ผ่าน)
 DUP_MARKER = "@@JOB_DUP@@"               # ต้องตรงกับค่าใน webui.py (เคลมมีเรื่องใน EMCS อยู่แล้ว ไม่ได้สร้างซ้ำ)
+REJECT_MARKER = "@@JOB_REJECT@@"         # ต้องตรงกับค่าใน webui.py (EMCS ปัดตกไฟล์ XML — แก้ข้อมูลต้นทางแล้วนำเข้าใหม่)
 
 
 def announce_send_failed(claim: str, reason: str = ""):
@@ -944,6 +945,19 @@ def announce_duplicate(claim: str, case_id: str, existing: list):
         "claim": claim, "case_id": str(case_id or ""),
         "esurveys": [str(r.get("esurvey") or "") for r in (existing or [])],
         "rows": [str(r.get("row") or "")[:120] for r in (existing or [])],
+    }, ensure_ascii=False), flush=True)
+
+
+def announce_rejected(claim: str, case_id: str, rows: list, text: str = ""):
+    """บอกหน้าเว็บว่า "EMCS ปัดตกไฟล์นำเข้าของเคลมนี้" (ยังไม่มีเรื่อง/draft ใน EMCS) — การ์ดขึ้นกล่องแดง
+    บอกช่องที่ผิด + ค่าที่ส่งไป + ขนาดที่รับ ให้คนไปแก้บนเว็บ se-survey แล้วกดนำเข้าใหม่ (เคส #241 10/09/69)"""
+    if not _WEBUI:
+        return
+    print(REJECT_MARKER + json.dumps({
+        "claim": claim, "case_id": str(case_id or ""),
+        "rows": [{"label": str(r.get("label") or ""), "value": str(r.get("value") or "")[:80],
+                  "size": str(r.get("size") or ""), "note": str(r.get("note") or "")} for r in (rows or [])],
+        "text": str(text or "")[:400],
     }, ensure_ascii=False), flush=True)
 
 

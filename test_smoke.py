@@ -3960,5 +3960,21 @@ check("ประเภทเคลมจากเว็บ: กลับด้�
       all(_main._WEB_CLAIM_TYPE[web] == isv.lstrip("0")
           for isv, web in _conv.CLAIM_MTYPE_MAP.items()))
 
+# ---- EMCS ปัดตกไฟล์ XML "ข้อมูลนำเข้ามีขนาดเกิน" → ImportRejectedError อ่านรู้เรื่อง (เคส #241 10/09/69) ----
+_swal = ("กรุณาตรวจสอบ!\nข้อมูลนำเข้ามีขนาดเกิน โปรดตรวจสอบรายละเอียดดังนี้\n"
+         "ลำดับ\tชื่อตาราง\tชื่อข้อมูล\tขนาดข้อมูล\tข้อมูลนำเข้า\tหมายเหตุ\n"
+         "1\tTXN_SURV_CAR\tDRI_CARDID\t13\t14000700231336\tรถประกัน\nOK")
+_rows = emcs.parse_import_reject(_swal)
+check("EMCS ปัดตกไฟล์: แปลตารางขนาดเกินได้ (ช่อง/ค่า/ขนาด/บล็อก)",
+      len(_rows) == 1 and _rows[0]["label"] == "เลขบัตรประชาชนผู้ขับขี่" and _rows[0]["value"] == "14000700231336"
+      and _rows[0]["size"] == "13" and _rows[0]["note"] == "รถประกัน")
+_err = emcs.ImportRejectedError(_swal, _rows)
+check("EMCS ปัดตกไฟล์: ข้อความสรุปบอกช่อง+ความยาว+ขนาดที่รับ (เป็น RuntimeError ให้เส้นอื่นจับได้เหมือนเดิม)",
+      "เลขบัตรประชาชนผู้ขับขี่ (รถประกัน)" in str(_err) and "ยาว 14 ตัว" in str(_err)
+      and "13" in str(_err) and isinstance(_err, RuntimeError))
+check("EMCS ปัดตกไฟล์: ข้อความที่ไม่ใช่ตาราง → โชว์ข้อความดิบ ตัด 'กรุณาตรวจสอบ!'/'OK' ทิ้ง",
+      emcs.ImportRejectedError("กรุณาตรวจสอบ!\nไม่พบข้อมูลนำเข้าที่ระบบต้องการ\nOK", []).summary()
+      == "EMCS ปัดตกไฟล์นำเข้า — ไม่พบข้อมูลนำเข้าที่ระบบต้องการ")
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

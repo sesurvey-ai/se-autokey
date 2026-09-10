@@ -41,6 +41,7 @@ from selenium.common.exceptions import UnexpectedAlertPresentException
 from autokey import emcs, isurvey, isurvey_api, joblog
 from autokey.browser import (
     announce_duplicate,
+    announce_rejected,
     announce_send_failed,
     announce_sent,
     default_submit_selection,
@@ -1602,6 +1603,23 @@ def run_sesurvey_import(cfg, args):
         except Exception:
             pass
         return
+    except emcs.ImportRejectedError as e:
+        # EMCS ปัดตกไฟล์ตั้งแต่กด "นำเข้าข้อมูล" (ยังไม่มี draft) = ข้อมูลบนเว็บผิด ไม่ใช่บอทพัง — แสดงสะอาด
+        # ไม่พ่น traceback (เคส #241 10/09/69: เลขบัตรผู้ขับขี่ 14 ตัว ช่องรับ 13) · หน้าเว็บได้ marker →
+        # กล่องแดงบอกช่อง/ค่า/ขนาด · จบด้วย exit 2 ให้การ์ดขึ้น ❌ และปุ่มนำเข้ากลับมาให้กดใหม่หลังแก้
+        log("")
+        log(f"⛔ {e.summary()}")
+        if e.rows:
+            for r in e.rows:
+                log(f"   • {r['label']}" + (f" ({r['note']})" if r.get("note") else "")
+                    + f": ส่งไป '{r['value']}' ({len(r['value'])} ตัว) — ช่องรับได้ {r['size']} ตัว")
+        log("   → ยังไม่มีเรื่องใน EMCS (บอทไม่ได้สร้าง draft) · แก้ข้อมูลบนเว็บ se-survey แล้วกด นำเข้า ใหม่")
+        announce_rejected(data.claim_value, case_id, e.rows, e.text)
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        sys.exit(2)
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"sesurvey_{case_id}")
         # draft อาจถูกสร้างไปแล้วก่อนพัง (ลบใน EMCS ไม่ได้) — ต้อง mark ฝั่ง se-survey

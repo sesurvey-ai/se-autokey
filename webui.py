@@ -550,6 +550,7 @@ def check_sesurvey_case(case_id: str):
                 blockers.append(f"{label} ว่าง — EMCS บังคับ บอทจะหยุดรอกรอกเองกลางทาง")
         if not str(d.driver_title or "").strip():
             warnings.append("ไม่มีคำนำหน้าผู้ขับขี่ (บอทจะลองอนุมานจากชื่อผู้เอาประกัน)")
+        blockers += _id_length_blockers(rep)
     except Exception as e:
         blockers.append(f"ดึง report ของเคสไม่ได้ ({type(e).__name__}) — "
                         "ค่าไทยของ dropdown บังคับจะขาด")
@@ -559,6 +560,29 @@ def check_sesurvey_case(case_id: str):
     return {"case_id": str(case_id), "counts": counts, "info": info,
             "blockers": blockers, "warnings": warnings,
             "ready": not blockers}, None
+
+
+def _id_length_blockers(rep: dict) -> list:
+    """เลขบัตรที่ยาวเกินขนาดช่องของ EMCS → นำเข้า XML ไม่ผ่านทั้งไฟล์ (EMCS ตรวจขนาดก่อนเปิดฟอร์ม)
+
+    เคส #241 10/09/69: เลขบัตรผู้ขับขี่ 14 ตัว (ช่อง DRI_CARDID รับ 13) — บอทโหลดรูป 65 ใบ + ล็อกอิน แล้วค่อยล้ม
+    ขนาดช่องจริง: ผู้ขับขี่รถประกัน/คู่กรณี 13 · ผู้บาดเจ็บ 20 (ตามที่แอปมือถือคุมไว้ใน kCidField)
+    เว็บ se-survey ไม่เคยคุมความยาว (แอปคุม 13 ตั้งแต่พิมพ์) จึงต้องดักที่นี่ก่อนเปิด Chrome"""
+    out = []
+
+    def chk(label, val, size):
+        v = str(val or "").strip()
+        if len(v) > size:
+            out.append(f"{label} ยาว {len(v)} ตัว ('{v}') — ช่อง EMCS รับ {size} ตัว นำเข้าไฟล์ไม่ผ่านทั้งไฟล์ "
+                       "แก้บนเว็บ se-survey ก่อน")
+    chk("เลขบัตรผู้ขับขี่รถประกัน", rep.get("driver_id_card"), 13)
+    for i, o in enumerate(rep.get("opposing_parties") or [], 1):
+        if isinstance(o, dict):
+            chk(f"เลขบัตรผู้ขับขี่คู่กรณีคันที่ {i}", o.get("cid"), 13)
+    for i, p in enumerate(rep.get("injured_persons") or [], 1):
+        if isinstance(p, dict):
+            chk(f"เลขบัตรผู้บาดเจ็บคนที่ {i}", p.get("cid"), 20)
+    return out
 
 
 def _spec_options(dropdown_id: str) -> list:
@@ -727,6 +751,7 @@ INJURY_MARKER = "@@INJURY_INPUTS@@"  # ต้องตรงกับ autokey/br
 SENT_MARKER = "@@JOB_SENT@@"         # ต้องตรงกับ autokey/browser.py (ส่งงาน+verify แล้ว)
 SEND_FAIL_MARKER = "@@JOB_SEND_FAIL@@"   # ต้องตรงกับ autokey/browser.py (สั่งส่งแล้วไม่ผ่าน)
 DUP_MARKER = "@@JOB_DUP@@"               # ต้องตรงกับ autokey/browser.py (เคลมมีเรื่องใน EMCS แล้ว ไม่ได้สร้างซ้ำ)
+REJECT_MARKER = "@@JOB_REJECT@@"         # ต้องตรงกับ autokey/browser.py (EMCS ปัดตกไฟล์ XML — ข้อมูลต้นทางผิด)
 
 # จำนวนงานที่รันพร้อมกันได้สูงสุด (กันเปิด Chrome เยอะเกินจนเครื่องค้าง)
 # 10/09/69: default 4 → 6 — user ยืนยัน EMCS ล็อกอินพร้อมกันได้ (ไม่เตะ session) และเครื่องรัน Chrome ได้หลายตัว
@@ -971,6 +996,18 @@ def _reader(proc, run_id: int):
                         break
                     r["dup"] = dinfo or {"claim": ""}
                 continue
+            elif line.startswith(REJECT_MARKER):
+                # EMCS ปัดตกไฟล์ XML (ยังไม่มี draft) → การ์ดขึ้นกล่องแดงบอกช่องที่ผิด ให้แก้บนเว็บแล้วนำเข้าใหม่
+                try:
+                    rinfo = json.loads(line[len(REJECT_MARKER):])
+                except Exception:
+                    rinfo = {}
+                with _lock:
+                    r = _runs.get(run_id)
+                    if r is None:
+                        break
+                    r["reject"] = rinfo or {"claim": ""}
+                continue
             elif line.startswith(SEND_FAIL_MARKER):
                 # สั่งส่งแล้วไม่ผ่าน — process ยังจบ exit 0 (งานอื่นทำครบ) ถ้าไม่จำไว้
                 # การ์ดจะขึ้น "เสร็จแล้ว ✅" ทั้งที่ยังต้องไปกดส่งเองบน EMCS
@@ -1120,6 +1157,7 @@ def poll_state(offsets: dict) -> dict:
                 "sent": r.get("sent"),   # มีค่า = ส่งงาน+verify แล้ว (การ์ดปิดตัวเองได้)
                 "send_failed": r.get("send_failed"),   # มีค่า = สั่งส่งแล้วไม่ผ่าน
                 "dup": r.get("dup"),                   # มีค่า = เคลมมีเรื่องใน EMCS แล้ว (ไม่ได้สร้างซ้ำ)
+                "reject": r.get("reject"),             # มีค่า = EMCS ปัดตกไฟล์ XML (ข้อมูลต้นทางผิด ยังไม่มี draft)
                 "lines": new, "next_offset": len(lines),
             })
         return {"runs": runs_out, "active": _active_count(), "max": MAX_CONCURRENT}
@@ -2570,6 +2608,22 @@ function renderDupBox(c, r){
     }catch(e){ alert("มาร์กไม่ได้: " + e); btn.disabled = false; btn.textContent = "✓ มาร์กว่านำเข้าแล้ว — เอาออกจากรายการ"; }
   });
 }
+function renderRejectBox(c, r){
+  const box = c.root.querySelector(".dupbox");
+  if (!box || box.dataset.done) return;
+  box.dataset.done = "1";
+  const d = r.reject || {};
+  const rows = d.rows || [];
+  box.innerHTML = '<div class="dup-title">⛔ EMCS ปัดตกไฟล์นำเข้าของเคลม ' + escHtml(d.claim || "")
+      + (rows.length ? ' — ข้อมูลยาวเกินขนาดช่อง' : '') + '</div>'
+    + (rows.length
+        ? rows.map(x => '<div class="dup-row">• ' + escHtml(x.label || "") + (x.note ? ' (' + escHtml(x.note) + ')' : '')
+            + ': ส่งไป <b>' + escHtml(x.value || "") + '</b> (' + String(x.value || "").length + ' ตัว) — ช่องรับได้ ' + escHtml(x.size || "?") + ' ตัว</div>').join("")
+        : '<div class="dup-row">' + escHtml(d.text || "") + '</div>')
+    + '<div class="dup-hint">ยังไม่มีเรื่องใน EMCS (บอทไม่ได้สร้าง draft) — แก้ข้อมูลบนเว็บ se-survey'
+      + (d.case_id ? ' เคส #' + escHtml(d.case_id) : '') + ' แล้วกด นำเข้า ใหม่ได้เลย</div>';
+  box.hidden = false;
+}
 function removeCard(id){
   const c = cards[id];
   if (c){ c.root.remove(); delete cards[id]; }
@@ -2590,6 +2644,8 @@ function renderRun(r){
   if (r.send_failed && r.status === "done"){ cls = "error"; txt = "ส่งงานไม่สำเร็จ ❌"; }
   // เคลมมีเรื่องใน EMCS แล้ว (บอทไม่สร้างซ้ำ) — ป้ายแดง + กล่องข้อความใหญ่ + ปุ่มมาร์กว่านำเข้าแล้ว (user ขอ 10/09/69)
   if (r.dup && r.status !== "running"){ cls = "error"; txt = "มีเรื่องใน EMCS แล้ว ⚠️"; renderDupBox(c, r); }
+  // EMCS ปัดตกไฟล์ XML ตั้งแต่กดนำเข้า (ยังไม่มี draft) — กล่องแดงบอกช่อง/ค่า/ขนาด แทน traceback (เคส #241 10/09/69)
+  if (r.reject && r.status !== "running"){ cls = "error"; txt = "EMCS ปัดตกไฟล์ ⛔"; renderRejectBox(c, r); }
   c.badgeEl.className = "badge " + cls;
   c.stEl.textContent = txt;
   const active = (r.status === "running" || r.status === "waiting");

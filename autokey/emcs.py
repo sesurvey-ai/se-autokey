@@ -1169,6 +1169,64 @@ def find_existing_reports(driver, claim_no: str) -> list:
     return driver.execute_script(_JS_FIND_ESURVEY_ROWS, claim_no.strip())
 
 
+# ชื่อช่องในไฟล์ XML → คำที่คนอ่านรู้เรื่อง (ใช้แปลตาราง "ข้อมูลนำเข้ามีขนาดเกิน" ของ EMCS)
+# ไม่มีในนี้ = โชว์ชื่อช่องดิบ ยังอ่านออกว่าเป็นช่องไหน
+_XML_FIELD_TH = {
+    "DRI_CARDID": "เลขบัตรประชาชนผู้ขับขี่", "DRI_NAME": "ชื่อผู้ขับขี่", "DRI_TELNO": "โทรศัพท์ผู้ขับขี่",
+    "DRI_ADDRESS": "ที่อยู่ผู้ขับขี่", "DRI_DRVID": "เลขใบขับขี่", "DRI_DRVPLACE": "ที่ออกใบขับขี่",
+    "OPO_NAME": "ชื่อเจ้าของรถ", "OPO_ADDRESS": "ที่อยู่เจ้าของรถ", "CAR_REGNO": "ทะเบียนรถ",
+    "CHASSISNO": "เลขตัวถัง", "ENGINENO": "เลขเครื่อง", "KM_NO": "เลขไมล์", "CMODEL": "รุ่นรถ",
+    "CAR_REGNO_YEAR": "ปีจดทะเบียน", "CLAIM_NO": "เลขเคลม", "REF_CLAIM_NO": "เลขเคลม", "POLICY_NO": "เลขกรมธรรม์",
+    "PRB_NUMBER": "เลข พ.ร.บ.", "ACC_PLACE": "สถานที่เกิดเหตุ", "ACC_SURV": "ผู้สำรวจ", "ACC_TEL": "โทรศัพท์ผู้สำรวจ",
+    "INS_NAME": "ชื่อผู้เอาประกัน", "INS_ADDRESS": "ที่อยู่ผู้เอาประกัน", "INS_TELNO": "โทรศัพท์ผู้เอาประกัน",
+    "INJ_NAME": "ชื่อผู้บาดเจ็บ", "INJ_CARDID": "เลขบัตรผู้บาดเจ็บ", "INJ_TELNO": "โทรศัพท์ผู้บาดเจ็บ",
+    "INJ_ADDRESS": "ที่อยู่ผู้บาดเจ็บ", "INJ_HOSPITAL": "โรงพยาบาล", "PRO_NAME": "ชื่อเจ้าของทรัพย์สิน",
+    "PRO_ADDRESS": "ที่อยู่เจ้าของทรัพย์สิน", "PRO_DETAIL": "รายละเอียดทรัพย์สิน", "SURV_JOBNO": "เลขเซอร์เวย์",
+    "POLICE_NAME": "ชื่อตำรวจ", "POLICE_STATION": "สถานีตำรวจ", "SURV_COMMENT": "ความเห็นผู้สำรวจ",
+}
+
+
+def parse_import_reject(text: str) -> list:
+    """แปลตารางที่ EMCS ตอบตอนปัดตกไฟล์ XML → [{"table","field","label","size","value","note"}]
+
+    รูปแบบจริง (เคส #241 10/09/69):
+        กรุณาตรวจสอบ!\nข้อมูลนำเข้ามีขนาดเกิน โปรดตรวจสอบรายละเอียดดังนี้\n
+        ลำดับ\tชื่อตาราง\tชื่อข้อมูล\tขนาดข้อมูล\tข้อมูลนำเข้า\tหมายเหตุ\n
+        1\tTXN_SURV_CAR\tDRI_CARDID\t13\t14000700231336\tรถประกัน\nOK
+    ไม่ใช่ตาราง = [] (ผู้เรียกโชว์ข้อความดิบแทน)"""
+    rows = []
+    for ln in str(text or "").splitlines():
+        parts = [p.strip() for p in ln.split("\t")]
+        if len(parts) < 5 or not parts[0].isdigit():
+            continue
+        table, field, size, value = parts[1], parts[2], parts[3], parts[4]
+        note = parts[5] if len(parts) > 5 else ""
+        rows.append({"table": table, "field": field, "label": _XML_FIELD_TH.get(field, field),
+                     "size": size, "value": value, "note": note})
+    return rows
+
+
+class ImportRejectedError(RuntimeError):
+    """EMCS ปัดตกไฟล์ XML ตอนกด "นำเข้าข้อมูล" (ไม่เข้าหน้าฟอร์ม ไม่มี draft เกิดขึ้น) — เช่นข้อมูลยาวเกินขนาดช่อง
+    (เคส #241 10/09/69: เลขบัตรผู้ขับขี่ 14 ตัว ช่องรับ 13) · `.rows` = ตารางที่แปลแล้ว · `.text` = ข้อความดิบของ EMCS
+    ผู้เรียกจับไปแสดงแบบสะอาด — สาระคือ "แก้ข้อมูลต้นทางแล้วนำเข้าใหม่" ไม่ใช่บั๊กของบอท"""
+
+    def __init__(self, text: str, rows: list):
+        self.text = str(text or "").strip()
+        self.rows = rows or []
+        super().__init__(self.summary())
+
+    def summary(self) -> str:
+        if self.rows:
+            parts = []
+            for r in self.rows:
+                where = f" ({r['note']})" if r.get("note") else ""
+                parts.append(f"{r['label']}{where} = {r['value']} ยาว {len(r['value'])} ตัว เกินขนาดช่อง {r['size']}")
+            return "EMCS ปัดตกไฟล์นำเข้า — ข้อมูลยาวเกินขนาดช่อง: " + " · ".join(parts)
+        t = re.sub(r"\s*\bOK\s*$", "", self.text.replace("กรุณาตรวจสอบ!", "").strip()).strip()
+        return "EMCS ปัดตกไฟล์นำเข้า — " + (t[:300] or "ไม่มีข้อความจากระบบ")
+
+
 class DuplicateReportError(RuntimeError):
     """เคลมนี้มีเรื่องใน EMCS อยู่แล้ว (guard_duplicate_report) — ผู้เรียกจับไปแสดงแบบสะอาด ไม่ต้องพ่น traceback
     (user ขอ 10/09/69: การ์ดบอทเคยโชว์ traceback ยาว ทั้งที่สาระมีบรรทัดเดียว) · `.existing` = รายการเรื่องที่พบ"""
@@ -1563,6 +1621,11 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
             lambda d: "frmSurvey.aspx" in d.current_url)
         wait_visible(driver, By.ID, "btnUpdate", 20)
     except TimeoutException as e:
+        msg = (swal_full or swal or "").strip()
+        if msg:
+            # EMCS ตอบเหตุผลมาแล้ว (ตาราง "ข้อมูลนำเข้ามีขนาดเกิน" ฯลฯ) = ข้อมูลต้นทางผิด ไม่ใช่บอทพัง
+            # → error ชนิดเฉพาะ ผู้เรียกโชว์สะอาด ๆ ไม่ต้องพ่น traceback (เคส #241 10/09/69)
+            raise ImportRejectedError(msg, parse_import_reject(msg)) from e
         raise RuntimeError(
             "นำเข้า XML แล้วไม่เข้าหน้าฟอร์ม (frmSurvey) — "
             f"ข้อความระบบ: {(swal_full or swal)[:400]!r}") from e
