@@ -24,7 +24,8 @@ class FakeAPI:
             1: {"Claim": {"claim_no": "2026019999999", "survey_no": "SEABI-220260899999", "notify_no": "2026147000",
                           "surveyor_name": "SEC343 นาย มี วงษ์สุวรรณ", "acc_verdictID": "03", "claim_MtypeID": "2"},
                 "Dispatch": {"dispatch_date": "2026-08-28", "dispatch_time": "14:41", "arrive_date": "2026-08-28",
-                             "arrive_time": "15:43", "finish_date": "2026-08-28", "finish_time": "16:09"},
+                             "arrive_time": "15:43", "finish_date": "2026-08-28", "finish_time": "16:09",
+                             "sendReportDate": "2026-08-28", "sendReportTime": "18:05"},
                 "bill": {"INVEST_NUM": "0", "INS_INVEST": "500.00", "TRANS_NUM": "0", "INS_TRANS": "600.00",
                          "PHOTO_NUM": "0", "INS_PHOTO": "50.00", "INS_TEL": "0.00", "INS_INSURE": "0.00",
                          "INS_CLAIM": "0.00", "INS_DAILY": "0.00", "INS_OTHER": "0.00"},
@@ -260,6 +261,15 @@ def test_survey_location_mapped_for_rate():
     assert r["survey_province"] == "ชลบุรี" and r["survey_district"] == "อำเภอศรีราชา"
     assert r["survey_subdistrict"] == "บ่อวิน"          # ชื่อล้วน ไม่มี "ตำบล" นำ — se-survey จับคู่เรทตำบลพิเศษด้วยชื่อ
     assert r["acc_district"] == "อำเภอพนัสนิคม"          # ไม่ปนกับสถานที่เกิดเหตุ
+
+
+def test_submitted_at_from_send_report_time():
+    """'ส่งงาน' บนเว็บ = ISURVEY 'ส่งรายงานเวลา' (Dispatch.sendReportDate/Time) เป็น ISO เวลาไทย · ไม่มี = '' (10/09/69)"""
+    out = conv.build_case(FakeAPI(), "case1", {})
+    assert out["caseFields"]["submitted_at"] == "2026-08-28T18:05:00+07:00"
+    api = FakeAPI()
+    api.tabs[1]["Dispatch"]["sendReportDate"] = None
+    assert conv.build_case(api, "case1", {})["caseFields"]["submitted_at"] == ""
 
 
 def test_survey_location_blank_when_isurvey_has_none():

@@ -246,6 +246,15 @@ def split_name(full: str):
 
 # ── จังหวัด/อำเภอ ────────────────────────────────────────────────────────────
 
+def _iso_bkk(date_s, time_s) -> str:
+    """'2026-08-03' + '19:41' (เวลาไทยของ ISURVEY) → '2026-08-03T19:41:00+07:00' · ไม่ครบ = '' (เว็บเก็บว่าง)"""
+    d, t = _s(date_s), _s(time_s)
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) or not re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", t):
+        return ""
+    hh, mm = t.split(":")[:2]
+    return f"{d}T{int(hh):02d}:{mm}:00+07:00"
+
+
 def province_name(isv_code) -> str:
     """รหัสจังหวัด ISURVEY → ชื่อไทยที่ se-survey ใช้ (ผ่านรหัส EMCS เสมอ — หัวไฟล์ข้อ 1)"""
     ep = emcs_map.PROVINCE_TO_EMCS.get(_s(isv_code))
@@ -578,6 +587,9 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "caseFields": {
             "customer_name": report["assured_name"] or "(ไม่ระบุชื่อผู้เอาประกัน)",
             "incident_location": report["acc_place"] or "(ไม่ระบุสถานที่)",
+            # "ส่งงาน" (จังหวะ 6 ของเส้นเวลาบนเว็บ) = เวลาที่ช่างส่งรายงานบน ISURVEY (แท็บ 1 Dispatch
+            # sendReportDate/sendReportTime = "ส่งรายงานเวลา") — เดิมงานจาก ISURVEY ขึ้น "-" ทั้งที่มีข้อมูล (user ถาม 10/09/69)
+            "submitted_at": _iso_bkk(disp.get("sendReportDate"), disp.get("sendReportTime")),
         },
         "report": report,
         "expenses": _bill(bill),
