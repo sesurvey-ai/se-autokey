@@ -1680,7 +1680,9 @@ PAGE = r"""<!doctype html>
   [hidden]{display:none !important}
   .log{margin:0;padding:12px 16px;height:260px;overflow:auto;
     font-family:"Cascadia Mono","Consolas",monospace;font-size:13px;
-    line-height:1.65;color:#cbd5e1;white-space:pre-wrap;word-break:break-word}
+    line-height:1.65;color:#cbd5e1;white-space:pre-wrap;word-break:break-word;
+    resize:vertical;min-height:120px;max-height:92vh}   /* ลากมุมล่างขวาปรับสูงได้ (user ขอ 10/09/69) */
+  .log.tall{height:72vh}
   .log .l-ok{color:#4ade80}
   .log .l-err{color:#f87171}
   .log .l-skip{color:#38bdf8}
@@ -2357,6 +2359,7 @@ function makeCard(r){
     +   ' <span class="run-cmd"></span></span>'
     + '<span class="right">'
     +   '<span class="badge running"><span class="dot"></span><span class="st"></span></span>'
+    +   '<button class="ghost expandone" title="ขยาย/ย่อหน้าต่าง log (หรือลากมุมล่างขวา)">⤢ ขยาย</button>'
     +   '<button class="ghost stopone">■ หยุด</button>'
     +   '<button class="ghost closeone" hidden>✕ ปิด</button>'
     + '</span></div>'
@@ -2393,6 +2396,15 @@ function makeCard(r){
     + '<div class="log"></div>';
   root.querySelector(".run-title b").textContent = r.title || ("งาน #" + r.id);
   root.querySelector(".run-cmd").textContent = r.cmd || "";
+  // ⤢ ขยาย/ย่อหน้าต่าง log (user ขอ 10/09/69) — traceback ยาว ๆ อ่านในกล่อง 260px ไม่ไหว
+  // ลาก handle มุมล่างขวาปรับเองได้ด้วย (CSS resize) · กดปุ่มจะล้างค่าที่ลากไว้ให้คลาสคุมแทน
+  root.querySelector(".expandone").addEventListener("click", (ev) => {
+    const lg = root.querySelector(".log");
+    const tall = lg.classList.toggle("tall");
+    lg.style.height = "";
+    ev.currentTarget.textContent = tall ? "⤡ ย่อ" : "⤢ ขยาย";
+    lg.scrollTop = lg.scrollHeight;
+  });
   const c = {
     root, logEl: root.querySelector(".log"),
     badgeEl: root.querySelector(".badge"), stEl: root.querySelector(".st"),
