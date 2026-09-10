@@ -726,6 +726,7 @@ SELECT_MARKER = "@@SELECT_IMAGES@@"  # ต้องตรงกับ autokey/br
 INJURY_MARKER = "@@INJURY_INPUTS@@"  # ต้องตรงกับ autokey/browser.py (กรอกข้อมูลผู้บาดเจ็บ)
 SENT_MARKER = "@@JOB_SENT@@"         # ต้องตรงกับ autokey/browser.py (ส่งงาน+verify แล้ว)
 SEND_FAIL_MARKER = "@@JOB_SEND_FAIL@@"   # ต้องตรงกับ autokey/browser.py (สั่งส่งแล้วไม่ผ่าน)
+DUP_MARKER = "@@JOB_DUP@@"               # ต้องตรงกับ autokey/browser.py (เคลมมีเรื่องใน EMCS แล้ว ไม่ได้สร้างซ้ำ)
 
 # จำนวนงานที่รันพร้อมกันได้สูงสุด (กันเปิด Chrome เยอะเกินจนเครื่องค้าง)
 MAX_CONCURRENT = int(os.environ.get("SE_MAX_CONCURRENT", "4") or "4")
@@ -957,6 +958,18 @@ def _reader(proc, run_id: int):
                 marker, kind = SELECT_MARKER, "images"
             elif line.startswith(INJURY_MARKER):
                 marker, kind = INJURY_MARKER, "injury"
+            elif line.startswith(DUP_MARKER):
+                # เคลมมีเรื่องใน EMCS แล้ว บอทไม่สร้างซ้ำ (exit 0) → การ์ดขึ้นข้อความแดง + ปุ่มมาร์กว่านำเข้าแล้ว
+                try:
+                    dinfo = json.loads(line[len(DUP_MARKER):])
+                except Exception:
+                    dinfo = {}
+                with _lock:
+                    r = _runs.get(run_id)
+                    if r is None:
+                        break
+                    r["dup"] = dinfo or {"claim": ""}
+                continue
             elif line.startswith(SEND_FAIL_MARKER):
                 # สั่งส่งแล้วไม่ผ่าน — process ยังจบ exit 0 (งานอื่นทำครบ) ถ้าไม่จำไว้
                 # การ์ดจะขึ้น "เสร็จแล้ว ✅" ทั้งที่ยังต้องไปกดส่งเองบน EMCS
@@ -1105,6 +1118,7 @@ def poll_state(offsets: dict) -> dict:
                 "kind": r.get("kind", "fill"), "claims": r.get("claims", []),
                 "sent": r.get("sent"),   # มีค่า = ส่งงาน+verify แล้ว (การ์ดปิดตัวเองได้)
                 "send_failed": r.get("send_failed"),   # มีค่า = สั่งส่งแล้วไม่ผ่าน
+                "dup": r.get("dup"),                   # มีค่า = เคลมมีเรื่องใน EMCS แล้ว (ไม่ได้สร้างซ้ำ)
                 "lines": new, "next_offset": len(lines),
             })
         return {"runs": runs_out, "active": _active_count(), "max": MAX_CONCURRENT}
@@ -1384,6 +1398,34 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(409, {"error": err})
             else:
                 self._send(200, {"run_id": run_id})
+        elif u.path == "/api/mark-imported":
+            # ปุ่ม "มาร์กว่านำเข้าแล้ว" บนการ์ดเรื่องซ้ำ (user ขอ 10/09/69): บอก se-survey ว่าเคสนี้มี draft ใน EMCS แล้ว
+            # (endpoint เดียวกับที่บอทใช้หลังสร้าง draft) → รายการนำเข้าซ่อนเคสนี้ · เฉพาะหน้า operator ในเครื่อง
+            if self._cors_origin() is not None:
+                self._send(403, {"error": "ทำได้จากหน้า operator ในเครื่องเท่านั้น"})
+                return
+            params = self._read_json()
+            case_id = str(params.get("case_id") or "").strip()
+            esurvey = str(params.get("esurvey") or "").strip()
+            if not re.fullmatch(r"\d{1,9}", case_id):
+                self._send(400, {"error": f"เลขเคสไม่ถูกต้อง: {case_id!r}"})
+                return
+            url, token = _sesurvey_cfg()
+            if not token:
+                self._send(503, {"error": "ยังไม่ได้ตั้ง SESURVEY_API_TOKEN ใน .env"})
+                return
+            try:
+                import requests
+                mr = requests.post(f"{url}/api/integrations/cases/{case_id}/emcs-imported",
+                                   headers={"Authorization": f"Bearer {token}"},
+                                   json={"esurvey_no": esurvey}, timeout=20)
+                if not mr.ok:
+                    self._send(502, {"error": f"se-survey ตอบ HTTP {mr.status_code}: {mr.text[:160]}"})
+                    return
+                d = (mr.json() or {}).get("data") or {}
+                self._send(200, {"ok": True, "already": bool(d.get("already"))})
+            except Exception as e:
+                self._send(502, {"error": f"ติดต่อ se-survey ไม่ได้: {e}"})
         elif u.path == "/api/report-isurvey":
             # ปุ่ม "แจ้ง ISURVEY อีกครั้ง" บนแถบงานที่ EMCS ส่งแล้วแต่แจ้ง ISURVEY ไม่ผ่าน (timeout) — user ขอ 10/09/69
             # = main.py --claim X --report-isurvey (gate ด้วยสถานะ EMCS ก่อนยิงเสมอ ยังไม่ส่ง = ข้าม) · เฉพาะหน้า operator ในเครื่อง
@@ -1612,6 +1654,14 @@ PAGE = r"""<!doctype html>
   .closeone:hover{color:#fff}
   .continue.submitbtn{background:var(--ok)}
   .continue.submitbtn:hover{background:#178056}
+  /* เรื่องซ้ำใน EMCS — ข้อความแดงใหญ่ + ปุ่มมาร์ก (user ขอ 10/09/69) */
+  .dupbox{background:#fef2f2;border:2px solid var(--err);margin:12px 14px;border-radius:14px;padding:14px 16px;
+    box-shadow:0 8px 24px rgba(220,38,38,.15);animation:popin .25s ease}
+  .dupbox .dup-title{color:var(--err);font-size:18px;font-weight:800;margin-bottom:6px}
+  .dupbox .dup-row{font-family:"Cascadia Mono","Consolas",monospace;font-size:12.5px;color:#7f1d1d;white-space:pre-wrap;margin:2px 0}
+  .dupbox .dup-hint{font-size:12.5px;color:#991b1b;margin:8px 0 10px}
+  .dupbox .dup-mark{background:var(--err)}
+  .dupbox .dup-done{color:var(--ok);font-weight:700}
   .pausebox{display:flex;gap:14px;align-items:flex-start;background:#fffbeb;
     border:2px solid var(--warn);margin:12px 14px;border-radius:14px;padding:14px 16px;
     box-shadow:0 8px 24px rgba(217,119,6,.18);animation:popin .25s ease}
@@ -2393,6 +2443,7 @@ function makeCard(r){
     +     '<button class="continue"></button>'
     +   '</div>'
     + '</div>'
+    + '<div class="dupbox" hidden></div>'
     + '<div class="log"></div>';
   root.querySelector(".run-title b").textContent = r.title || ("งาน #" + r.id);
   root.querySelector(".run-cmd").textContent = r.cmd || "";
@@ -2495,6 +2546,28 @@ function makeCard(r){
   cards[r.id] = c;
   return c;
 }
+function renderDupBox(c, r){
+  const box = c.root.querySelector(".dupbox");
+  if (!box || box.dataset.done) return;
+  box.dataset.done = "1";
+  const d = r.dup || {};
+  const n = (d.esurveys || []).length;
+  box.innerHTML = '<div class="dup-title">⛔ เคลม ' + escHtml(d.claim || "") + ' มีเรื่องใน EMCS อยู่แล้ว ' + n + ' เรื่อง — บอทไม่สร้างซ้ำ</div>'
+    + (d.rows || []).map((row, i) => '<div class="dup-row">• ' + escHtml((d.esurveys || [])[i] || "") + '  ' + escHtml(row) + '</div>').join("")
+    + '<div class="dup-hint">ถ้าเรื่องที่มีอยู่คือเคสนี้จริง กดปุ่มด้านล่างเพื่อบันทึกว่านำเข้าแล้ว เคสจะหายจากรายการนำเข้าทางซ้าย (ไม่แตะ EMCS)</div>'
+    + (d.case_id ? '<button class="run dup-mark">✓ มาร์กว่านำเข้าแล้ว — เอาออกจากรายการ</button>' : '<span class="dup-hint">ไม่รู้เลขเคส — มาร์กที่เว็บ se-survey เอง</span>');
+  box.hidden = false;
+  const btn = box.querySelector(".dup-mark");
+  if (btn) btn.addEventListener("click", async () => {
+    btn.disabled = true; btn.textContent = "กำลังบันทึก…";
+    try{
+      const res = await postJSON("/api/mark-imported", {case_id: d.case_id, esurvey: (d.esurveys || [])[0] || ""});
+      if (!res.ok){ alert(res.data.error || "มาร์กไม่สำเร็จ"); btn.disabled = false; btn.textContent = "✓ มาร์กว่านำเข้าแล้ว — เอาออกจากรายการ"; return; }
+      btn.replaceWith(Object.assign(document.createElement("span"), {className: "dup-done", textContent: "✓ มาร์กแล้ว — เคสถูกซ่อนจากรายการ" + (res.data.already ? " (เคยมาร์กไว้แล้ว)" : "")}));
+      if (!loadCasesBtn.disabled) loadCasesBtn.click();
+    }catch(e){ alert("มาร์กไม่ได้: " + e); btn.disabled = false; btn.textContent = "✓ มาร์กว่านำเข้าแล้ว — เอาออกจากรายการ"; }
+  });
+}
 function removeCard(id){
   const c = cards[id];
   if (c){ c.root.remove(); delete cards[id]; }
@@ -2513,6 +2586,8 @@ function renderRun(r){
   // สั่งส่งงานแล้วไม่ผ่าน = ยังไม่จบจริง ห้ามขึ้น "เสร็จแล้ว ✅" หลอกตา
   // (process จบ exit 0 เพราะงานอื่นทำครบ แต่คนยังต้องไปกดส่งเองบน EMCS)
   if (r.send_failed && r.status === "done"){ cls = "error"; txt = "ส่งงานไม่สำเร็จ ❌"; }
+  // เคลมมีเรื่องใน EMCS แล้ว (บอทไม่สร้างซ้ำ) — ป้ายแดง + กล่องข้อความใหญ่ + ปุ่มมาร์กว่านำเข้าแล้ว (user ขอ 10/09/69)
+  if (r.dup && r.status !== "running"){ cls = "error"; txt = "มีเรื่องใน EMCS แล้ว ⚠️"; renderDupBox(c, r); }
   c.badgeEl.className = "badge " + cls;
   c.stEl.textContent = txt;
   const active = (r.status === "running" || r.status === "waiting");

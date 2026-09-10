@@ -920,6 +920,7 @@ def wait_for_manual_fill(field_label, reason="", select_id=None, options=None,
 SUBMIT_MARKER = "@@READY_SUBMIT@@"  # ต้องตรงกับค่าใน webui.py
 SENT_MARKER = "@@JOB_SENT@@"        # ต้องตรงกับค่าใน webui.py (ส่งงานสำเร็จแล้ว)
 SEND_FAIL_MARKER = "@@JOB_SEND_FAIL@@"   # ต้องตรงกับค่าใน webui.py (กดส่งแล้วไม่ผ่าน)
+DUP_MARKER = "@@JOB_DUP@@"               # ต้องตรงกับค่าใน webui.py (เคลมมีเรื่องใน EMCS อยู่แล้ว ไม่ได้สร้างซ้ำ)
 
 
 def announce_send_failed(claim: str, reason: str = ""):
@@ -932,6 +933,18 @@ def announce_send_failed(claim: str, reason: str = ""):
         return
     print(SEND_FAIL_MARKER + json.dumps(
         {"claim": claim, "reason": reason}, ensure_ascii=False), flush=True)
+
+
+def announce_duplicate(claim: str, case_id: str, existing: list):
+    """บอกหน้าเว็บว่า "เคลมนี้มีเรื่องใน EMCS อยู่แล้ว บอทไม่ได้สร้างซ้ำ" — การ์ดจะขึ้นข้อความแดงชัด ๆ
+    + ปุ่ม "มาร์กว่านำเข้าแล้ว" ให้เคสหายจากรายการนำเข้า (user ขอ 10/09/69)"""
+    if not _WEBUI:
+        return
+    print(DUP_MARKER + json.dumps({
+        "claim": claim, "case_id": str(case_id or ""),
+        "esurveys": [str(r.get("esurvey") or "") for r in (existing or [])],
+        "rows": [str(r.get("row") or "")[:120] for r in (existing or [])],
+    }, ensure_ascii=False), flush=True)
 
 
 def announce_sent(claim: str, esurvey: str = "", keyer: str = ""):

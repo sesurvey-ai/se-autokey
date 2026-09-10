@@ -1169,6 +1169,16 @@ def find_existing_reports(driver, claim_no: str) -> list:
     return driver.execute_script(_JS_FIND_ESURVEY_ROWS, claim_no.strip())
 
 
+class DuplicateReportError(RuntimeError):
+    """เคลมนี้มีเรื่องใน EMCS อยู่แล้ว (guard_duplicate_report) — ผู้เรียกจับไปแสดงแบบสะอาด ไม่ต้องพ่น traceback
+    (user ขอ 10/09/69: การ์ดบอทเคยโชว์ traceback ยาว ทั้งที่สาระมีบรรทัดเดียว) · `.existing` = รายการเรื่องที่พบ"""
+
+    def __init__(self, claim: str, existing: list, message: str):
+        super().__init__(message)
+        self.claim = claim
+        self.existing = existing or []
+
+
 def guard_duplicate_report(driver, data: ClaimData, force_new: bool, existing=None):
     """ด่านกันเปิดเรื่องซ้ำ: ถ้าเคลมนี้มีเรื่องใน EMCS แล้ว → หยุดทันที
     (ข้ามด่านได้ด้วย --force-new เมื่อตั้งใจสร้างซ้ำจริงๆ)
@@ -1190,7 +1200,8 @@ def guard_duplicate_report(driver, data: ClaimData, force_new: bool, existing=No
 
     lines = "\n".join(f"   - {r['esurvey']}  {r['row'][:90]}" for r in existing)
     if not force_new:
-        raise RuntimeError(
+        raise DuplicateReportError(
+            data.claim_value, existing,
             f"เคลม {data.claim_value} มีเรื่องใน EMCS อยู่แล้ว "
             f"{len(existing)} เรื่อง:\n{lines}\n"
             "→ หยุดเพื่อกันเปิดเรื่องซ้ำ — ถ้าตั้งใจสร้างใหม่จริงๆ "

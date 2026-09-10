@@ -40,6 +40,7 @@ from selenium.common.exceptions import UnexpectedAlertPresentException
 
 from autokey import emcs, isurvey, isurvey_api, joblog
 from autokey.browser import (
+    announce_duplicate,
     announce_send_failed,
     announce_sent,
     default_submit_selection,
@@ -1585,6 +1586,22 @@ def run_sesurvey_import(cfg, args):
                                   insurer_code=ins_code, full_billing=True, loss_type=loss_type,
                                   severity=severity, allow_continuation=False,
                                   select_images=False)
+    except emcs.DuplicateReportError as e:
+        # เรื่องซ้ำใน EMCS = ผลลัพธ์ปกติอย่างหนึ่ง ไม่ใช่บั๊ก — แสดงสะอาด ไม่พ่น traceback (user ขอ 10/09/69)
+        # หน้าเว็บได้ marker → ข้อความแดงชัด ๆ + ปุ่ม "มาร์กว่านำเข้าแล้ว" (mark emcs_imported ฝั่ง se-survey
+        # ด้วย e-Survey ที่พบ) ให้เคสหายจากรายการนำเข้า · ตั้งใจสร้างใหม่ = --force-new เหมือนเดิม
+        log("")
+        log(f"⛔ เคลม {e.claim} มีเรื่องใน EMCS อยู่แล้ว {len(e.existing)} เรื่อง — บอทไม่สร้างซ้ำ")
+        for r in e.existing:
+            log(f"   • {r.get('esurvey', '')}  {str(r.get('row', ''))[:90]}")
+        log('   → ถ้าเรื่องที่มีอยู่คือเรื่องนี้จริง กด "มาร์กว่านำเข้าแล้ว" บนการ์ดเพื่อเอาเคสออกจากรายการ'
+            " · ตั้งใจสร้างใหม่จริง ๆ ให้รันด้วย --force-new")
+        announce_duplicate(e.claim, case_id, e.existing)
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        return
     except Exception:
         save_debug_snapshot(driver, cfg.runs_dir / "logs", tag=f"sesurvey_{case_id}")
         # draft อาจถูกสร้างไปแล้วก่อนพัง (ลบใน EMCS ไม่ได้) — ต้อง mark ฝั่ง se-survey
