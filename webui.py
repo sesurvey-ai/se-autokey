@@ -1384,6 +1384,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(409, {"error": err})
             else:
                 self._send(200, {"run_id": run_id})
+        elif u.path == "/api/report-isurvey":
+            # ปุ่ม "แจ้ง ISURVEY อีกครั้ง" บนแถบงานที่ EMCS ส่งแล้วแต่แจ้ง ISURVEY ไม่ผ่าน (timeout) — user ขอ 10/09/69
+            # = main.py --claim X --report-isurvey (gate ด้วยสถานะ EMCS ก่อนยิงเสมอ ยังไม่ส่ง = ข้าม) · เฉพาะหน้า operator ในเครื่อง
+            if self._cors_origin() is not None:
+                self._send(403, {"error": "ทำได้จากหน้า operator ในเครื่องเท่านั้น"})
+                return
+            params = self._read_json()
+            claim = str(params.get("claim") or "").strip()
+            if not re.fullmatch(r"\d{8,20}", claim):
+                self._send(400, {"error": f"เลขเคลมไม่ถูกต้อง: {claim!r}"})
+                return
+            run_id, err = _spawn([sys.executable, "-u", "main.py", "--claim", claim, "--report-isurvey", "-y"],
+                                 f"แจ้ง ISURVEY: เคลม {claim}", "report-isurvey", [claim])
+            if err:
+                self._send(409, {"error": err})
+            else:
+                self._send(200, {"run_id": run_id})
         elif u.path == "/api/isurvey-pull":
             # ดึงงาน "รอตรวจข้อมูล" เข้า se-survey — **ไม่แตะ EMCS และไม่เขียนกลับ ISURVEY**
             # ผลลัพธ์คือเคสสถานะ "รอตรวจ" บนเว็บเท่านั้น จึงไม่ต้องกั้น cross-origin
@@ -1716,6 +1733,8 @@ PAGE = r"""<!doctype html>
   .wb-go{margin-left:auto;flex:none;padding:5px 12px;font-size:12.5px;border-radius:8px;
     background:var(--warn);color:#fff;box-shadow:none}
   .waitbar.fail .wb-go{background:var(--err)}
+  .wb-retry{background:#1d4ed8 !important}
+  .wb-retry + .wb-go{margin-left:6px}
   @keyframes wbflash{0%,100%{box-shadow:0 0 0 0 rgba(217,119,6,0)}
     30%{box-shadow:0 0 0 5px rgba(217,119,6,.45)}}
   .run-card.flash{animation:wbflash 1.1s 2}
@@ -2609,19 +2628,35 @@ function fillBar(el, rows, head, cls){
   el.innerHTML = '<div class="wb-head">' + head + '</div>'
     + rows.map(x => '<div class="wb-row"><span class="wb-claim">' + escHtml(x.claim)
         + '</span><span class="wb-what">' + escHtml(x.what) + '</span>'
+        // EMCS ส่งแล้วแต่แจ้ง ISURVEY ไม่ผ่าน (timeout) → กดยิงซ้ำได้จากตรงนี้ ไม่ต้องพิมพ์คำสั่ง (user ขอ 10/09/69)
+        + (x.retry ? '<button class="run wb-go wb-retry" data-retry="' + escAttr(x.retry) + '">แจ้ง ISURVEY อีกครั้ง</button>' : '')
         + '<button class="run wb-go" data-go="' + x.id + '">ไปที่งาน</button></div>').join("");
   el.querySelectorAll("[data-go]").forEach(b =>
     b.addEventListener("click", () => goToCard(b.dataset.go)));
+  el.querySelectorAll("[data-retry]").forEach(b =>
+    b.addEventListener("click", async () => {
+      b.disabled = true; b.textContent = "กำลังแจ้ง…";
+      try{
+        const res = await postJSON("/api/report-isurvey", {claim: b.dataset.retry});
+        if (!res.ok){ alert(res.data.error || "แจ้ง ISURVEY ไม่ได้"); b.disabled = false; b.textContent = "แจ้ง ISURVEY อีกครั้ง"; return; }
+        // งานใหม่โผล่เป็นการ์ดของตัวเอง (poll) — เลื่อนไปดูได้เลย
+        if (res.data && res.data.run_id) setTimeout(() => goToCard(res.data.run_id), 800);
+      }catch(e){ alert("แจ้ง ISURVEY ไม่ได้: " + e); b.disabled = false; b.textContent = "แจ้ง ISURVEY อีกครั้ง"; }
+    }));
 }
 function updateWaitBar(runs){
   const waiting = runs.filter(r => r.status === "waiting" && r.pause)
     .map(r => ({id: r.id, claim: claimOf(r), what: waitWhat(r), t: shortTitle(r)}));
   const failed = runs.filter(r => r.send_failed)
     .map(r => ({id: r.id, claim: claimOf(r),
-                what: (r.send_failed.reason || "ส่งงานไม่สำเร็จ").slice(0, 90)}));
+                what: (r.send_failed.reason || "ส่งงานไม่สำเร็จ").slice(0, 90),
+                // EMCS ส่งแล้ว เหลือแค่แจ้ง ISURVEY → ให้ปุ่มยิงซ้ำ (เคลมจาก marker ของ main.py)
+                retry: (r.send_failed.reason || "").includes("แจ้ง ISURVEY ไม่สำเร็จ")
+                  ? String(r.send_failed.claim || claimOf(r)) : ""}));
   fillBar($("#waitbar"), waiting, "⏸ รอคุณอยู่ " + waiting.length + " งาน");
+  // หัวแถบต้องไม่บอกว่า "ต้องกดส่งเองบน EMCS" ทุกกรณี — แถวที่ EMCS ส่งแล้วแต่แจ้ง ISURVEY ไม่ผ่าน กดปุ่มในแถวได้เลย
   fillBar($("#failbar"), failed,
-          "❌ ส่งงานไม่สำเร็จ " + failed.length + " งาน — ต้องเข้าไปกดส่งเองบน EMCS");
+          "❌ ส่งงานไม่ครบ " + failed.length + " งาน — ดูสาเหตุในแถว (EMCS ยังไม่ส่ง = เข้าไปกดส่งเอง · แจ้ง ISURVEY ไม่ผ่าน = กดปุ่มแจ้งซ้ำ)");
   // title แท็บ = ช่องทางแจ้งเตือนที่ไม่ส่งเสียง เห็นได้จากแถบแท็บแม้อยู่หน้าอื่น
   document.title = waiting.length
     ? "(" + waiting.length + ") " + waiting[0].t + " · se-autokey"

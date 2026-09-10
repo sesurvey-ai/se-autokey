@@ -1709,9 +1709,12 @@ def _offer_submit(driver, cfg, data, esurvey: str = "", auto: bool = False,
     for _n in getattr(data, "review_notes", []) or []:
         reason = (reason + "\n" if reason else "") + f"⚠️ {_n}"
     if auto:
-        # โหมดส่งอัตโนมัติ: คำเตือน (เคลมสด ฯลฯ) ลง log ให้เห็น แต่ไม่หยุด — ยกเว้น review_notes
-        # = ข้อที่บอท "กรอกแทนไม่ได้" ต้องมีคนตัดสิน → ไม่ส่งอัตโนมัติ (ส่งแล้วแก้ไม่ได้)
-        for _line in [x for x in reason.split("\n") if x.strip()]:
+        # โหมดส่งอัตโนมัติ: ผู้ใช้ตัดสินใจส่งตั้งแต่กดปุ่มบนเว็บแล้ว — คำเตือน "เคลมสด … ตรวจให้ครบก่อนกดส่ง"
+        # จึงไม่มีความหมายในโหมดนี้ (user ทัก 10/09/69 ว่าเห็นแล้วนึกว่าเป็นบั๊กประเภทเคลมเดิม) → ลงบันทึกแค่
+        # ประเภทเคลมสั้น ๆ · ส่วน review_notes = ข้อที่บอท "กรอกแทนไม่ได้" ต้องมีคนตัดสิน → ยังไม่ส่งอัตโนมัติเหมือนเดิม
+        if block:
+            log(f"   ℹ️ {block} — ส่งอัตโนมัติตามคำสั่งปุ่ม")
+        for _line in [x for x in reason.split("\n") if x.strip() and not x.startswith("⚠️ เคลมสด")]:
             log(f"   {_line}")
         notes = getattr(data, "review_notes", []) or []
         if notes:

@@ -7,6 +7,7 @@ flow ปลายทาง: บอทกรอก EMCS draft → user ตรว�
 — report_sent ตัวนี้แค่ยิง POST ไม่ได้ตรวจสถานะเอง
 """
 import json
+import time
 from pathlib import Path
 
 import requests
@@ -99,16 +100,27 @@ def report_sent(cfg, claim: str, invoice: str, keyer: str = "",
         return {"ok": True, "status": 0, "text": "(dry-run ไม่ยิงจริง)", "payload": payload}
 
     log(f"   ยิงแจ้ง ISURVEY: เคลม {claim} ส่งโดย {keyer}")
-    try:
-        r = requests.post(cfg.isurvey_report_url, json=payload, timeout=30)
-        ok = (r.status_code == 200)
-        try:                                  # 200 แต่ success:false ก็ถือว่าไม่ผ่าน
-            j = r.json()
-            if isinstance(j, dict) and "success" in j:
-                ok = ok and bool(j["success"])
-        except Exception:
-            pass
-        return {"ok": ok, "status": r.status_code, "text": r.text[:300], "payload": payload}
-    except Exception as e:
-        return {"ok": False, "status": 0, "text": f"{type(e).__name__}: {e}",
-                "payload": payload}
+    # ISURVEY ตอบช้าเป็นพัก ๆ (ReadTimeout 30 วิ เจอจริง 2026013063304 · 2026013074365 10/09/69) → ลองซ้ำให้เอง
+    # 3 ครั้ง (timeout 30/60/60 วิ) **เฉพาะ error ด้านการเชื่อมต่อ** · ได้ HTTP ตอบมาแล้ว (แม้ไม่ผ่าน) ไม่ยิงซ้ำ
+    # ยิงซ้ำปลอดภัย: ปลายทางแค่ตั้งสถานะ "ส่งงานแล้ว" ให้เคลม (คำสั่ง --report-isurvey ก็ยิงซ้ำแบบเดียวกัน)
+    last_err = ""
+    for attempt, tmo in enumerate((30, 60, 60), start=1):
+        try:
+            r = requests.post(cfg.isurvey_report_url, json=payload, timeout=tmo)
+            ok = (r.status_code == 200)
+            try:                                  # 200 แต่ success:false ก็ถือว่าไม่ผ่าน
+                j = r.json()
+                if isinstance(j, dict) and "success" in j:
+                    ok = ok and bool(j["success"])
+            except Exception:
+                pass
+            return {"ok": ok, "status": r.status_code, "text": r.text[:300], "payload": payload}
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last_err = f"{type(e).__name__}: {e}"
+            if attempt < 3:
+                log(f"   ⚠️ แจ้ง ISURVEY ครั้งที่ {attempt} ไม่ตอบ ({type(e).__name__}) — ลองใหม่ (รอได้ 60 วิ)")
+                time.sleep(3)
+        except Exception as e:
+            return {"ok": False, "status": 0, "text": f"{type(e).__name__}: {e}",
+                    "payload": payload}
+    return {"ok": False, "status": 0, "text": f"{last_err} (ลองแล้ว 3 ครั้ง)", "payload": payload}
