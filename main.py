@@ -1604,13 +1604,27 @@ def run_sesurvey_import(cfg, args):
         # 2026-08-15 เงื่อนไขนั้นหมดไป: เว็บ se-survey เป็นศูนย์กลาง หัวหน้ากรอกยอด+ความเห็น
         # ก่อนอนุมัติ (และกดอนุมัติไม่ได้ถ้ายังไม่กรอกยอด) → ยกมาได้เลย ไม่ใช่ขยะอีกต่อไป
         # ช่องไหนต้นทางว่าง fill_billing ข้ามให้เอง ไม่ทับของที่คนกรอกไว้ใน EMCS
-        # allow_continuation=False — กติกา user: งานครั้งที่ 2 ของเคสจาก se-survey
-        # หัวหน้ากรอกเอง บอททำเฉพาะครั้งที่ 1 (เส้น ISURVEY ยังทำงานต่อเนื่องตามปกติ)
+        # allow_continuation=True — user เปิดสวิตช์ 13/09/69 (กลับกติกา 02/08 ที่ให้หัวหน้าทำครั้งที่ 2 เอง):
+        # เคลมมีเรื่องใน EMCS แล้ว + เลขเซอร์เวย์ใหม่ = งานต่อเนื่อง → บอทเปิดเรื่องเดิม ไล่ดูทุกครั้งก่อน
+        # (ซ้ำ/ลำดับไม่ตรง = หยุด) แล้วกด 'งานต่อเนื่อง' ใส่รูป (หมวดรูปประกอบ) + หน้าค่าใช้จ่าย ไม่แตะหน้าหลัก
+        # expected_round = "ครั้งที่" ที่เว็บเก็บไว้ (visit_no จากตัวดึงงาน/งานครั้งถัดไป) · 0 = ไม่รู้ ตรวจแค่ซ้ำ
         # select_images=False — หัวหน้าจัดรูป/หมวดบนเว็บ se-survey มาแล้ว ไม่ต้องกดเลือกรูปซ้ำบนบอท (user เคาะ 09/09/69)
         esurvey = emcs.run_import(driver, cfg, data, images_folder=img_folder,
                                   insurer_code=ins_code, full_billing=True, loss_type=loss_type,
-                                  severity=severity, allow_continuation=False,
-                                  select_images=False)
+                                  severity=severity, allow_continuation=True,
+                                  select_images=False,
+                                  expected_round=int(meta.get("visit_no") or 0))
+    except emcs.RoundOrderError as e:
+        # ด่านงานต่อเนื่อง (13/09/69): ซ้ำ / draft ใบอื่นค้าง / ลำดับครั้งไม่ตรง / ยังไม่มีครั้งที่ 1 — หยุดสะอาด
+        # ไม่มีอะไรถูกเขียนใน EMCS (บอทออกจากเรื่องแล้ว) · exit 2 ให้การ์ดขึ้น ❌ และปุ่มนำเข้ากลับมาให้กดใหม่หลังแก้
+        log("")
+        log(f"⛔ {e}")
+        log("   → แก้ให้ลำดับตรง (นำเข้าใบก่อนหน้า / จบ draft ที่ค้าง) แล้วกด นำเข้า ใหม่")
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        sys.exit(2)
     except emcs.DuplicateReportError as e:
         # เรื่องซ้ำใน EMCS = ผลลัพธ์ปกติอย่างหนึ่ง ไม่ใช่บั๊ก — แสดงสะอาด ไม่พ่น traceback (user ขอ 10/09/69)
         # หน้าเว็บได้ marker → ข้อความแดงชัด ๆ + ปุ่ม "มาร์กว่านำเข้าแล้ว" (mark emcs_imported ฝั่ง se-survey

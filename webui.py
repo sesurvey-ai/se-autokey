@@ -551,6 +551,22 @@ def check_sesurvey_case(case_id: str):
         if not str(d.driver_title or "").strip():
             warnings.append("ไม่มีคำนำหน้าผู้ขับขี่ (บอทจะลองอนุมานจากชื่อผู้เอาประกัน)")
         blockers += _id_length_blockers(rep)
+        # งานต่อเนื่อง (13/09/69): meta ของเคสบอก "ครั้งที่" (visit_no จากตัวดึงงาน/งานครั้งถัดไป) — บอกคนก่อนกด
+        try:
+            mreq = urllib.request.Request(f"{url}/api/integrations/cases/{case_id}",
+                                          headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(mreq, timeout=25) as mresp:
+                meta = (json.loads(mresp.read().decode("utf-8")).get("data") or {})
+            rnd = int(meta.get("visit_no") or 0)
+            info["visit_no"] = rnd or None
+            if rnd > 1:
+                warnings.insert(0, f"งานครั้งที่ {rnd} ของเคลม — บอทจะเปิดเรื่องเดิมใน EMCS ไล่ดูทุกครั้งก่อนเพิ่ม "
+                                   "แล้วกรอกเฉพาะรูป (หมวดรูปประกอบ) + หน้าค่าใช้จ่าย ไม่แตะหน้าหลัก")
+            elif int(meta.get("visit_count") or 1) > 1:
+                warnings.insert(0, f"เคลมนี้มีงานในเว็บ {meta.get('visit_count')} ใบ แต่ใบนี้ไม่มีเลขครั้งที่ — "
+                                   "ถ้าเป็นงานต่อเนื่อง บอทจะตรวจซ้ำอย่างเดียว ไม่ตรวจลำดับครั้ง")
+        except Exception:
+            pass
     except Exception as e:
         blockers.append(f"ดึง report ของเคสไม่ได้ ({type(e).__name__}) — "
                         "ค่าไทยของ dropdown บังคับจะขาด")

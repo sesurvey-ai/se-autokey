@@ -3997,5 +3997,11 @@ check("ครั้งที่: บอทมีด่าน RoundOrderError + r
       issubclass(emcs.RoundOrderError, RuntimeError) and callable(getattr(emcs, "read_rounds", None))
       and "expected_round" in emcs.start_continuation.__code__.co_varnames)
 
+import inspect as _inspect  # noqa: E402
+_src_ses = _inspect.getsource(_main.run_sesurvey_import)
+check("เส้น se-survey: เปิดงานต่อเนื่องแล้ว (allow_continuation=True + expected_round จาก visit_no) และจับ RoundOrderError",
+      "allow_continuation=True" in _src_ses and "expected_round=int(meta.get(\"visit_no\")" in _src_ses
+      and "except emcs.RoundOrderError" in _src_ses)
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
