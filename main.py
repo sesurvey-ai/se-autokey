@@ -2099,6 +2099,12 @@ def main():
             if d is None:
                 results.append((claim, "❌", f"อ่านไม่สำเร็จ — {err}"))
                 continue
+            # กติกา user 13/09/69: นำเข้า ISURVEY เฉพาะงาน "จบงาน" (ยอดค่าสำรวจต้องมาแล้ว) — สถานะอื่นหยุดก่อนแตะ EMCS
+            _st = str(getattr(d, "isurvey_status", "") or "").strip()
+            if _st and _st != "จบงาน":
+                log(f'⛔ เคลม {claim} สถานะบน ISURVEY = "{_st}" — ปุ่มนำเข้า ISURVEY ทำงานกับสถานะ "จบงาน" เท่านั้น')
+                results.append((claim, "⛔", f'หยุด: สถานะ ISURVEY "{_st}" (ต้องเป็น "จบงาน")'))
+                continue
             last_data = d
             log_plain("")
             log_plain(d.summary())

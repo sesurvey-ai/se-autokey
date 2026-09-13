@@ -642,6 +642,15 @@ def check_isurvey_case(claim: str, invoice: str = ""):
         return None, f"อ่านเคลม {claim} ไม่ได้: {type(e).__name__}: {e}"
 
     blockers = []
+    # 0) สถานะ ISURVEY ต้องเป็น "จบงาน" (user เคาะ 13/09/69) — ยอดค่าสำรวจต้องมาแล้ว งานที่ยังไม่จบไม่นำเข้า
+    #    blocker แบบไม่มีตัวเลือก (options ว่าง) = หน้าเว็บโชว์ข้อความอย่างเดียว และไม่ให้กดนำเข้า
+    _st = str(getattr(data, "isurvey_status", "") or "").strip()
+    if _st and _st != ISURVEY_STATUS_DONE:
+        blockers.append({
+            "field": "status", "label": "สถานะ ISURVEY",
+            "why": f'งานนี้สถานะ "{_st}" — ปุ่มนำเข้า ISURVEY ทำงานกับสถานะ "จบงาน" เท่านั้น (ยอดค่าสำรวจต้องมาแล้ว)',
+            "options": [],
+        })
     # 1) ลักษณะความเสียหาย — ISURVEY ไม่มีช่องนี้ตรง ๆ แต่แปลงจาก 'ลักษณะการเกิดเหตุ'
     #    ได้ 34/58 รายการ; เคลมแห้ง (ไม่มีคู่กรณี) รู้จากโครงสร้างอยู่แล้ว
     _loss = emcs.resolve_loss_type(data, "auto")
@@ -3457,6 +3466,9 @@ function runIsvFromRow(btn){
   const panel = isvBox.querySelector('.isvpanel[data-for="' + btn.dataset.claim + '"]');
   const pick = {};
   if (panel && !panel.hidden){
+    // blocker ที่ไม่มีทางเลือก (สถานะ ISURVEY ไม่ใช่ "จบงาน") — ไม่ให้กดนำเข้าเลย (บอทเองก็หยุดอยู่ดี แต่ไม่ต้องเสียเที่ยว)
+    const hard = panel.querySelector(".isvhard");
+    if (hard){ panel.scrollIntoView({behavior: "smooth", block: "nearest"}); alert(hard.dataset.why || "นำเข้าไม่ได้"); return; }
     let missing = false;
     panel.querySelectorAll(".isvpick").forEach(s => {
       if (!s.value){ missing = true; s.style.borderColor = "var(--err)"; }
@@ -3503,21 +3515,27 @@ async function checkIsvCase(btn){
     if (d.ready){
       h += '<div style="color:var(--ok);font-weight:600">✅ ข้อมูลครบ นำเข้าได้เลย</div>';
     } else {
-      h += d.blockers.map(b =>
-        '<div style="margin:8px 0">'
-        + '<div style="font-weight:600">⛔ ต้องเลือกก่อน: ' + escHtml(b.label) + '</div>'
-        + '<div style="color:var(--muted);margin:2px 0 4px">' + escHtml(b.why) + '</div>'
-        + '<select class="isvpick" data-field="' + b.field + '" style="width:100%;padding:6px 8px">'
-        + '<option value="">— เลือก —</option>'
-        + b.options.map(o => '<option>' + escHtml(o) + '</option>').join("")
-        + '</select></div>').join("");
+      // blocker ที่ไม่มีตัวเลือก (เช่นสถานะ ISURVEY ไม่ใช่ "จบงาน") = นำเข้าไม่ได้ ไม่ใช่ "ต้องเลือกก่อน"
+      h += d.blockers.map(b => {
+        const opts = b.options || [];
+        return '<div style="margin:8px 0">'
+          + '<div style="font-weight:600">⛔ ' + (opts.length ? 'ต้องเลือกก่อน: ' : 'นำเข้าไม่ได้: ') + escHtml(b.label) + '</div>'
+          + '<div style="color:var(--muted);margin:2px 0 4px">' + escHtml(b.why) + '</div>'
+          + (opts.length
+              ? '<select class="isvpick" data-field="' + b.field + '" style="width:100%;padding:6px 8px">'
+                + '<option value="">— เลือก —</option>'
+                + opts.map(o => '<option>' + escHtml(o) + '</option>').join("")
+                + '</select>'
+              : '<div class="isvhard" data-why="' + escHtml(b.why) + '" hidden></div>')
+          + '</div>';
+      }).join("");
     }
     if ((d.warnings || []).length){
       h += '<div style="color:#d97706;margin-top:8px">⚠️ ตรวจด้วย: ' + escHtml(d.warnings.join(" · ")) + '</div>';
     }
     // ไม่มีปุ่มนำเข้าในแผงแล้ว — ใช้ปุ่ม ⚡ นำเข้า ที่แถวปุ่มเดียว (runIsvFromRow
     // หยิบค่าที่เลือกในแผงไปให้เอง) เดิมมี 2 ปุ่มทำงานเหมือนกันจนสับสน
-    if ((d.blockers || []).length){
+    if ((d.blockers || []).some(b => (b.options || []).length)){
       h += '<div style="color:var(--muted);margin-top:10px;font-size:12.5px">'
         + 'เลือกให้ครบ แล้วกด <b>⚡ นำเข้า</b> ที่แถวด้านบน</div>';
     }

@@ -30,6 +30,8 @@ from . import survey_order
 ISURVEY_STATUS_PENDING = "รอตรวจข้อมูล"
 ISURVEY_EMCS_SENT = "send"
 REPORT_URL = "https://cloud.isurvey.mobi/web/php/report/get_data_report.php"
+#: สถานะ ISURVEY (masterStatus.sttcase_ID) ที่กด "ดึงเข้า" ได้ — 40 รอตรวจข้อมูล · 100 จบงาน (user เคาะ 13/09/69)
+PULLABLE_STATUS_IDS = {"40", "100"}
 
 #: ต้องตรงกับ INSURER_BY_JOB_PREFIX ของหน้า import-xml บนเว็บ se-survey
 #: ⛔ prefix ที่ไม่รู้จัก = หยุด ห้าม fallback (เข้าผิดบริษัทใน EMCS ลบไม่ได้)
@@ -193,6 +195,18 @@ def pull_case(api: ISurveyAPI, claim: str, survey_no: str, sesurvey_url: str, to
     try:
         case = api.find_case(claim, survey_no)
         cid = case["caseID"]
+    except Exception as e:
+        return None, f"อ่านงานจาก ISURVEY ไม่ได้: {type(e).__name__}: {e}"
+    # กติกา user 13/09/69: ดึงได้เฉพาะสถานะ "รอตรวจข้อมูล" (40) / "จบงาน" (100) — สถานะอื่นยังทำงานอยู่/ถูกยกเลิก ไม่ดึง
+    # (หน้าเว็บซ่อนปุ่มอยู่แล้ว ที่นี่กันอีกชั้นเผื่อเรียกตรง) · ครั้งก่อนหน้าที่ระบบดึงตามเป็นอ้างอิงใช้กติกาของ survey_order แทน
+    st_id = str(case.get("sttcase_ID") or "").strip()
+    if st_id and st_id not in PULLABLE_STATUS_IDS:
+        try:
+            st_name = api.master("masterStatus", "sttcase_ID", "stt_desc").get(st_id, st_id)
+        except Exception:
+            st_name = st_id
+        return None, f'งานนี้สถานะ "{st_name}" บน ISURVEY — ดึงได้เฉพาะ "รอตรวจข้อมูล" หรือ "จบงาน"'
+    try:
         payload = build_case(api, cid, case)
     except Exception as e:
         return None, f"อ่านงานจาก ISURVEY ไม่ได้: {type(e).__name__}: {e}"

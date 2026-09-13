@@ -487,6 +487,9 @@ class ISurveyAPI:
         d.policy_value = (t1.get("Policy", {}) or {}).get("policy_no", "")
         d.claim_type = str(claim_d.get("claim_MtypeID", "") or "")
         d.pay_type = case.get("claim_type", "")           # listcases.claim_type = ชื่อประเภทการจ่าย
+        # สถานะงาน (ชื่อ) — บอทนำเข้า ISURVEY รับเฉพาะ "จบงาน" (user เคาะ 13/09/69) · หาไม่ได้ = ว่าง ไม่บล็อก
+        d.isurvey_status = self.master("masterStatus", "sttcase_ID", "stt_desc").get(
+            str(case.get("sttcase_ID") or ""), "")
         d.surveyor_name = claim_d.get("surveyor_name", "")
         d.branch = claim_d.get("sys_branchName", "")
         d.oss_company = claim_d.get("OSS_company") or ""

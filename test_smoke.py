@@ -4003,5 +4003,12 @@ check("เส้น se-survey: เปิดงานต่อเนื่อง�
       "allow_continuation=True" in _src_ses and "expected_round=int(meta.get(\"visit_no\")" in _src_ses
       and "except emcs.RoundOrderError" in _src_ses)
 
+# ---- กติกาสถานะ ISURVEY (user เคาะ 13/09/69) ----
+from autokey import pull_core as _pc  # noqa: E402
+check("ตัวดึงงาน: ดึงได้เฉพาะสถานะ 40 รอตรวจข้อมูล / 100 จบงาน", _pc.PULLABLE_STATUS_IDS == {"40", "100"})
+_src_loop = _inspect.getsource(_main.main)
+check("บอทนำเข้า ISURVEY: หยุดก่อนแตะ EMCS ถ้าสถานะไม่ใช่ 'จบงาน' (isurvey_status ติดมากับ ClaimData)",
+      'isurvey_status' in _src_loop and "จบงาน" in _src_loop and hasattr(claim_data.ClaimData(), "isurvey_status"))
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
