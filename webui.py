@@ -650,6 +650,24 @@ def check_isurvey_case(claim: str, invoice: str = ""):
     v = data.validate()
     warnings = list(v.get("critical", []) + v.get("warnings", []))
 
+    # ลำดับ "ครั้งที่" ของใบนี้ในเคลม (survey_order — 13/09/69): งานต่อเนื่องบอทจะเปิดเรื่องเดิมใน EMCS
+    # แล้วไล่ดูทุกครั้งก่อนเพิ่ม · บอกคนตั้งแต่ก่อนกด ว่าใบนี้คือครั้งที่เท่าไหร่ของเคลม
+    try:
+        from autokey import survey_order
+        _jobs = _isv_client.list_claim_jobs(claim)
+        _ordered = survey_order.order_claim_jobs(_jobs)
+        _k = survey_order.round_of(_ordered, data.invoice_value)
+        _desc = survey_order.describe(_ordered, data.invoice_value)
+        if _k is None:
+            warnings.insert(0, f"ใบนี้ไม่อยู่ในรายการงานของเคลม (ยกเลิก/อ่านเลขไม่ออก?) — บอทจะไม่ตรวจลำดับครั้ง · {_desc}")
+        elif _k > 1:
+            warnings.insert(0, f"งานต่อเนื่อง ครั้งที่ {_k} จาก {len(_ordered)} — บอทจะเปิดเรื่องเดิมใน EMCS "
+                               f"ไล่ดูทุกครั้งก่อนเพิ่ม (ซ้ำ/ลำดับไม่ตรง = หยุด) · {_desc}")
+        elif len(_ordered) > 1:
+            warnings.insert(0, f"เคลมนี้มี {len(_ordered)} งาน ใบนี้เป็นครั้งที่ 1 · {_desc}")
+    except Exception as _e:
+        warnings.insert(0, f"หาลำดับครั้งของงานไม่ได้ ({type(_e).__name__}) — บอทจะตรวจแค่ซ้ำ ไม่ตรวจลำดับ")
+
     # ยอดค่าสำรวจเป็น 0 — งานสถานะ "จบงาน" ปกติต้องมียอดแล้ว (กติกา user)
     # ถ้าเป็น 0 แปลว่ายอดยังตามมาทีหลัง → นำเข้าตอนนี้บอทจะกรอกตารางราคาเป็น 0
     # ให้เตือน ไม่บล็อก (บางงานอาจไม่มีค่าสำรวจจริง ๆ — คนตัดสิน)

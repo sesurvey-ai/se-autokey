@@ -38,7 +38,7 @@ from pathlib import Path
 
 from selenium.common.exceptions import UnexpectedAlertPresentException
 
-from autokey import emcs, isurvey, isurvey_api, joblog
+from autokey import emcs, isurvey, isurvey_api, joblog, survey_order
 from autokey.browser import (
     announce_duplicate,
     announce_rejected,
@@ -357,12 +357,36 @@ def read_one_claim(driver, cfg, claim: str, invoice: str, args):
     return data
 
 
+def _attach_round_info(api, data, claim: str) -> None:
+    """หา "ครั้งที่" ของใบนี้จากเลขเซอร์เวย์ทุกใบของเคลมบน ISURVEY (survey_order — user เคาะ 13/09/69)
+    → data.round_expected / data.round_jobs · หาไม่ได้ = 0 (บอทยังเดินต่อ แค่ไม่มีด่านตรวจลำดับ เหลือด่านกันซ้ำ)"""
+    try:
+        jobs = api.list_claim_jobs(claim)
+        ordered = survey_order.order_claim_jobs(jobs)
+        k = survey_order.round_of(ordered, data.invoice_value)
+        data.round_expected = int(k or 0)
+        data.round_jobs = [{"round": it["round"], "survey_no": it.get("survey_no"),
+                            "status_name": it.get("status_name", ""), "dispatch": it.get("dispatch_datetime", "")}
+                           for it in ordered]
+        dropped = [str(c.get("survey_no")) for c in jobs if survey_order.is_excluded(c)]
+        if len(ordered) > 1 or dropped:
+            log(f"   ลำดับงานในเคลม: {survey_order.describe(ordered, data.invoice_value)}"
+                + (f" · ไม่นับ (ยกเลิก/ไม่รับงาน): {', '.join(dropped)}" if dropped else ""))
+        if k is None:
+            log("   ⚠️ ใบนี้ไม่อยู่ในรายการงานของเคลม (ถูกยกเลิก/อ่านเลขไม่ออก?) — ไม่ตรวจลำดับครั้ง")
+        elif not survey_order.first_type_ok(ordered):
+            log(f"   ⚠️ ครั้งที่ 1 ของเคลมนี้ไม่ใช่งานประเภท 1/2 ({ordered[0].get('survey_no')}) — ลำดับอาจผิด ตรวจก่อน")
+    except Exception as e:
+        log(f"   ⚠️ หาลำดับครั้งของงานไม่สำเร็จ ({type(e).__name__}) — ข้ามด่านตรวจลำดับ")
+
+
 def read_one_claim_api(cfg, claim: str, invoice: str, args=None):
     """อ่านเคลมผ่าน HTTP API (ไม่เปิด browser) → ClaimData + โหลดรูป + บันทึก JSON
     (รูปโหลดผ่าน get-images API แล้วจัดวาง/ตั้งชื่อแบบเดียวกับ flow scrape)"""
     api = isurvey_api.ISurveyAPI(cfg)
     api.login()
     data = api.read_claim(claim, invoice, expect_claim=claim)
+    _attach_round_info(api, data, claim)
 
     if args is not None and not args.skip_images:
         img_dir = resolve_images_dir(cfg, data.claim_value or claim, for_read=True)
@@ -2104,11 +2128,16 @@ def main():
                                                       for_read=False)),
                     loss_type=args.loss_type, image_type=args.image_type,
                     severity=args.severity, force_new=args.force_new,
+                    expected_round=getattr(d, "round_expected", 0) or 0,
                 )
                 save_debug_snapshot(driver, cfg.runs_dir / "logs",
                                     tag=f"done_{d.claim_value}")
                 results.append((claim, "✅",
                                 f"กรอกครบ — e-Survey {esurvey or '(ไม่ทราบเลข)'}"))
+            except emcs.RoundOrderError as e:
+                # ด่านงานต่อเนื่อง (13/09/69): ซ้ำ/ลำดับผิด/ยังไม่มีครั้งที่ 1 — หยุดสะอาด ไม่มีอะไรถูกเขียนใน EMCS
+                log(f"⛔ {e}")
+                results.append((claim, "⛔", f"หยุด: {e}"))
             except RuntimeError as e:
                 if "มีเรื่องใน EMCS" in str(e):
                     log(f"⏭️ {e}")

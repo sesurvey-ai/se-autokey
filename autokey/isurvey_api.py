@@ -157,6 +157,15 @@ class ISurveyAPI:
             raise RuntimeError(_multi_survey_msg(claim, cases))
         return cases[0]
 
+    def list_claim_jobs(self, claim) -> list:
+        """ทุกเรื่องเซอร์เวย์ของเลขเคลมนี้ (ทุกสถานะ) จาก listcases + ชื่อสถานะจาก masterStatus
+        ใช้หา "ครั้งที่" ของงานต่อเนื่อง (survey_order.order_claim_jobs) — ไม่ตัดอะไรทิ้งที่นี่"""
+        d = self._get("supervisor/listcases.php", claim_no=claim, claim_status="",
+                      claim_date="", page=1, start=0, limit=25)
+        names = self.master("masterStatus", "sttcase_ID", "stt_desc")
+        return [{**c, "status_name": names.get(str(c.get("sttcase_ID")), "")}
+                for c in d.get("cases", []) if str(c.get("claim_no")) == str(claim)]
+
     def get_tab(self, case_id, tab) -> dict:
         return self._get("supervisor/getcaseinfo.php", caseID=case_id,
                          tab=f"tab-{tab}_clone").get("message", {}) or {}

@@ -3976,5 +3976,26 @@ check("EMCS ปัดตกไฟล์: ข้อความที่ไม่
       emcs.ImportRejectedError("กรุณาตรวจสอบ!\nไม่พบข้อมูลนำเข้าที่ระบบต้องการ\nOK", []).summary()
       == "EMCS ปัดตกไฟล์นำเข้า — ไม่พบข้อมูลนำเข้าที่ระบบต้องการ")
 
+# ---- ลำดับ "ครั้งที่" จากเลขเซอร์เวย์ (survey_order — ตรวจกับ EMCS จริง 13/09/69) ----
+from autokey import survey_order as _so  # noqa: E402
+_rows = [{"survey_no": "SEABI-410260600413", "sttcase_ID": "100", "dispatch_datetime": "2026-06-04 04:42"},
+         {"survey_no": "SEABI-410260502277", "sttcase_ID": "100", "dispatch_datetime": "2026-05-20 09:23"},
+         {"survey_no": "SEABI-110260400680", "sttcase_ID": "100", "dispatch_datetime": "2026-04-06 14:07"},
+         {"survey_no": "SEABI-410260501454", "sttcase_ID": "100", "dispatch_datetime": "2026-05-13 18:21"},
+         {"survey_no": "SEABI-410260500001", "sttcase_ID": "99", "dispatch_datetime": "2026-05-01 08:00"}]
+_ord = _so.order_claim_jobs(_rows)
+check("ครั้งที่: เคลม 2026013127658 เรียง เดือน→ลำดับเรื่อง ตรง EMCS (1=…0680 2=…1454 3=…2277 4=…0413) และตัดใบยกเลิกทิ้ง",
+      [r["survey_no"][-5:] for r in _ord] == ["00680", "01454", "02277", "00413"]
+      and _so.round_of(_ord, "SEABI-410260600413") == 4 and _so.round_of(_ord, "SEABI-410260500001") is None)
+check("ครั้งที่: เดือนเดียวกันคนละจังหวัด ใช้วันเวลาจ่ายงานแทนลำดับเรื่อง",
+      [r["survey_no"] for r in _so.order_claim_jobs([
+          {"survey_no": "SEABI-410260500015", "sttcase_ID": "100", "dispatch_datetime": "2026-05-20 10:00"},
+          {"survey_no": "SEABI-420260500230", "sttcase_ID": "100", "dispatch_datetime": "2026-05-02 09:00"},
+          {"survey_no": "SEABI-110260400001", "sttcase_ID": "100", "dispatch_datetime": "2026-04-01 09:00"}])]
+      == ["SEABI-110260400001", "SEABI-420260500230", "SEABI-410260500015"])
+check("ครั้งที่: บอทมีด่าน RoundOrderError + read_rounds สำหรับไล่ดูทุกครั้งก่อนกด 'งานต่อเนื่อง'",
+      issubclass(emcs.RoundOrderError, RuntimeError) and callable(getattr(emcs, "read_rounds", None))
+      and "expected_round" in emcs.start_continuation.__code__.co_varnames)
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

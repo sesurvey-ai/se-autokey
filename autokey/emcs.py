@@ -4875,6 +4875,76 @@ def submit_report(driver, cfg, claim, esurvey: str = ""):
 
 
 # --------------------------------------------------------------- งานต่อเนื่อง
+class RoundOrderError(RuntimeError):
+    """ด่านงานต่อเนื่อง (user เคาะ 13/09/69): ใบนี้ซ้ำกับครั้งที่มีอยู่ / ลำดับครั้งไม่ตรงเลขเซอร์เวย์ /
+    เป็นครั้งที่ ≥2 แต่เคลมยังไม่มีเรื่อง — หยุดสะอาด **ก่อน** กด 'งานต่อเนื่อง' ไม่มีอะไรถูกเขียนใน EMCS"""
+
+
+def _is_stale_el(el) -> bool:
+    try:
+        el.is_enabled()
+        return False
+    except StaleElementReferenceException:
+        return True
+
+
+def _select_round(driver, round_no: str) -> None:
+    """เลือก 'ครั้งที่' ในหน้าค่าใช้จ่าย (postback) แล้วรอช่องเลขใบแจ้งหนี้กลับมา"""
+    old = driver.find_element(By.ID, "txtBill_No")
+    Select(driver.find_element(By.ID, "ddlAdd_No")).select_by_visible_text(str(round_no))
+    try:
+        WebDriverWait(driver, 20).until(lambda d: _is_stale_el(old))
+    except TimeoutException:
+        pass
+    wait_visible(driver, By.ID, "txtBill_No", 20)
+    time.sleep(0.8)
+
+
+def read_rounds(driver) -> list:
+    """ไล่อ่านทุก 'ครั้งที่' ของเรื่องที่เปิดอยู่ (ต้องอยู่หน้าค่าใช้จ่าย) → [{"round","bill_no","editable"}]
+    จบโดยครั้งสุดท้ายถูกเลือกไว้ (ค่าเริ่มต้นของ EMCS)
+
+    ทำไมต้องไล่: หน้าค้นหา EMCS โชว์เลขเซอร์เวย์**เฉพาะครั้งที่ 1** ของแต่ละเรื่อง เลขของครั้งที่ 2+
+    เห็นได้เฉพาะตรงนี้ (พิสูจน์กับเรื่องจริง 13/09/69) — ตัวกันซ้ำที่ดูแค่หน้าค้นหาจึงมองไม่เห็น
+    ว่าใบครั้งที่ 2 เคยเข้าไปแล้ว"""
+    out = []
+    try:
+        options = Select(driver.find_element(By.ID, "ddlAdd_No")).options
+        rounds = [o.text.strip() for o in options]
+    except Exception:
+        return out
+    for t in rounds:
+        cur = Select(driver.find_element(By.ID, "ddlAdd_No"))
+        if cur.first_selected_option.text.strip() != t:
+            _select_round(driver, t)
+        el = driver.find_element(By.ID, "txtBill_No")
+        out.append({"round": t, "bill_no": (el.get_attribute("value") or "").strip(),
+                    "editable": bool(el.is_enabled())})
+    return out
+
+
+def _leave_report(driver) -> None:
+    """ออกจากเรื่อง (ปลดล็อก) ก่อนหยุดด้วย RoundOrderError — เงียบถ้ากดไม่ได้"""
+    try:
+        if driver.find_elements(By.ID, "wuMenuPage1_imbReturn_In_Out"):
+            click_retry(driver, By.ID, "wuMenuPage1_imbReturn_In_Out")
+            try:
+                accept_alert(driver, timeout=10)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _guard_first_round(existing, searched: bool, data: ClaimData, expected_round: int) -> None:
+    """ใบนี้เป็นครั้งที่ ≥2 ตามเลขเซอร์เวย์ แต่เคลมยังไม่มีเรื่องใน EMCS → ห้ามเปิดเรื่องใหม่
+    (จะกลายเป็นเรื่องที่ 2 ของเคลมเดียวกัน ครั้งที่ไม่ตรงเลขเซอร์เวย์) — ต้องนำเข้าครั้งที่ 1 ก่อน"""
+    if searched and not existing and int(expected_round or 0) > 1:
+        raise RoundOrderError(
+            f"เคลม {data.claim_value} ยังไม่มีเรื่องใน EMCS แต่ใบ {data.invoice_value} เป็นครั้งที่ {expected_round} "
+            "ตามเลขเซอร์เวย์ — ต้องนำเข้าครั้งที่ 1 ก่อน จึงจะเปิด 'งานต่อเนื่อง' ต่อจากเรื่องเดิมได้")
+
+
 def _addno_count(driver) -> int:
     """จำนวน 'ครั้งที่' (options ของ ddlAdd_No) — ใช้เช็คว่ากด 'งานต่อเนื่อง' สำเร็จ
     (ครั้งที่เพิ่มขึ้น) — 0 ถ้าไม่เจอ dropdown"""
@@ -4895,7 +4965,7 @@ def _open_report_billing(driver, claim: str, esurvey: str):
     wait_visible(driver, By.ID, "txtBill_No", 20)
 
 
-def start_continuation(driver, claim: str, esurvey: str):
+def start_continuation(driver, claim: str, esurvey: str, invoice: str = "", expected_round: int = 0):
     """เปิดเรื่องเดิม → หน้าค่าใช้จ่าย → ทำให้ "ครั้งงานต่อเนื่อง (draft)" พร้อมกรอก
 
     พฤติกรรม EMCS (พิสูจน์จาก probe): กด 'งานต่อเนื่อง' (cmdFollow) จะ "สร้างครั้งใหม่
@@ -4906,6 +4976,45 @@ def start_continuation(driver, claim: str, esurvey: str):
     - ถูกล็อก → กด 'งานต่อเนื่อง' + ยืนยัน → เปิดเรื่องซ้ำ → ครั้งใหม่พร้อมกรอก"""
     log(f"EMCS: เปิดเรื่องเดิม {esurvey} เพื่อทำงานต่อเนื่อง")
     _open_report_billing(driver, claim, esurvey)
+
+    # ── ด่านไล่ดูทุกครั้งก่อนเพิ่ม (user เคาะ 13/09/69) ──
+    # invoice = เลขเซอร์เวย์ของใบนี้ · expected_round = ครั้งที่ที่ควรเป็นตามเลขเซอร์เวย์ทุกใบของเคลม (0 = ไม่รู้ ตรวจแค่ซ้ำ)
+    rounds = read_rounds(driver)
+    if rounds:
+        log("EMCS: ครั้งที่ในเรื่องนี้: " + " · ".join(
+            f"{r['round']}={r['bill_no'] or '(ว่าง)'}{' [draft]' if r['editable'] else ''}" for r in rounds))
+    inv = (invoice or "").strip().upper()
+    hit = next((r for r in rounds if inv and r["bill_no"].upper() == inv), None)
+    if hit:
+        if hit["editable"]:
+            # draft ของใบนี้เองค้างอยู่ (รอบก่อนกรอกเลขแล้วพังกลางทาง) → กรอกต่อครั้งนั้น ไม่เปิดครั้งใหม่
+            if Select(driver.find_element(By.ID, "ddlAdd_No")).first_selected_option.text.strip() != hit["round"]:
+                _select_round(driver, hit["round"])
+            log(f"EMCS: ใบแจ้งหนี้ {invoice} อยู่ในครั้งที่ {hit['round']} ที่ยังเป็น draft → กรอกต่อครั้งนั้น")
+            return
+        _leave_report(driver)
+        raise RoundOrderError(
+            f"ใบแจ้งหนี้ {invoice} อยู่ในเรื่อง {esurvey} แล้ว (ครั้งที่ {hit['round']} ส่งแล้ว) — ไม่เปิดครั้งใหม่ซ้ำ")
+    if rounds:
+        last = rounds[-1]
+        if last["editable"] and last["bill_no"] and last["bill_no"].upper() != inv:
+            _leave_report(driver)
+            raise RoundOrderError(
+                f"ครั้งที่ {last['round']} ของเรื่อง {esurvey} เป็น draft ของใบ {last['bill_no']} ค้างอยู่ — "
+                "ทำใบนั้นให้จบ (ส่งหรือยกเลิก) ก่อน จึงจะเพิ่มครั้งใหม่ได้")
+        if int(expected_round or 0) > 0:
+            # ครั้ง draft ที่ยังว่าง (รอบก่อนกด 'งานต่อเนื่อง' แล้วพังก่อนกรอก) ไม่นับเป็นครั้งที่ทำแล้ว
+            have = len(rounds) - (1 if (last["editable"] and not last["bill_no"]) else 0)
+            if have != expected_round - 1:
+                _leave_report(driver)
+                had = ", ".join(f"{r['round']}={r['bill_no'] or '(ว่าง)'}" for r in rounds)
+                if have < expected_round - 1:
+                    raise RoundOrderError(
+                        f"เรื่อง {esurvey} มี {have} ครั้ง แต่ใบ {invoice} ควรเป็นครั้งที่ {expected_round} ตามเลขเซอร์เวย์ — "
+                        f"ยังขาดครั้งที่ {have + 1}–{expected_round - 1} นำเข้าใบก่อนหน้าก่อนเพื่อให้ลำดับครั้งตรงกัน (มีอยู่: {had})")
+                raise RoundOrderError(
+                    f"เรื่อง {esurvey} มี {have} ครั้งแล้ว แต่ใบ {invoice} ควรเป็นครั้งที่ {expected_round} ตามเลขเซอร์เวย์ — "
+                    f"ลำดับไม่ตรง ตรวจบน EMCS ก่อน (มีอยู่: {had})")
 
     if driver.find_element(By.ID, "txtBill_No").is_enabled():
         log(f"EMCS: มีครั้งงานต่อเนื่อง (draft) ค้างอยู่ → ครั้งที่ "
@@ -4955,7 +5064,7 @@ def start_continuation(driver, claim: str, esurvey: str):
 
 def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
                       full_billing: bool = True, images_folder=None,
-                      image_type: str = "รูปรถประกัน") -> str:
+                      image_type: str = "รูปรถประกัน", expected_round: int = 0) -> str:
     """งานต่อเนื่อง (ครั้งถัดไปของเคลมเดิม): เปิดเรื่องเดิม → 'งานต่อเนื่อง' →
     **อัปรูปของครั้งนี้** → กรอกหน้าค่าใช้จ่าย (invoice ใหม่ + ตารางราคา)
     ไม่แตะหน้าหลัก/คู่กรณี (ข้อมูลพวกนั้นอยู่ครั้งที่ 1 แล้ว)
@@ -4971,7 +5080,8 @@ def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
     full_billing=False: ไม่กด 'บันทึกราคา'. ปุ่มส่งจริงคือ 'ส่งผลงานต่อเนื่อง'
     (wuFlow1_cmdSendFollow) — สคริปต์ไม่กดให้เด็ดขาด (เหมือนปุ่ม 'ส่งงานใหม่')
     คืนเลข e-Survey เดิม (งานต่อเนื่องใช้เรื่อง/เลขเดิม ไม่สร้างใหม่)"""
-    start_continuation(driver, data.claim_value, esurvey)
+    start_continuation(driver, data.claim_value, esurvey,
+                       invoice=data.invoice_value, expected_round=expected_round)
     # start_continuation ทิ้งเราไว้ที่หน้าค่าใช้จ่ายอยู่แล้ว (fill_billing จึง navigate=False)
     # แต่ upload_images กด wuMenuPage1_imbImage แล้วค้างอยู่หน้ารูป → ถ้าอัปรูป
     # ต้องให้ fill_billing กดกลับหน้าค่าใช้จ่ายเอง ไม่งั้นหา txtBill_No ไม่เจอแล้วล้ม
@@ -4992,7 +5102,7 @@ def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
 def fill_one(driver, cfg, data: ClaimData, images_folder=None,
              loss_type: str = "auto", image_type: str = "รูปรถประกัน",
              severity: str = "เบา", force_new: bool = False,
-             full_billing: bool = True) -> str:
+             full_billing: bool = True, expected_round: int = 0) -> str:
     """กรอกเคลมเดียวจนจบ (driver ต้องอยู่หน้ารายการงาน EMCS แล้ว)
     คืนเลข e-Survey ของเรื่องที่สร้าง
 
@@ -5004,16 +5114,20 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
     เข้าโหมด "งานต่อเนื่อง" อัตโนมัติ (เปิดเรื่องเดิม กรอกครั้งถัดไปหน้าค่าใช้จ่าย)"""
     # งานต่อเนื่อง: มีเรื่องเดิม + invoice ใหม่ → ทำครั้งถัดไป (ไม่สร้างเรื่องใหม่)
     if not force_new:
+        searched = True
         try:
             existing = find_existing_reports(driver, data.claim_value)
         except Exception as e:
             log(f"   ⚠️ ตรวจเรื่องเดิมไม่สำเร็จ ({type(e).__name__}) — ทำต่อแบบสร้างใหม่")
             existing = []
+            searched = False
         cont = continuation_esurvey(existing, data.invoice_value)
         if cont:
             log(f"EMCS: เคลมนี้มีเรื่องเดิม + invoice ใหม่ → โหมดงานต่อเนื่อง (ต่อจาก {cont})")
             return fill_continuation(driver, cfg, data, cont, full_billing=full_billing,
-                                     images_folder=images_folder, image_type=image_type)
+                                     images_folder=images_folder, image_type=image_type,
+                                     expected_round=expected_round)
+        _guard_first_round(existing, searched, data, expected_round)
         guard_duplicate_report(driver, data, force_new, existing=existing)
     else:
         guard_duplicate_report(driver, data, force_new)
@@ -5341,7 +5455,8 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
                   loss_type: str = "auto", image_type: str = "รูปรถประกัน",
                   severity: str = "เบา", force_new: bool = False,
                   full_billing: bool = True, insurer_code: str = None,
-                  allow_continuation: bool = True, select_images: bool = True) -> str:
+                  allow_continuation: bool = True, select_images: bool = True,
+                  expected_round: int = 0) -> str:
     """กรอกเคลมผ่านโหมด "นำเข้า XML": ให้ EMCS import ฟอร์มหลักจาก SURV_REPORT XML
     แล้วบอทอุดช่องว่าง/แก้ที่ import ทำพลาด + กรอกส่วนที่ import ไม่แตะ
 
@@ -5351,11 +5466,13 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
     ได้ดีกว่าเมื่อชิ้นส่วน match checklist ไม่ได้ / import ลดงานกรอกฟอร์มหลักลงมาก"""
     # งานต่อเนื่อง (มีเรื่องเดิม + invoice ใหม่) → ใช้ flow เดิม (ไม่ import — แก้ครั้งถัดไป)
     if not force_new:
+        searched = True
         try:
             existing = find_existing_reports(driver, data.claim_value)
         except Exception as e:
             log(f"   ⚠️ ตรวจเรื่องเดิมไม่สำเร็จ ({type(e).__name__}) — ทำต่อแบบสร้างใหม่")
             existing = []
+            searched = False
         cont = continuation_esurvey(existing, data.invoice_value)
         if cont and not allow_continuation:
             # ⛔ กติกา user (02/08/69 · ย้ำ 19/08/69): งานครั้งที่ 2 ของเคสที่มาจาก se-survey
@@ -5369,7 +5486,9 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
         if cont:
             log(f"EMCS: เคลมนี้มีเรื่องเดิม + invoice ใหม่ → โหมดงานต่อเนื่อง (ต่อจาก {cont})")
             return fill_continuation(driver, cfg, data, cont, full_billing=full_billing,
-                                     images_folder=images_folder, image_type=image_type)
+                                     images_folder=images_folder, image_type=image_type,
+                                     expected_round=expected_round)
+        _guard_first_round(existing, searched, data, expected_round)
         guard_duplicate_report(driver, data, force_new, existing=existing)
     else:
         guard_duplicate_report(driver, data, force_new)
@@ -5447,7 +5566,8 @@ def run_import(driver, cfg, data: ClaimData, images_folder=None,
                loss_type: str = "auto", image_type: str = "รูปรถประกัน",
                severity: str = "เบา", force_new: bool = False,
                full_billing: bool = True, insurer_code: str = None,
-               allow_continuation: bool = True, select_images: bool = True) -> str:
+               allow_continuation: bool = True, select_images: bool = True,
+               expected_round: int = 0) -> str:
     """login แล้วกรอกเคลมเดียวผ่านโหมดนำเข้า XML
 
     allow_continuation=False → เจอ "งานครั้งที่ 2" แล้วหยุด ไม่กรอกให้
@@ -5457,7 +5577,8 @@ def run_import(driver, cfg, data: ClaimData, images_folder=None,
                          loss_type=loss_type, image_type=image_type,
                          severity=severity, force_new=force_new,
                          full_billing=full_billing, insurer_code=insurer_code,
-                         allow_continuation=allow_continuation, select_images=select_images)
+                         allow_continuation=allow_continuation, select_images=select_images,
+                         expected_round=expected_round)
 
 
 def fill_existing_report(driver, cfg, data: ClaimData, esurvey: str = "",

@@ -163,6 +163,9 @@ class ClaimData:
     policy_value: str = ""         # เลขกรมธรรม์
     claim_type: str = ""           # ประเภทเคลม = claim_MtypeID (ดู CLAIM_TYPE_NAMES)
     pay_type: str = ""             # ประเภทการจ่าย (เช่น ส่งพนักงาน)
+    # "ครั้งที่" ของใบนี้ในเคลม จากเลขเซอร์เวย์ทุกใบของเคลมบน ISURVEY (survey_order, 13/09/69) — 0 = ไม่รู้ (ไม่ตรวจลำดับ)
+    round_expected: int = 0
+    round_jobs: list = field(default_factory=list)   # [{"round","survey_no","status_name","dispatch"}] ไว้โชว์/ตรวจ
     third_party_condition: str = ""  # เงื่อนไขฝ่ายถูก
     branch: str = ""               # ศูนย์
     service_total: str = ""        # ค่าบริการรวมเป็นเงิน
