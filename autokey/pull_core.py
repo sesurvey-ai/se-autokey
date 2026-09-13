@@ -14,6 +14,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import json
+import re
 import tempfile
 import urllib.error
 import urllib.request
@@ -24,6 +25,7 @@ from pathlib import Path
 from .config import Config
 from .isurvey_api import ISurveyAPI
 from .isurvey_to_sesurvey import build_case
+from . import survey_order
 
 ISURVEY_STATUS_PENDING = "รอตรวจข้อมูล"
 ISURVEY_EMCS_SENT = "send"
@@ -140,9 +142,49 @@ def zip_photos(folder) -> bytes:
     return buf.getvalue()
 
 
+def _iso_bkk_dt(s) -> str | None:
+    """'2026-06-04 22:48' (เวลาไทยของ ISURVEY listcases) → '2026-06-04T22:48:00+07:00' · อ่านไม่ออก = None"""
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})", str(s or "").strip())
+    return f"{m.group(1)}T{int(m.group(2)):02d}:{m.group(3)}:00+07:00" if m else None
+
+
+def pull_references(api: ISurveyAPI, claim: str, survey_no: str, insurer: str, sesurvey_url: str, token: str,
+                    created_by: int | None = None) -> tuple[list[dict], int | None]:
+    """งานครั้งถัดไป (user เคาะ 13/09/69: อัตโนมัติ + ทุกใบก่อนหน้า + ข้ามรูป):
+    หาครั้งที่ของใบนี้จากเลขเซอร์เวย์ทุกใบของเคลม (survey_order) แล้วดึง "ครั้งก่อนหน้า" ทุกใบเข้าเว็บเป็น
+    เคสอ้างอิง (reference → อนุมัติ/ปิดแล้วตั้งแต่สร้าง ไม่มีรูป) เรียงตามครั้ง เพื่อให้เว็บมีประวัติครบเหมือน EMCS
+    ใบที่มีในเว็บอยู่แล้ว (409 เลขเซอร์เวย์ซ้ำ) = ข้าม · ใบไหนพลาดก็ข้ามใบนั้น ไม่ล้มงานหลัก
+    คืน (รายการผลรายใบ, ครั้งที่ของใบที่กำลังดึง หรือ None ถ้าหาไม่เจอ)"""
+    ordered = survey_order.order_claim_jobs(api.list_claim_jobs(claim))
+    k = survey_order.round_of(ordered, survey_no)
+    refs: list[dict] = []
+    if not k or k <= 1:
+        return refs, k
+    for it in ordered[: k - 1]:
+        entry = {"survey_no": str(it.get("survey_no") or ""), "round": int(it["round"]), "caseId": None, "skipped": None}
+        try:
+            payload = build_case(api, it["caseID"], it)
+            payload["insurance_company"] = insurer
+            if created_by:
+                payload["created_by"] = int(created_by)
+            payload["visit_no"] = int(it["round"])
+            payload["reference"] = {"closed_at": _iso_bkk_dt(it.get("close_datetime")), "round": int(it["round"]),
+                                    "status": str(it.get("status_name") or "")}
+            data, err = sesurvey_post(sesurvey_url, token, "/api/integrations/cases/import", payload=payload)
+            if err:
+                entry["skipped"] = "มีในระบบแล้ว" if "ตอบ 409" in err else err
+            else:
+                entry["caseId"] = ((data or {}).get("data") or {}).get("caseId")
+        except Exception as e:
+            entry["skipped"] = f"{type(e).__name__}: {e}"
+        refs.append(entry)
+    return refs, k
+
+
 def pull_case(api: ISurveyAPI, claim: str, survey_no: str, sesurvey_url: str, token: str,
               created_by: int | None = None, with_photos: bool = True) -> tuple[dict | None, str | None]:
-    """ดึงงาน 1 เรื่อง → สร้างเคสบน se-survey (+รูป) — คืน (result, error)"""
+    """ดึงงาน 1 เรื่อง → สร้างเคสบน se-survey (+รูป) — คืน (result, error)
+    งานครั้งถัดไป: ดึงครั้งก่อนหน้าที่ยังไม่มีในเว็บมาเป็นเคสอ้างอิงก่อน แล้วใบนี้ได้ visit_no ตามเลขเซอร์เวย์ (13/09/69)"""
     prefix = str(survey_no or "").split("-")[0].strip().upper()
     insurer = INSURER_BY_PREFIX.get(prefix)
     if not insurer:
@@ -158,11 +200,24 @@ def pull_case(api: ISurveyAPI, claim: str, survey_no: str, sesurvey_url: str, to
     payload["insurance_company"] = insurer
     if created_by:
         payload["created_by"] = int(created_by)      # เจ้าของเคส = คนที่กดดึง (backend ตรวจสิทธิ์อีกชั้น)
+
+    # ครั้งก่อนหน้าไปก่อน (ลำดับสร้างในเว็บจะตรงครั้ง) — หาลำดับไม่ได้ก็ดึงใบนี้ตามปกติ แค่ไม่มีครั้งที่
+    refs: list[dict] = []
+    visit_no = None
+    try:
+        refs, visit_no = pull_references(api, claim, survey_no, insurer, sesurvey_url, token, created_by)
+    except Exception as e:
+        refs = [{"survey_no": "", "round": 0, "caseId": None, "skipped": f"หาลำดับครั้งของเคลมไม่ได้: {type(e).__name__}"}]
+    if visit_no:
+        payload["visit_no"] = int(visit_no)
+
     data, err = sesurvey_post(sesurvey_url, token, "/api/integrations/cases/import", payload=payload)
     if err:
         return None, err
     result = (data or {}).get("data") or {}
     case_id = result.get("caseId")
+    result["visit_no"] = visit_no
+    result["references"] = refs
 
     if with_photos and case_id:
         try:
