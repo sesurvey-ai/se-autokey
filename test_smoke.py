@@ -4126,5 +4126,18 @@ check("ตัวดึงงาน: เคสอ้างอิง (ครั้
 check("ตัวดึงงาน: รูปพลาดไม่ล้มงาน (_push_photos คืน error แทน raise) และผลรายใบมีช่อง photos",
       "except Exception" in _inspect.getsource(_pc._push_photos) and '"photos": None' in _src_refs)
 
+# ---- วันเกิด/อายุคู่กรณีต้องเป็น "วันจริง" (เคส #324 เคลม 2026013075977 15/09/69: ISURVEY ให้ 00/00/00 + อายุ 0
+#      regex เดิมผ่าน → บอทพิมพ์ 00/00/00 ลง EMCS → alert "ไม่อนุญาตให้ระบุวันเดือนปีเกิดเกิน 100 ปี" งานพังกลางคู่กรณี) ----
+from datetime import datetime as _dt_chk  # noqa: E402
+_oba = _main._opponent_birth_age
+_today_be = _dt_chk.now().strftime("%d/%m/") + str(_dt_chk.now().year + 543)
+check("คู่กรณี: 00/00/00 + อายุ 0 → วันนี้ + อายุ 1 (เหมือน '-' ตามกติกา 10/09/69)",
+      _oba("00/00/00", "0") == {"birthdate": _today_be, "age": "1"})
+check("คู่กรณี: วันเกิดจริง + อายุ 0 → อายุว่าง ให้ EMCS คำนวณเอง", _oba("13/09/2535", "0") == {"birthdate": "13/09/2535", "age": ""})
+check("คู่กรณี: วันเกิดจริง + อายุจริง → ตามเดิม", _oba("13/09/2535", "34") == {"birthdate": "13/09/2535", "age": "34"})
+check("คู่กรณี: ISO ค.ศ. ถือเป็นวันจริง · เดือน 13/ปี 2 หลัก/00/00/2569 ไม่ใช่",
+      _main._is_real_date("1992-09-13 00:00:00") and _main._is_real_date("29/02/2567")
+      and not _main._is_real_date("00/00/2569") and not _main._is_real_date("13/13/2535") and not _main._is_real_date("01/01/69"))
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

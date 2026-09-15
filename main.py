@@ -670,6 +670,29 @@ def _report_damage_items(raw):
     return out
 
 
+def _is_real_date(s: str) -> bool:
+    """วันที่ "จริง" (วัน/เดือน/ปี พ.ศ. หรือ ISO ค.ศ.) — ปัด 00/00/00, เดือน 13, ปีเพี้ยน ฯลฯ ที่รูปแบบถูกแต่ไม่ใช่วัน"""
+    s = str(s or "").strip()
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", s)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if y < 100:            # ปี 2 หลัก (00) = ไม่ทราบ
+            return False
+        y_ce = y - 543 if y >= 2400 else y
+    else:
+        m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", s)
+        if not m:
+            return False
+        y_ce, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if not (1900 <= y_ce <= 2100):
+        return False
+    try:
+        datetime(y_ce, mo, d)
+        return True
+    except ValueError:
+        return False
+
+
 def _opponent_birth_age(birthdate, age) -> dict:
     """วันเกิด/อายุคู่กรณีจากเว็บ → ค่าที่ EMCS รับ (บังคับทั้งคู่ วันเกิดต้องเป็นวันที่ อายุต้องเป็นตัวเลข)
 
@@ -681,8 +704,11 @@ def _opponent_birth_age(birthdate, age) -> dict:
     """
     bd = str(birthdate or "").strip()
     ag = str(age or "").strip()
-    valid_bd = bool(re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}", bd)) or bool(re.match(r"^\d{4}-\d{2}-\d{2}", bd))
-    valid_age = bool(re.fullmatch(r"\d{1,3}", ag))
+    # ⛔ ต้องเป็น "วันจริง" ไม่ใช่แค่รูปแบบ — ISURVEY ส่ง "00/00/00" (ไม่ทราบ) มาได้ (เคส #324 เคลม 2026013075977 15/09/69):
+    #    regex เดิมผ่าน แล้วบอทพิมพ์ 00/00/00 ลง EMCS → alert "ไม่อนุญาตให้ระบุวันเดือนปีเกิดเกิน 100 ปี" งานพังกลางคู่กรณี
+    valid_bd = _is_real_date(bd)
+    # อายุ 0 ไม่ใช่อายุคนขับจริง (ISURVEY ให้ 0 คู่กับวันเกิดไม่ทราบ) และ EMCS ไม่รับ 0 (#282) → ถือว่าไม่ทราบ
+    valid_age = bool(re.fullmatch(r"\d{1,3}", ag)) and int(ag) > 0
     if not valid_bd:
         t = datetime.now()
         bd = f"{t.day:02d}/{t.month:02d}/{t.year + 543}"
