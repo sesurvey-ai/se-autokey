@@ -2622,6 +2622,10 @@ check("แท็บ: รายการ SE Survey โหลดตอนเปิ
 check("SE Survey: มีตัวเลือกผู้ตรวจสอบงาน + เติมชื่อจาก approved_by ตอนโหลดรายการ",
       'id="seby"' in _page and "refreshSeByOptions();" in _page
       and 'String(c.approved_by||"").trim() === by' in _page)
+# "ครั้งที่" บนการ์ด (user ขอ 15/09/69) — visit_no/visit_total มาจาก GET /api/integrations/cases · ครั้งที่ 2+ สีส้ม "ต่อเนื่อง"
+check("SE Survey: การ์ดโชว์ ครั้งที่ N/M และป้าย 'ต่อเนื่อง' เมื่อ N > 1",
+      'class="visit-badge"' in _page and "'ครั้งที่ ' + vn + (vt > 1 ? '/' + vt : '')" in _page
+      and "(vn > 1 ? ' · ต่อเนื่อง' : '')" in _page and "Number(c.visit_no || 0), vt = Number(c.visit_total || 0)" in _page)
 check("SE Survey: พิมพ์เลขในช่องเลขเคสแล้วกรองรายการทันที (Enter ยังนำเข้าเหมือนเดิม)",
       'seCaseInput.addEventListener("input", renderSeCasesFromCache)' in _page
       and 'if (e.key === "Enter") startSesurvey(seCaseInput.value' in _page)
@@ -3047,7 +3051,7 @@ check("SE Survey: ซ่อนหมดแล้ว → บอกวิธีด
       "ทุกเคสในรายการนำเข้า EMCS ไปแล้ว" in _page)
 check("SE Survey: แถวโชว์เลขเคลมตัวหนา + เลขเซอร์เวย์บรรทัดล่าง (เหมือน ISURVEY)",
       "'<span class=\"case-sv\">'+escHtml(c.claim_no||\"(ไม่มีเลขเคลม)\")" in _page
-      and "escHtml(c.survey_job_no||\"-\")+'</div>'" in _page)
+      and "escHtml(c.survey_job_no||\"-\") + visitBadge + '</div>'" in _page)   # 15/09/69 ป้ายครั้งที่ต่อท้ายเลขเซอร์เวย์
 check("SE Survey: บริษัทประกัน/ผู้สำรวจ/เลขเคส ย้ายไป tooltip",
       "const more = [c.insurance_company," in _page and 'title="'+"'+escAttr(more)+'" in _page)
 check("SE Survey: toolbar ดูจากแถวที่แสดงอยู่ ไม่ใช่ทั้ง cache",

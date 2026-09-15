@@ -3168,8 +3168,17 @@ function renderSeCasesFromCache(){
     // แถวเหมือนแท็บ ISURVEY: เลขเคลมตัวหนา + เลขเซอร์เวย์บรรทัดล่าง
     // ที่เหลือ (บริษัทประกัน/ผู้สำรวจ/เลขเคส) ย้ายไป tooltip — คอลัมน์แคบ
     // โชว์แล้วโดน ellipsis ตัดจนอ่านไม่ออกอยู่ดี
+    // "ครั้งที่" ของงานในเคลม (user ขอ 15/09/69) — ครั้งที่ 2+ = งานต่อเนื่อง (บอทเปิดเรื่องเดิม กรอกแค่หน้าค่าใช้จ่าย+รูป) ทำสีส้มให้เห็น
+    const vn = Number(c.visit_no || 0), vt = Number(c.visit_total || 0);
+    const visitBadge = vn > 0
+      ? '<span class="visit-badge" style="margin-left:8px;font-size:11.5px;font-weight:600;padding:1px 7px;border-radius:999px;white-space:nowrap;'
+        + (vn > 1 ? 'background:#fff7ed;color:#c2410c;border:1px solid #fdba74' : 'background:#f1f5f9;color:#475569;border:1px solid #e2e8f0') + '"'
+        + ' title="' + (vn > 1 ? 'งานต่อเนื่อง — บอทจะเปิดเรื่องเดิมใน EMCS แล้วเพิ่มครั้งที่ ' + vn : 'งานครั้งแรกของเคลม') + '">'
+        + 'ครั้งที่ ' + vn + (vt > 1 ? '/' + vt : '') + (vn > 1 ? ' · ต่อเนื่อง' : '') + '</span>'
+      : '';
     const more = [c.insurance_company, who !== "-" ? who : "",
                   c.approved_by ? "ผู้ตรวจ " + c.approved_by : "",
+                  vn > 0 ? "ครั้งที่ " + vn + (vt > 1 ? "/" + vt : "") : "",
                   "เคส #" + id].filter(Boolean).join(" · ");
     return '<div class="case-item">'
       + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">'
@@ -3180,7 +3189,7 @@ function renderSeCasesFromCache(){
       +   '</span>'+statusBadge
       + '</div>'
       + '<div class="case-claim" title="'+escAttr(more)+'">'
-      +   escHtml(c.survey_job_no||"-")+'</div>'
+      +   escHtml(c.survey_job_no||"-") + visitBadge + '</div>'
       + '<div class="case-btns">'+act+'</div>'
       + '<div class="sepanel" data-for="'+id+'" hidden style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#0f172a11;font-size:12.5px"></div>'
       + '</div>';
