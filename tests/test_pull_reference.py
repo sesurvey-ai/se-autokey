@@ -91,6 +91,48 @@ def test_first_round_pulls_nothing_extra(monkeypatch):
     assert result["references"] == [] and result["visit_no"] == 1
 
 
+def test_references_get_their_own_photos(monkeypatch):
+    """15/09/69 user เปลี่ยนกติกา: รูปเป็นของครั้งนั้น ๆ → เคสอ้างอิงต้องได้รูปของมันด้วย (เดิม 13/09 ข้ามรูป)
+    ลำดับ: import ครั้งที่ 1 → รูปครั้งที่ 1 → import ครั้งที่ 2 → รูปครั้งที่ 2 → import ใบหลัก → รูปใบหลัก"""
+    posts = _harness(monkeypatch)
+    downloaded = []
+
+    class PhotoAPI(FakeAPI):
+        def download_images(self, case_id, out_dir):
+            downloaded.append(case_id)
+            return {"INS": 2}
+
+    monkeypatch.setattr(pull_core, "zip_photos", lambda tmp: b"PK-fake-zip")
+    result, err = pull_core.pull_case(PhotoAPI(), "2026013020764", "SEABI-410260401463",
+                                      "https://api.example", "tok", with_photos=True)
+    assert err is None
+    paths = [p for p, _ in posts]
+    assert paths == ["/api/integrations/cases/import", "/api/integrations/cases/101/photos-zip",
+                     "/api/integrations/cases/import", "/api/integrations/cases/103/photos-zip",
+                     "/api/integrations/cases/import", "/api/integrations/cases/105/photos-zip"]
+    assert downloaded == ["c1", "c2", "c3"]            # โหลดรูปของแต่ละงานจาก ISURVEY ตามครั้ง
+    refs = result["references"]
+    assert [r["caseId"] for r in refs] == [101, 103] and all(r["photos"] is not None for r in refs)
+    assert refs[0]["photos"]["isurvey_photo_counts"] == {"INS": 2}
+    assert result["isurvey_photo_counts"] == {"INS": 2} and "isurvey_photo_counts" not in result["photos"]
+
+
+def test_reference_skipped_gets_no_photo_push(monkeypatch):
+    posts = _harness(monkeypatch, dup_survey_nos=("SEABI-110260301484",))
+    monkeypatch.setattr(pull_core, "zip_photos", lambda tmp: b"PK-fake-zip")
+
+    class PhotoAPI(FakeAPI):
+        def download_images(self, case_id, out_dir):
+            return {}
+
+    result, err = pull_core.pull_case(PhotoAPI(), "2026013020764", "SEABI-410260401463",
+                                      "https://api.example", "tok", with_photos=True)
+    assert err is None
+    photo_posts = [p for p, _ in posts if p.endswith("/photos-zip")]
+    assert len(photo_posts) == 2                          # ครั้งที่ 2 + ใบหลัก (ครั้งที่ 1 มีในเว็บแล้ว ไม่ยิงรูป)
+    assert result["references"][0]["photos"] is None and result["references"][1]["photos"] is not None
+
+
 def test_iso_bkk_dt():
     assert pull_core._iso_bkk_dt("2026-06-04 22:48") == "2026-06-04T22:48:00+07:00"
     assert pull_core._iso_bkk_dt("2026-06-04 4:42:10") == "2026-06-04T04:42:00+07:00"

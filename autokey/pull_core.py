@@ -150,11 +150,36 @@ def _iso_bkk_dt(s) -> str | None:
     return f"{m.group(1)}T{int(m.group(2)):02d}:{m.group(3)}:00+07:00" if m else None
 
 
+def _push_photos(api: ISurveyAPI, isurvey_case_id: str, case_id, sesurvey_url: str, token: str) -> dict:
+    """โหลดรูปของงานจาก ISURVEY แล้วอัปเข้าเคสบนเว็บ (zip → /photos-zip) — คืนผลสรุป ไม่ raise
+    (รูปพลาดไม่ควรล้มงาน — เคสสร้างแล้ว ดึงรูปซ้ำทีหลังได้) · ใช้ทั้งใบหลักและเคสอ้างอิง (15/09/69)"""
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            counts = api.download_images(isurvey_case_id, tmp)
+            blob = zip_photos(tmp)
+            if not blob:
+                return {"added": 0, "note": "ต้นทางยังไม่มีรูป", "isurvey_photo_counts": counts}
+            boundary = "----sepull"
+            body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"zip\"; "
+                    f"filename=\"photos.zip\"\r\nContent-Type: application/zip\r\n\r\n"
+                    ).encode("utf-8") + blob + f"\r\n--{boundary}--\r\n".encode("utf-8")
+            pdata, perr = sesurvey_post(
+                sesurvey_url, token, f"/api/integrations/cases/{case_id}/photos-zip", body=body,
+                content_type=f"multipart/form-data; boundary={boundary}", timeout=300)
+            out = dict(((pdata or {}).get("data") or {}) if not perr else {"error": perr})
+            out["isurvey_photo_counts"] = counts
+            return out
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
 def pull_references(api: ISurveyAPI, claim: str, survey_no: str, insurer: str, sesurvey_url: str, token: str,
-                    created_by: int | None = None) -> tuple[list[dict], int | None]:
-    """งานครั้งถัดไป (user เคาะ 13/09/69: อัตโนมัติ + ทุกใบก่อนหน้า + ข้ามรูป):
+                    created_by: int | None = None, with_photos: bool = True) -> tuple[list[dict], int | None]:
+    """งานครั้งถัดไป (user เคาะ 13/09/69: อัตโนมัติ + ทุกใบก่อนหน้า · 15/09/69 เปลี่ยน: เอารูปของทุกครั้งด้วย):
     หาครั้งที่ของใบนี้จากเลขเซอร์เวย์ทุกใบของเคลม (survey_order) แล้วดึง "ครั้งก่อนหน้า" ทุกใบเข้าเว็บเป็น
-    เคสอ้างอิง (reference → อนุมัติ/ปิดแล้วตั้งแต่สร้าง ไม่มีรูป) เรียงตามครั้ง เพื่อให้เว็บมีประวัติครบเหมือน EMCS
+    เคสอ้างอิง (reference → อนุมัติ/ปิดแล้วตั้งแต่สร้าง) เรียงตามครั้ง เพื่อให้เว็บมีประวัติครบเหมือน EMCS
+    รูปเป็นของครั้งนั้น ๆ (ไม่ใช่ของครั้งที่ 1) จึงต้องอัปเข้าเคสอ้างอิงด้วย — ข้อมูลหลักที่ใบครั้งถัดไปไม่มี
+    ฝั่งเว็บเติมจากครั้งที่ 1 ให้เองตอนนำเข้า (visitInherit)
     ใบที่มีในเว็บอยู่แล้ว (409 เลขเซอร์เวย์ซ้ำ) = ข้าม · ใบไหนพลาดก็ข้ามใบนั้น ไม่ล้มงานหลัก
     คืน (รายการผลรายใบ, ครั้งที่ของใบที่กำลังดึง หรือ None ถ้าหาไม่เจอ)"""
     ordered = survey_order.order_claim_jobs(api.list_claim_jobs(claim))
@@ -163,7 +188,8 @@ def pull_references(api: ISurveyAPI, claim: str, survey_no: str, insurer: str, s
     if not k or k <= 1:
         return refs, k
     for it in ordered[: k - 1]:
-        entry = {"survey_no": str(it.get("survey_no") or ""), "round": int(it["round"]), "caseId": None, "skipped": None}
+        entry = {"survey_no": str(it.get("survey_no") or ""), "round": int(it["round"]), "caseId": None,
+                 "skipped": None, "photos": None}
         try:
             payload = build_case(api, it["caseID"], it)
             payload["insurance_company"] = insurer
@@ -177,6 +203,8 @@ def pull_references(api: ISurveyAPI, claim: str, survey_no: str, insurer: str, s
                 entry["skipped"] = "มีในระบบแล้ว" if "ตอบ 409" in err else err
             else:
                 entry["caseId"] = ((data or {}).get("data") or {}).get("caseId")
+                if with_photos and entry["caseId"]:
+                    entry["photos"] = _push_photos(api, it["caseID"], entry["caseId"], sesurvey_url, token)
         except Exception as e:
             entry["skipped"] = f"{type(e).__name__}: {e}"
         refs.append(entry)
@@ -219,7 +247,8 @@ def pull_case(api: ISurveyAPI, claim: str, survey_no: str, sesurvey_url: str, to
     refs: list[dict] = []
     visit_no = None
     try:
-        refs, visit_no = pull_references(api, claim, survey_no, insurer, sesurvey_url, token, created_by)
+        refs, visit_no = pull_references(api, claim, survey_no, insurer, sesurvey_url, token, created_by,
+                                         with_photos=with_photos)
     except Exception as e:
         refs = [{"survey_no": "", "round": 0, "caseId": None, "skipped": f"หาลำดับครั้งของเคลมไม่ได้: {type(e).__name__}"}]
     if visit_no:
@@ -234,23 +263,9 @@ def pull_case(api: ISurveyAPI, claim: str, survey_no: str, sesurvey_url: str, to
     result["references"] = refs
 
     if with_photos and case_id:
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                counts = api.download_images(cid, tmp)
-                blob = zip_photos(tmp)
-                if blob:
-                    boundary = "----sepull"
-                    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"zip\"; "
-                            f"filename=\"photos.zip\"\r\nContent-Type: application/zip\r\n\r\n"
-                            ).encode("utf-8") + blob + f"\r\n--{boundary}--\r\n".encode("utf-8")
-                    pdata, perr = sesurvey_post(
-                        sesurvey_url, token, f"/api/integrations/cases/{case_id}/photos-zip", body=body,
-                        content_type=f"multipart/form-data; boundary={boundary}", timeout=300)
-                    result["photos"] = (pdata or {}).get("data") if not perr else {"error": perr}
-                else:
-                    result["photos"] = {"added": 0, "note": "ต้นทางยังไม่มีรูป"}
-                result["isurvey_photo_counts"] = counts
-        except Exception as e:
-            # รูปพลาดไม่ควรล้มทั้งงาน — เคสสร้างแล้ว ดึงรูปซ้ำทีหลังได้
-            result["photos"] = {"error": f"{type(e).__name__}: {e}"}
+        ph = _push_photos(api, cid, case_id, sesurvey_url, token)
+        counts = ph.pop("isurvey_photo_counts", None)
+        if counts is not None:
+            result["isurvey_photo_counts"] = counts
+        result["photos"] = ph
     return result, None

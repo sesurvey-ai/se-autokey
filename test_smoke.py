@@ -4105,5 +4105,13 @@ _src_loop = _inspect.getsource(_main.main)
 check("บอทนำเข้า ISURVEY: หยุดก่อนแตะ EMCS ถ้าสถานะไม่ใช่ 'จบงาน' (isurvey_status ติดมากับ ClaimData)",
       'isurvey_status' in _src_loop and "จบงาน" in _src_loop and hasattr(claim_data.ClaimData(), "isurvey_status"))
 
+# ---- งานครั้งที่ 2+: รูปของทุกครั้ง (user เปลี่ยนกติกา 15/09/69 เคลม 2026013057520 — เดิม 13/09 ข้ามรูปครั้งก่อนหน้า) ----
+_src_refs = _inspect.getsource(_pc.pull_references)
+check("ตัวดึงงาน: เคสอ้างอิง (ครั้งก่อนหน้า) ได้รูปของครั้งนั้นด้วย ผ่านตัวช่วยเดียวกับใบหลัก (_push_photos)",
+      "with_photos" in _pc.pull_references.__code__.co_varnames and "_push_photos(" in _src_refs
+      and callable(getattr(_pc, "_push_photos", None)) and "_push_photos(" in _inspect.getsource(_pc.pull_case))
+check("ตัวดึงงาน: รูปพลาดไม่ล้มงาน (_push_photos คืน error แทน raise) และผลรายใบมีช่อง photos",
+      "except Exception" in _inspect.getsource(_pc._push_photos) and '"photos": None' in _src_refs)
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
