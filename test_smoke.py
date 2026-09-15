@@ -2618,6 +2618,13 @@ check("แท็บ: ISURVEY เป็นแท็บหลัก เปิด�
       and '<div class="tabpane" id="pane-sesurvey" hidden>' in _page)
 check("แท็บ: รายการ SE Survey โหลดตอนเปิดแท็บ ไม่ใช่ทุกครั้งที่เปิดหน้า",
       "__seLoaded" in _page and "loadCasesBtn.click();   // auto-load" not in _page)
+# กรองรายการ SE Survey ตามผู้ตรวจสอบ (approved_by) + ตามเลขที่พิมพ์ (user สั่ง 15/09/69)
+check("SE Survey: มีตัวเลือกผู้ตรวจสอบงาน + เติมชื่อจาก approved_by ตอนโหลดรายการ",
+      'id="seby"' in _page and "refreshSeByOptions();" in _page
+      and 'String(c.approved_by||"").trim() === by' in _page)
+check("SE Survey: พิมพ์เลขในช่องเลขเคสแล้วกรองรายการทันที (Enter ยังนำเข้าเหมือนเดิม)",
+      'seCaseInput.addEventListener("input", renderSeCasesFromCache)' in _page
+      and 'if (e.key === "Enter") startSesurvey(seCaseInput.value' in _page)
 # ตัวเลือกที่ใช้นาน ๆ ที ต้องพับไว้ ไม่ให้รกหน้าหลัก (หน้าหลักเหลือ เลขเคลม + ปุ่มรัน)
 _adv = _page[_page.index('<details class="adv">'):_page.index("</details>")]
 for _id in ("readonly", "skipimages", "nosaveprice", "forcenew", "importxml",

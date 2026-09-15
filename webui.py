@@ -1928,7 +1928,11 @@ PAGE = r"""<!doctype html>
       <div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px;flex-wrap:wrap">
         <div style="flex:1;min-width:150px">
           <label class="fld" for="secase">เลขเคส / เลขเซอร์เวย์</label>
-          <input type="text" id="secase" placeholder="เช่น 73 หรือ SETP-69060062">
+          <input type="text" id="secase" placeholder="เช่น 73 หรือ SETP-69060062" title="พิมพ์แล้วรายการด้านล่างกรองตาม · Enter = นำเข้าเลขนี้">
+        </div>
+        <div style="flex:1;min-width:150px">
+          <label class="fld" for="seby">ผู้ตรวจสอบงาน</label>
+          <select id="seby" title="กรองรายการตามคนที่อนุมัติเคส (user สั่ง 15/09/69)"><option value="">ทุกคน</option></select>
         </div>
         <button class="run" id="serunbtn" style="padding:11px 14px">⚡ นำเข้า</button>
         <button class="run" id="sedrybtn" style="padding:11px 14px;background:#64748b" title="ดึง+ตรวจ XML+รูป แล้วหยุด ไม่แตะ EMCS">🧪 ทดสอบ</button>
@@ -2973,6 +2977,17 @@ async function downloadXml(caseId){
 }
 
 let seCasesCache = [];
+const seByInput = $("#seby");
+// ตัวเลือก "ผู้ตรวจสอบงาน" = ชื่อคนอนุมัติ (approved_by จาก /api/integrations/cases) ที่มีในรายการ
+// — หัวหน้าประจำสถานีกรองเอาเฉพาะเคสที่ตัวเองอนุมัติ แล้ว "เลือกทั้งหมด" นำเข้าชุดเดียว (user สั่ง 15/09/69)
+function refreshSeByOptions(){
+  const cur = seByInput.value;
+  const names = [...new Set(seCasesCache.map(c => String(c.approved_by||"").trim()).filter(Boolean))]
+    .sort((a,b) => a.localeCompare(b, "th"));
+  seByInput.innerHTML = '<option value="">ทุกคน</option>'
+    + names.map(n => '<option value="'+escAttr(n)+'">'+escHtml(n)+'</option>').join("");
+  if (names.includes(cur)) seByInput.value = cur;   // โหลดรายการใหม่แล้วตัวกรองเดิมต้องไม่หลุด
+}
 function renderSeCasesFromCache(){
   if (!seCasesCache.length){
     seCasesBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">— ไม่มีเคสสำรวจแล้ว (กด ↻ โหลดรายการ) —</div>';
@@ -2982,10 +2997,16 @@ function renderSeCasesFromCache(){
   // ซ่อนที่นำเข้าแล้ว = ค่าเริ่มต้น (เหมือนแท็บ ISURVEY) — งานประจำวันดูแต่ที่ยังไม่ทำ
   // ปุ่มกู้/ซ่อม draft อยู่บนแถวที่นำเข้าแล้ว → เอาติ๊กออกเพื่อเข้าถึง
   const hideDone = $("#sehideimported").checked;
-  const rows = seCasesCache.filter(c => !(hideDone && c.emcs_imported_at));
+  // ตัวกรองซ้อน: ผู้ตรวจสอบ (ตรงชื่อ) + ข้อความในช่องเลขเคส/เลขเซอร์เวย์ (เลขเคลม/เลขเซอร์เวย์/เลขเคส บางส่วนก็ได้)
+  const by = seByInput.value;
+  const q = String(seCaseInput.value||"").trim().toLowerCase();
+  const rows = seCasesCache.filter(c => !(hideDone && c.emcs_imported_at))
+    .filter(c => !by || String(c.approved_by||"").trim() === by)
+    .filter(c => !q || [c.claim_no, c.survey_job_no, c.id].some(v => String(v||"").toLowerCase().includes(q)));
   if (!rows.length){
     seCasesBox.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">'
-      + 'ทุกเคสในรายการนำเข้า EMCS ไปแล้ว (เอาติ๊ก “ซ่อนที่นำเข้าแล้ว” ออกเพื่อดู)</div>';
+      + ((by || q) ? 'ไม่มีเคสที่ตรงกับตัวกรอง (ผู้ตรวจสอบ/เลข) — ล้างตัวกรองเพื่อดูทั้งหมด'
+                   : 'ทุกเคสในรายการนำเข้า EMCS ไปแล้ว (เอาติ๊ก “ซ่อนที่นำเข้าแล้ว” ออกเพื่อดู)') + '</div>';
     $("#setoolbar").hidden = true;
     return;
   }
@@ -3015,6 +3036,7 @@ function renderSeCasesFromCache(){
     // ที่เหลือ (บริษัทประกัน/ผู้สำรวจ/เลขเคส) ย้ายไป tooltip — คอลัมน์แคบ
     // โชว์แล้วโดน ellipsis ตัดจนอ่านไม่ออกอยู่ดี
     const more = [c.insurance_company, who !== "-" ? who : "",
+                  c.approved_by ? "ผู้ตรวจ " + c.approved_by : "",
                   "เคส #" + id].filter(Boolean).join(" · ");
     return '<div class="case-item">'
       + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">'
@@ -3054,6 +3076,8 @@ function updateSeCount(){
   $("#serunallsend").textContent = n ? ("⚡ นำเข้า + ส่งงานใหม่ ที่เลือก (" + n + ")") : "⚡ นำเข้า + ส่งงานใหม่ ที่เลือก";
 }
 $("#sehideimported").addEventListener("change", renderSeCasesFromCache);
+seByInput.addEventListener("change", renderSeCasesFromCache);
+seCaseInput.addEventListener("input", renderSeCasesFromCache);   // พิมพ์เลข = กรองรายการทันที (Enter ยังนำเข้าเลขนั้นเหมือนเดิม)
 $("#seall").addEventListener("change", e => {
   seCasesBox.querySelectorAll(".sesel:not([disabled])").forEach(c => { c.checked = e.target.checked; });
   updateSeCount();
@@ -3169,6 +3193,7 @@ loadCasesBtn.addEventListener("click", async () => {
     const data = await r.json();
     if (!r.ok){ seCasesBox.innerHTML = '<div style="color:var(--err);font-size:13px;padding:8px 0">'+escHtml(data.error||"โหลดไม่สำเร็จ")+'</div>'; return; }
     seCasesCache = data.cases || [];
+    refreshSeByOptions();
     renderSeCasesFromCache();
   }catch(e){ seCasesBox.innerHTML = '<div style="color:var(--err);font-size:13px;padding:8px 0">ติดต่อเซิร์ฟเวอร์ไม่ได้</div>'; }
   finally{ loadCasesBtn.disabled = false; }
