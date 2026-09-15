@@ -2637,6 +2637,7 @@ function makeCard(r){
     +     '<div class="pause-injury" hidden></div>'
     +     '<div class="pause-pick" hidden></div>'
     +     '<button class="continue"></button>'
+    +     '<button class="continue skipbtn" hidden style="background:#64748b;margin-left:8px"></button>'
     +   '</div>'
     + '</div>'
     + '<div class="dupbox" hidden></div>'
@@ -2660,6 +2661,7 @@ function makeCard(r){
     preason: root.querySelector(".pause-reason"),
     stopBtn: root.querySelector(".stopone"), closeBtn: root.querySelector(".closeone"),
     contBtn: root.querySelector(".continue"),
+    skipBtn: root.querySelector(".skipbtn"),
     galWrap: root.querySelector(".pause-gallery"), galEl: root.querySelector(".gal-grid"),
     galCount: root.querySelector(".gal-count"),
     galAll: root.querySelector(".gal-all"), galNone: root.querySelector(".gal-none"),
@@ -2714,12 +2716,20 @@ function makeCard(r){
       if (val) body.payload = {choice: val};
     }
     c.contBtn.disabled = true;
+    c.skipBtn.hidden = true;
     try{ await postJSON("/continue", body); }catch(e){}
     c.pauseEl.hidden = true;
     c.galWrap.style.display = "none"; c.galSig = null;
     c.wtWrap.hidden = true; c.wtSig = null;
     c.injWrap.hidden = true; c.injSig = null;
     c.pickWrap.hidden = true; c.pickSig = null;
+  });
+  c.skipBtn.addEventListener("click", async () => {
+    if (!confirm('ยืนยันว่าคุณกด "แก้ไข" บน EMCS เองแล้ว และได้ข้อความ "บันทึก…เรียบร้อยแล้ว" ใช่ไหม? — '
+                 + 'บอทจะไม่กดบันทึกหน้าหลักซ้ำ และทำขั้นถัดไปทันที')) return;
+    c.skipBtn.disabled = true; c.contBtn.disabled = true;
+    try{ await postJSON("/continue", {id:r.id, payload:{skip:true}}); }catch(e){}
+    c.pauseEl.hidden = true; c.skipBtn.hidden = true;
   });
   c.galAll.addEventListener("click", () => setAllChecks(c, true));
   c.galNone.addEventListener("click", () => setAllChecks(c, false));
@@ -2885,11 +2895,16 @@ function renderRun(r){
         c.contBtn.textContent = "✓ กรอกเสร็จแล้ว — ดำเนินการต่อ";
       }
       c.contBtn.className = "continue";
+      // ปุ่มข้าม — เฉพาะจุดหยุดที่บอทอนุญาต (บันทึกหน้าหลักโหมดแก้: คนกด 'แก้ไข' เองบน EMCS ผ่านแล้ว
+      // แต่บอทกดแล้วเงียบ — เคส #351 15/09/69) ไม่ต้องหยุดงานแล้วไปรัน "เติมส่วนที่ขาด" ใหม่
+      if (r.pause.skip){ c.skipBtn.textContent = "⏭ " + r.pause.skip; c.skipBtn.hidden = false; c.skipBtn.disabled = false; }
+      else c.skipBtn.hidden = true;
     }
     c.contBtn.disabled = false;
     c.pauseEl.hidden = false;
   } else {
     c.pauseEl.hidden = true;
+    c.skipBtn.hidden = true;
     c.galWrap.style.display = "none"; c.galSig = null;
     c.wtWrap.hidden = true; c.wtSig = null;
     c.injWrap.hidden = true; c.injSig = null;

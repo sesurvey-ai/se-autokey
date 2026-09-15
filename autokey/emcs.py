@@ -26,6 +26,7 @@ from .browser import (
     _is_placeholder_option,
     accept_alert,
     click_retry,
+    save_debug_snapshot,
     fuzzy_select,
     iso_to_thai_date,
     log,
@@ -2887,6 +2888,41 @@ return out;
 """
 
 
+_RUNS_LOG_DIR = Path(__file__).resolve().parents[1] / "runs" / "logs"
+
+# ข้อความสีแดงบนหน้า EMCS = validation ฝั่งเซิร์ฟเวอร์ที่ไม่มี alert (บอทเคยมองไม่เห็นเลย — เคส #351 15/09/69
+# คนเห็นข้อความแดงแต่บอทรายงานได้แค่ "เงียบ") · เอาเฉพาะโหนดข้อความไทยที่มองเห็น สีแดง หรือ class/id แนว error
+_JS_RED_MESSAGES = r"""
+var out = [], seen = {};
+var nodes = document.querySelectorAll('span, div, td, label, font, li, p');
+for (var i = 0; i < nodes.length; i++) {
+  var el = nodes[i];
+  if (el.children.length > 3) continue;
+  var t = (el.innerText || '').replace(/\s+/g, ' ').trim();
+  if (!t || t.length > 300 || !/[ก-๙]/.test(t)) continue;
+  var st = window.getComputedStyle(el);
+  if (st.display === 'none' || st.visibility === 'hidden') continue;
+  var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(st.color || '');
+  var red = m && Number(m[1]) >= 120 && Number(m[2]) <= 80 && Number(m[3]) <= 80;
+  var cls = (el.className || '') + ' ' + (el.id || '');
+  if (!red && !/ValidationSummary|lblAlert|lblErr|lblWarn|error|danger/i.test(cls)) continue;
+  if (seen[t]) continue;
+  seen[t] = 1; out.push(t);
+  if (out.length >= 6) break;
+}
+return out;
+"""
+
+
+def _red_messages(driver) -> str:
+    """ข้อความสีแดงที่ EMCS แสดงบนหน้า (อ่านอย่างเดียว) — '' ถ้าไม่มี/อ่านไม่ได้"""
+    try:
+        msgs = driver.execute_script(_JS_RED_MESSAGES) or []
+    except Exception:
+        return ""
+    return " | ".join(str(m) for m in msgs)[:400]
+
+
 def _silent_state(driver, button_id: str) -> str:
     """สภาพหน้าตอน "กดบันทึกแล้วเงียบ" — ตัวดักคลิก + ปุ่ม + navigation ล่าสุด + hifPostStatus
     (เครื่องมือวินิจฉัย: อ่านอย่างเดียว ไม่แตะอะไร)"""
@@ -3185,9 +3221,11 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
     auto_heal_left = 2    # จำนวนรอบที่ยอมให้ซ่อม dropdown อัตโนมัติ
     # จำนวนรอบที่ยอมลองกดใหม่เมื่อคลิกไม่ติด — 3 เพราะการทดสอบจริงครั้งแรก (เคส #126
     # 10 ส.ค. 69) ผ่านที่รอบ 3 พอดี = ใช้โควตาเดิม (2) จนหมดเกลี้ยง เหลือ 0 ที่กันพลาด
-    click_fail_left = 3
+    # 15/09/69 เคส #351: หน้าโหลดใหม่เงียบ 3 รอบ + เงียบอีก 2 รอบ แล้วคนกดเองผ่าน / งานเติมส่วนที่ขาด
+    # ผ่านที่รอบ 3 พอดี → โควตาเดิม (3) ไม่พอ · เพิ่มเป็น 6 + ถอยรอยาวขึ้นทุกรอบ (ดู backoff ข้างล่าง)
+    click_fail_left = 6
     bad_id = ""           # id ช่องแรกที่ EMCS ตีตก (objControlName) — ไว้ตีกรอบแดง
-    for attempt in range(1, 8):
+    for attempt in range(1, 12):
         # ── ถามก่อนกด: EMCS บังคับช่องไหนที่ยังว่าง ── (user เคาะ 02/09/69)
         #
         # ⛔ **ดอกจันแดงบนหน้าจอเชื่อไม่ได้** — อ่าน vlidSurvey() ของ EMCS จริง (เก็บไว้ใน
@@ -3220,8 +3258,11 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
             if kind == "refresh":
                 if click_fail_left > 0:
                     click_fail_left -= 1
+                    # ถอยรอนานขึ้นทุกรอบ (2,4,6,8,8 วิ) — คนกดผ่านหลังหน้านิ่งไปนาน (เคส #351 15/09/69)
+                    backoff = min(2 * attempt, 8)
                     log("   ↻ หน้าโหลดใหม่โดยไม่มี alert — postback แรกหลัง UpdatePanel patch "
-                        "ไม่ยิง event ของปุ่ม (อาการรู้จักแล้ว 03/09/69) · กดใหม่ทันที")
+                        f"ไม่ยิง event ของปุ่ม (อาการรู้จักแล้ว 03/09/69) · รอ {backoff} วิแล้วกดใหม่")
+                    time.sleep(backoff)
                     continue
                 raise TimeoutException("refresh-no-alert")
             if kind == "none":
@@ -3333,10 +3374,29 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
         label = "ข้อมูลหน้าหลักที่ยังขาด" + (f": {missing}" if missing else "")
         # ชี้ช่องได้ 2 ทาง: ชื่อช่องที่ฟ้องเป็นรายการ + ชื่อที่อ้างในเครื่องหมายคำพูด
         # (ข้อความตรวจรูปแบบเป็นประโยค เอาไปหาช่องตรง ๆ ไม่เจอ แต่ชื่อในคำพูดเจอ)
-        if wait_for_manual_fill(label, reason=(alert_text or "").strip(),
-                                focus_ids=[bad_id] if bad_id else None,
-                                focus_labels=fields + _quoted_field_names(alert_text),
-                                driver=driver):
+        # หลักฐาน ณ จุดหยุด (15/09/69 เคส #351): ภาพหน้าจอ + ข้อความสีแดงของ EMCS (validation ฝั่งเซิร์ฟเวอร์
+        # ไม่มี alert บอทมองไม่เห็น คนเห็นแต่บอทบอกได้แค่ "เงียบ") — บอกสาเหตุให้คนโดยไม่ต้องเดา
+        reason = (alert_text or "").strip()
+        red = _red_messages(driver)
+        if red:
+            reason = (reason + " · " if reason else "") + f"ข้อความสีแดงบน EMCS: {red}"
+            log(f"   🔴 ข้อความสีแดงบนหน้า EMCS: {red}")
+        try:
+            save_debug_snapshot(driver, _RUNS_LOG_DIR, tag=f"wait_main_{button_id}")
+        except Exception:
+            pass
+        # โหมดแก้ (draft มีแล้ว): ให้คนกด 'แก้ไข' เองบน EMCS แล้วสั่ง "ข้ามขั้นนี้" ได้ — บอทกดแล้วเงียบ
+        # แต่คนกดผ่าน (เคส #351) ไม่ต้องหยุดงานแล้วไปรัน "เติมส่วนที่ขาด" ใหม่ · โหมดสร้างใหม่ไม่ให้ข้าม
+        # (ยังไม่มีเลข e-Survey ให้ทำต่อ)
+        ans = wait_for_manual_fill(label, reason=reason,
+                                   focus_ids=[bad_id] if bad_id else None,
+                                   focus_labels=fields + _quoted_field_names(alert_text),
+                                   driver=driver,
+                                   skip_label=None if is_new else "บันทึกเองบน EMCS แล้ว — ข้ามขั้นนี้")
+        if ans == "skip":
+            log("   ⏭ ผู้ใช้ยืนยันว่ากด 'แก้ไข' บน EMCS เองแล้ว — ข้ามการกดบันทึกของบอท ทำขั้นถัดไป")
+            return ""
+        if ans:
             log("   ↻ ลองบันทึกหน้าหลักใหม่หลังผู้ใช้กรอกข้อมูล")
             continue
 

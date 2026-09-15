@@ -2652,6 +2652,45 @@ check("ตรวจก่อนนำเข้า: check_sesurvey_case เรี
       "blockers += _vehicle_blockers(rep, url, token)" in _src_webui
       and "blockers += _xml_date_blockers(xml_bytes)" in _src_webui)
 
+# ---- บันทึกหน้าหลักเงียบ (เคส #351 15/09/69): กดซ้ำได้มากขึ้น + ข้อความแดง + ภาพหน้าจอ + ปุ่มข้าม ----
+import io as _io_351
+import sys as _sys_351
+io, sys = _io_351, _sys_351
+_src_emcs_351 = open("autokey/emcs.py", encoding="utf-8").read()
+check("save_main_form: โควตากดซ้ำ 6 รอบ + ถอยรอยาวขึ้น (backoff) + รอบสูงสุด 11",
+      "click_fail_left = 6" in _src_emcs_351 and "backoff = min(2 * attempt, 8)" in _src_emcs_351
+      and "for attempt in range(1, 12):" in _src_emcs_351)
+check("save_main_form: ตอนหยุดรอคน อ่านข้อความสีแดงของ EMCS + เซฟภาพหน้าจอ + เสนอปุ่มข้ามเฉพาะโหมดแก้",
+      "red = _red_messages(driver)" in _src_emcs_351
+      and 'save_debug_snapshot(driver, _RUNS_LOG_DIR, tag=f"wait_main_{button_id}")' in _src_emcs_351
+      and 'skip_label=None if is_new else "บันทึกเองบน EMCS แล้ว — ข้ามขั้นนี้"' in _src_emcs_351
+      and 'if ans == "skip":' in _src_emcs_351)
+_save_w3, _save_in3, _save_out3 = browser._WEBUI, sys.stdin, sys.stdout
+browser._WEBUI = True
+sys.stdin = io.StringIO('{"skip": true}\n')
+sys.stdout = io.StringIO()
+try:
+    _ans = browser.wait_for_manual_fill("ข้อมูลหน้าหลักที่ยังขาด", reason="x", driver=None,
+                                        skip_label="บันทึกเองบน EMCS แล้ว — ข้ามขั้นนี้")
+    _marker_out = sys.stdout.getvalue()
+finally:
+    browser._WEBUI, sys.stdin, sys.stdout = _save_w3, _save_in3, _save_out3
+check("wait_for_manual_fill: หน้าเว็บตอบ {skip:true} → คืน 'skip' และ marker บอกป้ายปุ่มข้าม",
+      _ans == "skip" and '"skip": "บันทึกเองบน EMCS แล้ว — ข้ามขั้นนี้"' in _marker_out)
+_save_w4, _save_in4, _save_out4 = browser._WEBUI, sys.stdin, sys.stdout
+browser._WEBUI = True
+sys.stdin = io.StringIO('{"skip": true}\n')
+sys.stdout = io.StringIO()
+try:
+    _ans2 = browser.wait_for_manual_fill("ช่องอื่น", reason="x", driver=None)
+finally:
+    browser._WEBUI, sys.stdin, sys.stdout = _save_w4, _save_in4, _save_out4
+check("wait_for_manual_fill: จุดหยุดที่ไม่อนุญาตข้าม ได้ {skip:true} มาก็ไม่ข้าม (= ดำเนินการต่อ)",
+      _ans2 is True)
+check("webui: มีปุ่มข้ามในกล่องรอ + ส่ง {skip:true} ไป /continue",
+      'class="continue skipbtn"' in _page and 'payload:{skip:true}' in _page
+      and 'if (r.pause.skip){ c.skipBtn.textContent' in _page)
+
 # ---- ระดับความเสียหาย (เคส #343 15/09/69: ISURVEY ส่ง "แผลเบา" → EMCS "กรุณาเลือก ระดับความเสียหาย" popup ค้าง) ----
 _main_mod = __import__("main")
 check("ระดับความเสียหาย: คำไทยจาก ISURVEY แปลงเป็น rank ได้ (แผลเบา→A แผลหนัก→C เปลี่ยน→D) · L/M/H/X เดิมยังได้",

@@ -845,8 +845,19 @@ def _parse_choice(line: str, options) -> str:
     return val if (not options or val in options) else ""
 
 
+def _is_skip(line: str) -> bool:
+    """หน้าเว็บส่ง {"skip": true} = ผู้ใช้ยืนยันว่าทำขั้นนี้เองบน EMCS แล้ว ให้บอทข้าม (15/09/69)"""
+    s = (line or "").strip()
+    if not s.startswith("{"):
+        return False
+    try:
+        return bool((json.loads(s) or {}).get("skip"))
+    except Exception:
+        return False
+
+
 def wait_for_manual_fill(field_label, reason="", select_id=None, options=None,
-                         focus_ids=None, focus_labels=None, driver=None):
+                         focus_ids=None, focus_labels=None, driver=None, skip_label=None):
     """หยุดรอให้ผู้ใช้กรอก/เลือกข้อมูลช่องนี้ แล้วค่อยทำงานต่อ
 
     ใช้เมื่อข้อมูลจาก ISURVEY ไม่ครบ หรือกรอกอัตโนมัติไม่ได้ — ดีกว่าปล่อย
@@ -896,9 +907,10 @@ def wait_for_manual_fill(field_label, reason="", select_id=None, options=None,
         log(f"     🔴 ตีกรอบแดงไว้บนหน้า EMCS แล้ว {hit} ช่อง (เลื่อนจอไปให้เห็นด้วย)")
     if _WEBUI:
         # marker บรรทัดเดียว ให้ webui จับไปโชว์กล่องแจ้งเตือน + dropdown (ถ้ามี)
+        # skip = ป้ายปุ่ม "ข้ามขั้นนี้" ที่ผู้เรียกอนุญาต (ไม่ส่ง = ไม่มีปุ่ม) — คืน "skip" เมื่อผู้ใช้กด
         print(MANUAL_MARKER + json.dumps(
             {"label": field_label, "reason": reason,
-             "select_id": select_id or "", "options": options},
+             "select_id": select_id or "", "options": options, "skip": skip_label or ""},
             ensure_ascii=False), flush=True)
     try:
         line = sys.stdin.readline()   # block จนได้ Enter (console)/payload (webui); "" ถ้า EOF
@@ -909,6 +921,9 @@ def wait_for_manual_fill(field_label, reason="", select_id=None, options=None,
         # stdin ปิด/EOF = ไม่มีคนเฝ้า → ไปต่อ ไม่ค้าง (ช่องนี้ต้องกรอกเองภายหลัง)
         log("     (ไม่มีการตอบกลับจาก stdin — ไปต่อ ตรวจ/กรอกช่องนี้เองภายหลัง)")
         return False
+    if skip_label and _is_skip(line):
+        log(f"     ⏭ ผู้ใช้ยืนยัน '{skip_label}'")
+        return "skip"
     choice = _parse_choice(line, options)
     if choice:
         log(f"     ▶️ ผู้ใช้เลือก '{choice}' จากหน้าเว็บ — กรอกให้เลย")
