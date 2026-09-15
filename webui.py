@@ -566,6 +566,15 @@ def check_sesurvey_case(case_id: str):
             if rnd > 1:
                 warnings.insert(0, f"งานครั้งที่ {rnd} ของเคลม — บอทจะเปิดเรื่องเดิมใน EMCS ไล่ดูทุกครั้งก่อนเพิ่ม "
                                    "แล้วกรอกเฉพาะรูป (หมวดรูปประกอบ) + หน้าค่าใช้จ่าย ไม่แตะหน้าหลัก")
+                # 15/09/69 แบบ EMCS: งานครั้งที่ 2+ ไม่แตะหน้าหลัก → ด่านของข้อมูลหลัก (ประเภทรถ/จังหวัด/ยี่ห้อ/ระดับความเสียหาย/
+                # บัตร/วันที่ในไฟล์ — ซึ่งมาจากครั้งที่ 1 อยู่แล้ว) ไม่กั้น แต่บอกไว้ให้ไปแก้ที่ครั้งที่ 1 · ด่านที่ยังกั้น = อ่านไฟล์/report ไม่ได้
+                keep = [b for b in blockers if not isinstance(b, str)
+                        or b.startswith("อ่านไฟล์ XML ไม่ได้") or b.startswith("ดึง report")]
+                moved = [b for b in blockers if b not in keep]
+                if moved:
+                    warnings.append(f"งานครั้งที่ {rnd}: ด่านข้อมูลหลักไม่กั้น (EMCS ใช้ของครั้งที่ 1) — "
+                                    "ถ้าจะแก้ให้แก้ที่ครั้งที่ 1: " + " · ".join(str(b) for b in moved))
+                blockers[:] = keep
             elif int(meta.get("visit_count") or 1) > 1:
                 warnings.insert(0, f"เคลมนี้มีงานในเว็บ {meta.get('visit_count')} ใบ แต่ใบนี้ไม่มีเลขครั้งที่ — "
                                    "ถ้าเป็นงานต่อเนื่อง บอทจะตรวจซ้ำอย่างเดียว ไม่ตรวจลำดับครั้ง")
