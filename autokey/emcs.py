@@ -744,15 +744,53 @@ def _clear_free_text_slots(driver, slots):
         log(f"   ↻ ล้างช่องอิสระของเดิม {n} ช่อง ก่อนเขียนชุดใหม่ (กันรายการซ้ำ)")
 
 
+def _close_stray_windows(driver, main_window):
+    """ปิดหน้าต่างอื่นที่ค้างอยู่ (popup ความเสียหายที่ EMCS ไม่ยอมบันทึก ฯลฯ) แล้วกลับหน้าหลัก
+
+    ทำไมต้องมี: popup ความเสียหายของ EMCS ใช้ชื่อหน้าต่างเดียวกันทั้งรถประกันและคู่กรณี
+    ถ้าตัวเก่ายังเปิดค้าง window.open จะ navigate ในหน้าต่างเดิมแทนเปิดใหม่ → ตัวรอ
+    "handle ใหม่" ไม่มีวันมา = TimeoutException หลัง draft ถูกสร้างแล้ว (เคส #343 15/09/69)"""
+    closed = 0
+    for h in list(driver.window_handles):
+        if h == main_window:
+            continue
+        try:
+            driver.switch_to.window(h)
+            driver.close()
+            closed += 1
+        except Exception:
+            pass
+    try:
+        driver.switch_to.window(main_window)
+    except Exception:
+        pass
+    if closed:
+        log(f"   ⚠️ ปิดหน้าต่างค้าง {closed} บาน ก่อนเปิด popup ใหม่")
+    return closed
+
+
 def fill_opponent_damage(driver, prefix, damages, main_window):
     """กรอกความเสียหายคู่กรณีลง popup (frmDamage.aspx) — ใช้ช่อง free-text
     dgvOtherDamage_List (โครงสร้างเดียวกับความเสียหายรถประกันใน fill_damage_list)
-    จาก tp['damages'] = [{part, level, ...}] แล้ว btnSave กลับหน้าหลัก"""
+    จาก tp['damages'] = [{part, level, ...}] แล้ว btnSave กลับหน้าหลัก
+
+    คืน True = บันทึกสำเร็จ · False = ข้าม/EMCS ไม่ยอมบันทึก (popup ถูกปิดทิ้งแล้ว ไม่ค้าง)
+    ⛔ ระดับความเสียหาย (rdoDam_Lavel) เป็นช่องบังคับของ EMCS — ว่างแม้ชิ้นเดียว EMCS ฟ้อง
+       "กรุณาเลือก ระดับความเสียหาย" แล้วไม่บันทึก/ไม่ปิด popup (เคส #343 15/09/69: ISURVEY ส่ง
+       ระดับเป็นคำไทย "แผลเบา" → แปลงเป็น rank ไม่ได้) → ไม่กดบันทึกตั้งแต่แรก ปิด popup แล้วบอกให้คนกรอกเอง"""
     items = [(d.get("part", ""), d.get("level", ""), d.get("side", ""))
              for d in (damages or []) if d.get("part")]
     if not items:
-        return
+        return True
+    no_level = [name for name, level, _ in items
+                if (level or "").strip().upper() not in ("A", "B", "C", "D")]
+    if no_level:
+        log(f"   ⚠️ ความเสียหายคู่กรณี {len(no_level)} ชิ้นไม่มีระดับ ({', '.join(no_level[:3])}"
+            f"{'…' if len(no_level) > 3 else ''}) — EMCS บังคับระดับทุกชิ้น ข้าม popup นี้ "
+            "(แก้ระดับบนเว็บ se-survey แล้วรัน 'เติมส่วนที่ขาด')")
+        return False
     log(f"   กรอกความเสียหายคู่กรณี {len(items)} รายการ (popup free-text)")
+    _close_stray_windows(driver, main_window)
     handles_before = set(driver.window_handles)
     # หลังบันทึกคู่กรณี (postback หนัก) หน้า re-render — ปุ่ม popup อาจ stale/ช้า
     # → click_retry + timeout ยาว (เดิม wait_clickable 10 วิ timeout บน draft ที่ช้า)
@@ -768,7 +806,8 @@ def fill_opponent_damage(driver, prefix, damages, main_window):
             driver.switch_to.window(main_window)
         except Exception:
             pass
-        return
+        return False
+    popup = driver.current_window_handle
 
     # จำนวนช่องอิสระอ่านจาก DOM จริง (cmdNewReport=8 / ฟอร์ม import=20) เหมือนฝั่งรถประกัน
     # — เดิมฮาร์ดโค้ด 8 ทั้งที่ฟอร์มที่ใช้จริงมี 20 ช่อง ทำให้รายการที่ 9+ หายเงียบ
@@ -803,17 +842,32 @@ def fill_opponent_damage(driver, prefix, damages, main_window):
                 pass
         log(f"   ✓ ความเสียหายคู่กรณี [{c + 1}] {name} | side={side} | level={level}")
 
+    # กดบันทึกแล้วอ่าน alert: "บันทึก…เรียบร้อย" = สำเร็จ (popup ปิดเอง) · อย่างอื่น = EMCS ปฏิเสธ
+    # (validation) popup ยังเปิดค้าง → ต้องปิดเอง ไม่งั้น popup ตัวถัดไป (ความเสียหายรถประกัน) เปิดไม่ได้
+    saved, msg = False, ""
     try:
         driver.find_element(By.ID, "btnSave").click()
-        accept_alert(driver)
-    except Exception:
-        pass
+        msg = accept_alert(driver) or ""
+        saved = "เรียบร้อย" in msg
+    except Exception as e:
+        msg = f"{type(e).__name__}"
     time.sleep(1)
+    if popup in driver.window_handles:
+        try:
+            driver.switch_to.window(popup)
+            driver.close()
+        except Exception:
+            pass
     try:
         driver.switch_to.window(main_window)
     except Exception:
         pass
-    log("   ✓ บันทึกความเสียหายคู่กรณีแล้ว")
+    if saved:
+        log("   ✓ บันทึกความเสียหายคู่กรณีแล้ว")
+    else:
+        log(f"   ⚠️ EMCS ไม่ยอมบันทึกความเสียหายคู่กรณี ({msg[:80] or 'ไม่มี alert'}) — ปิด popup แล้ว "
+            "กรอกเองภายหลัง หรือแก้บนเว็บแล้วรัน 'เติมส่วนที่ขาด'")
+    return saved
 
 
 def _read_person_type_options(driver):
@@ -3417,6 +3471,9 @@ def fill_damage_list(driver, data: ClaimData, main_window: str):
         return
 
     log(f"EMCS: กรอกความเสียหาย {len(data.damage)} รายการ")
+    # popup ที่ค้างจากขั้นก่อน (เช่น ความเสียหายคู่กรณีที่ EMCS ไม่ยอมบันทึก) ต้องปิดก่อน — ชื่อหน้าต่างเดียวกัน
+    # ถ้ายังเปิดอยู่ EMCS จะใช้หน้าต่างเดิม ตัวรอ handle ใหม่ไม่มีวันผ่าน (เคส #343 15/09/69)
+    _close_stray_windows(driver, main_window)
     handles_before = set(driver.window_handles)
     wait_clickable(driver, By.ID, "btnPopUp_DamList").click()
 

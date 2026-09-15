@@ -554,6 +554,7 @@ def check_sesurvey_case(case_id: str):
             warnings.append("ไม่มีคำนำหน้าผู้ขับขี่ (บอทจะลองอนุมานจากชื่อผู้เอาประกัน)")
         blockers += _id_length_blockers(rep)
         blockers += _vehicle_blockers(rep, url, token)
+        blockers += _damage_level_blockers(rep)
         # งานต่อเนื่อง (13/09/69): meta ของเคสบอก "ครั้งที่" (visit_no จากตัวดึงงาน/งานครั้งถัดไป) — บอกคนก่อนกด
         try:
             mreq = urllib.request.Request(f"{url}/api/integrations/cases/{case_id}",
@@ -659,6 +660,30 @@ def _xml_date_blockers(xml_bytes) -> list:
             seen.add(m.group(0))
             out.append(f"วันที่ในไฟล์ไม่ถูกต้อง <{tag}> = {m.group(2)}-{m.group(3)}-{m.group(4)} "
                        "— EMCS ปัดตกไฟล์นำเข้าทั้งไฟล์ แก้บนเว็บ se-survey ก่อน (ไม่ทราบ = เว้นว่างหรือใส่ '-')")
+    return out
+
+
+_DAMAGE_LEVEL_OK = {"L", "M", "H", "X", "A", "B", "C", "D", "แผลเบา", "แผลกลาง", "แผลหนัก", "เปลี่ยน", "เบา", "กลาง", "หนัก"}
+
+
+def _damage_level_blockers(rep: dict) -> list:
+    """ทุกชิ้นในรายการความเสียหาย (รถประกัน + คู่กรณี) ต้องมี "ระดับ" ที่บอทแปลงเป็น rank A-D ได้
+    — EMCS บังคับ rdoDam_Lavel ทุกชิ้น ว่างแม้ชิ้นเดียว popup ไม่บันทึกและค้าง งานพังหลัง draft เกิด
+    (เคส #343 15/09/69: ISURVEY ส่ง "แผลเบา" เว็บเก็บทั้งดุ้น) · ระดับว่าง = ต้องให้คนเลือกบนเว็บก่อน"""
+    out = []
+
+    def chk(label, items):
+        bad = [str(d.get("part") or "?") for d in (items or []) if isinstance(d, dict) and d.get("part")
+               and str(d.get("level") or "").strip().upper() not in _DAMAGE_LEVEL_OK
+               and str(d.get("level") or "").strip() not in _DAMAGE_LEVEL_OK]
+        if bad:
+            out.append(f"{label}: ระดับความเสียหายว่าง/ไม่ถูกต้อง {len(bad)} ชิ้น ({', '.join(bad[:3])}"
+                       f"{'…' if len(bad) > 3 else ''}) — EMCS บังคับทุกชิ้น เลือกระดับบนเว็บ se-survey ก่อน")
+
+    chk("รถประกัน", rep.get("insured_damage"))
+    for i, o in enumerate(rep.get("opposing_parties") or [], 1):
+        if isinstance(o, dict):
+            chk(f"คู่กรณีคันที่ {i}", o.get("damage"))
     return out
 
 

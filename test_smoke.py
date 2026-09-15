@@ -2651,6 +2651,29 @@ _src_webui = open("webui.py", encoding="utf-8").read()
 check("ตรวจก่อนนำเข้า: check_sesurvey_case เรียกตัวกั้นทั้งสอง",
       "blockers += _vehicle_blockers(rep, url, token)" in _src_webui
       and "blockers += _xml_date_blockers(xml_bytes)" in _src_webui)
+
+# ---- ระดับความเสียหาย (เคส #343 15/09/69: ISURVEY ส่ง "แผลเบา" → EMCS "กรุณาเลือก ระดับความเสียหาย" popup ค้าง) ----
+_main_mod = __import__("main")
+check("ระดับความเสียหาย: คำไทยจาก ISURVEY แปลงเป็น rank ได้ (แผลเบา→A แผลหนัก→C เปลี่ยน→D) · L/M/H/X เดิมยังได้",
+      [r for _, r, _ in _main_mod._report_damage_items(
+          [{"part": "กันชนหน้า", "level": "แผลเบา"}, {"part": "ประตู", "level": "แผลหนัก"},
+           {"part": "ฝากระโปรง", "level": "เปลี่ยน"}, {"part": "ไฟหน้า", "level": "M"}, {"part": "กระจก", "level": ""}])]
+      == ["A", "C", "D", "B", ""])
+from autokey.isurvey_to_sesurvey import _damage_item as _dmg_item
+check("ตัวแปลง ISURVEY: ระดับคำไทย → L/M/H/X ตั้งแต่ตอนดึง (แผลเบา→L เปลี่ยน→X)",
+      _dmg_item("กันชน", "แผลเบา")["level"] == "L" and _dmg_item("กันชน", "เปลี่ยน")["level"] == "X"
+      and _dmg_item("กันชน", "B")["level"] == "M")
+_db = _webui_mod._damage_level_blockers(
+    {"insured_damage": [{"part": "กันชนหน้า", "level": "L"}, {"part": "ประตู", "level": ""}],
+     "opposing_parties": [{"damage": [{"part": "ฝาปิดน้ำมัน", "level": "แผลเบา"}, {"part": "กันชนหลัง", "level": "ปานกลางมาก"}]}]})
+check("ตรวจก่อนนำเข้า: ระดับความเสียหายว่าง/ไม่รู้จัก → กั้น (รถประกัน 1 ชิ้น · คู่กรณี 1 ชิ้น) คำไทยที่แปลงได้ไม่ติด",
+      len(_db) == 2 and "รถประกัน" in _db[0] and "ประตู" in _db[0] and "คู่กรณีคันที่ 1" in _db[1] and "กันชนหลัง" in _db[1]
+      and "ฝาปิดน้ำมัน" not in _db[1])
+_src_emcs = open("autokey/emcs.py", encoding="utf-8").read()
+check("popup ความเสียหายคู่กรณี: ไม่มีระดับ = ไม่กดบันทึก · EMCS ปฏิเสธ = ปิด popup เอง · ปิดหน้าต่างค้างก่อนเปิดตัวถัดไป",
+      "def _close_stray_windows(driver, main_window)" in _src_emcs
+      and 'saved = "เรียบร้อย" in msg' in _src_emcs
+      and _src_emcs.count("_close_stray_windows(driver, main_window)") >= 3)
 # ตัวเลือกที่ใช้นาน ๆ ที ต้องพับไว้ ไม่ให้รกหน้าหลัก (หน้าหลักเหลือ เลขเคลม + ปุ่มรัน)
 _adv = _page[_page.index('<details class="adv">'):_page.index("</details>")]
 for _id in ("readonly", "skipimages", "nosaveprice", "forcenew", "importxml",

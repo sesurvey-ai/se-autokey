@@ -112,7 +112,12 @@ GENDER_MAP = {"M": "ชาย", "F": "หญิง", "W": "หญิง"}
 # แต่ se-survey (มือถือ+เว็บ) เก็บ L/M/H/X — ส่ง 'A' ไปตรง ๆ เว็บจะโชว์ไม่ติ๊ก และตอนยกเข้า EMCS
 # main.py แปลง L/M/H/X→A-D ไม่รู้จัก 'A' → ระดับว่าง → EMCS ปัดตก "กรุณาเลือก ระดับความเสียหาย"
 # (เจอจริงเคส #221, 03/09/69)
-DAMAGE_LEVEL_MAP = {"A": "L", "B": "M", "C": "H", "D": "X"}
+DAMAGE_LEVEL_MAP = {"A": "L", "B": "M", "C": "H", "D": "X",
+                    # ISURVEY บางงานส่ง "ระดับ" เป็นคำไทยแทน rank (เจอจริงเคส #343 เคลม 2026013171521 15/09/69:
+                    # "แผลเบา" → เว็บเก็บทั้งดุ้น → บอทแปลงเป็น rank ไม่ได้ → EMCS "กรุณาเลือก ระดับความเสียหาย"
+                    # แล้ว popup ค้าง งานพัง) · เปลี่ยน = ต้องเปลี่ยนชิ้นส่วน = สูงมาก
+                    "แผลเบา": "L", "แผลกลาง": "M", "แผลหนัก": "H", "เปลี่ยน": "X",
+                    "เบา": "L", "กลาง": "M", "หนัก": "H", "L": "L", "M": "M", "H": "H", "X": "X"}
 TITLES = ("นาย", "นางสาว", "นาง", "ด.ช.", "ด.ญ.", "คุณ")
 
 
@@ -331,7 +336,7 @@ def _damage_item(name, level, dtype="", cost="") -> dict:
     part, pos = split_part_side(name)
     lv = _s(level)
     return {"part": part, "pos": pos, "type": _s(dtype),
-            "level": DAMAGE_LEVEL_MAP.get(lv.upper(), lv), "cost": _s(cost)}
+            "level": DAMAGE_LEVEL_MAP.get(lv.upper(), DAMAGE_LEVEL_MAP.get(lv, lv)), "cost": _s(cost)}
 
 
 def _money_sum(*vals) -> float:
