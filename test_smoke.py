@@ -2625,6 +2625,32 @@ check("SE Survey: มีตัวเลือกผู้ตรวจสอบ�
 check("SE Survey: พิมพ์เลขในช่องเลขเคสแล้วกรองรายการทันที (Enter ยังนำเข้าเหมือนเดิม)",
       'seCaseInput.addEventListener("input", renderSeCasesFromCache)' in _page
       and 'if (e.key === "Enter") startSesurvey(seCaseInput.value' in _page)
+
+# ---- ตรวจก่อนนำเข้า: ยี่ห้อไม่ตรงประเภทรถ + วันที่ไม่จริงในไฟล์ (เคส #299/#300 15/09/69) ----
+from autokey.car_brand import normalize_brand as _nb
+check("ยี่ห้อ: MERCEDES-BENZ → BENZ (ป้าย EMCS) · Mazda → MAZDA · 'Land Rover' → LANDROVER · '-' → ''",
+      _nb("MERCEDES-BENZ") == "BENZ" and _nb("Mazda") == "MAZDA"
+      and _nb("Land Rover") == "LANDROVER" and _nb("-") == "")
+_tbl = {"by_type": {"A": ["TOYOTA", "HONDA"], "E": ["BENZ", "BMW", "TOYOTA"]},
+        "type_labels": {"A": "เก๋งเอเชีย", "E": "เก๋งยุโรป"}}
+_vb = _webui_mod._vehicle_blockers(
+    {"car_type": "A", "car_brand": "HONDA",
+     "opposing_parties": [{"car_type": "เก๋งเอเชีย", "car_brand": "MERCEDES-BENZ"},
+                          {"car_type": "เก๋งยุโรป", "car_brand": "TOYOTA"}]},
+    "", "", brands=_tbl)
+check("ตรวจก่อนนำเข้า: เก๋งเอเชีย + MERCEDES-BENZ → กั้น 1 รายการ บอกว่ามีในเก๋งยุโรป (คู่ที่ถูกไม่ติด)",
+      len(_vb) == 1 and "คู่กรณีคันที่ 1" in _vb[0] and "BENZ" in _vb[0] and "เก๋งยุโรป" in _vb[0])
+check("ตรวจก่อนนำเข้า: ดึงตารางยี่ห้อไม่ได้ → ไม่กั้น (ไม่กั้นมั่ว)",
+      _webui_mod._vehicle_blockers({"car_type": "A", "car_brand": "BENZ"}, "http://127.0.0.1:9", "x", brands={}) == [])
+_xd = _webui_mod._xml_date_blockers(
+    b"<R><DRI_BIRTHDAY>2026-00-00 00:00:00</DRI_BIRTHDAY><ACC_DATE>2026-09-13 12:11:00</ACC_DATE>"
+    b"<X>2026-02-30 00:00:00</X><POLICY_START>2026-06-30 00:00:00</POLICY_START></R>")
+check("ตรวจก่อนนำเข้า: วันที่ 2026-00-00 / 30 ก.พ. ในไฟล์ → กั้น 2 รายการ วันจริงไม่ติด",
+      len(_xd) == 2 and "DRI_BIRTHDAY" in _xd[0] and "<X>" in _xd[1])
+_src_webui = open("webui.py", encoding="utf-8").read()
+check("ตรวจก่อนนำเข้า: check_sesurvey_case เรียกตัวกั้นทั้งสอง",
+      "blockers += _vehicle_blockers(rep, url, token)" in _src_webui
+      and "blockers += _xml_date_blockers(xml_bytes)" in _src_webui)
 # ตัวเลือกที่ใช้นาน ๆ ที ต้องพับไว้ ไม่ให้รกหน้าหลัก (หน้าหลักเหลือ เลขเคลม + ปุ่มรัน)
 _adv = _page[_page.index('<details class="adv">'):_page.index("</details>")]
 for _id in ("readonly", "skipimages", "nosaveprice", "forcenew", "importxml",

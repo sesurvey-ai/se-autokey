@@ -528,6 +528,8 @@ def check_sesurvey_case(case_id: str):
 
     # report = ค่าไทยที่ fill_* ต้องใช้เลือก dropdown บังคับของ EMCS
     # (ประเภทรถ/จังหวัด/ยี่ห้อ/คำนำหน้า/ลักษณะความเสียหาย) — ขาดแล้วบอทจะหยุดรอกลางทาง
+    # วันที่ในไฟล์ต้องเป็นวันจริง — ไม่งั้น EMCS ปัดตกทั้งไฟล์หลังบอทโหลดรูปเสร็จ (เคส #299 15/09/69)
+    blockers += _xml_date_blockers(xml_bytes)
     info = {}
     try:
         url, token = _sesurvey_cfg()
@@ -551,6 +553,7 @@ def check_sesurvey_case(case_id: str):
         if not str(d.driver_title or "").strip():
             warnings.append("ไม่มีคำนำหน้าผู้ขับขี่ (บอทจะลองอนุมานจากชื่อผู้เอาประกัน)")
         blockers += _id_length_blockers(rep)
+        blockers += _vehicle_blockers(rep, url, token)
         # งานต่อเนื่อง (13/09/69): meta ของเคสบอก "ครั้งที่" (visit_no จากตัวดึงงาน/งานครั้งถัดไป) — บอกคนก่อนกด
         try:
             mreq = urllib.request.Request(f"{url}/api/integrations/cases/{case_id}",
@@ -576,6 +579,87 @@ def check_sesurvey_case(case_id: str):
     return {"case_id": str(case_id), "counts": counts, "info": info,
             "blockers": blockers, "warnings": warnings,
             "ready": not blockers}, None
+
+
+_BRANDS_CACHE = {"at": 0.0, "data": None}
+_TYPE_CODE = {"เก๋งเอเชีย": "A", "เก๋งเอเซีย": "A", "เก๋งยุโรป": "E", "รถจักรยานยนต์": "M",
+              "รถอื่นๆ": "O", "กระบะ": "T", "รถตู้": "V", "รถบรรทุก": "W"}
+
+
+def _fetch_car_brands(url: str, token: str):
+    """ลิสต์ยี่ห้อตามประเภทรถของ EMCS จาก se-survey (GET /api/integrations/car-brands, cache 1 ชม.)
+    — ชุดเดียวกับที่หน้าตรวจใช้ · None = ดึงไม่ได้ (ข้ามการตรวจ ไม่กั้นมั่ว)"""
+    import time as _t
+    if _BRANDS_CACHE["data"] and _t.time() - _BRANDS_CACHE["at"] < 3600:
+        return _BRANDS_CACHE["data"]
+    try:
+        req = urllib.request.Request(f"{url}/api/integrations/car-brands",
+                                     headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = (json.loads(resp.read().decode("utf-8")).get("data") or {})
+        if data.get("by_type"):
+            _BRANDS_CACHE.update(at=_t.time(), data=data)
+            return data
+    except Exception:
+        pass
+    return _BRANDS_CACHE["data"]
+
+
+def _vehicle_blockers(rep: dict, url: str, token: str, brands=None) -> list:
+    """ยี่ห้อไม่มีในลิสต์ของประเภทรถนั้นบน EMCS → บอทเลือกยี่ห้อไม่ได้ (fuzzy <90) แล้วหยุดรอคนกลางทาง
+    เคส #300 15/09/69: ISURVEY ให้ "เก๋งเอเชีย + MERCEDES-BENZ" ทั้งที่ BENZ อยู่ในลิสต์เก๋งยุโรป
+    ตรวจด้วยตารางเดียวกับหน้าตรวจ (backend vehicleBrand.ts) · ดึงตารางไม่ได้ = ไม่ตรวจ"""
+    from autokey.car_brand import normalize_brand
+    data = brands or _fetch_car_brands(url, token)
+    if not data:
+        return []
+    by_type, labels = data.get("by_type") or {}, data.get("type_labels") or {}
+    out = []
+
+    def chk(label, ctype, brand):
+        t = str(ctype or "").strip()
+        code = t.upper() if len(t) == 1 else _TYPE_CODE.get(t, "")
+        b = normalize_brand(brand)
+        if not code or not b or code not in by_type or b in by_type[code]:
+            return
+        others = [labels.get(k, k) for k, v in by_type.items() if b in v]
+        where = f" (มีใน: {' / '.join(others)})" if others else " (ไม่มีในลิสต์ EMCS เลย)"
+        out.append(f"{label}: ยี่ห้อ {b} ไม่มีในประเภทรถ {labels.get(code, code)} ของ EMCS{where} "
+                   "— แก้บนเว็บ se-survey ก่อน ไม่งั้นบอทหยุดรอคนที่ช่องยี่ห้อ")
+
+    chk("รถประกัน", rep.get("car_type"), rep.get("car_brand"))
+    for i, o in enumerate(rep.get("opposing_parties") or [], 1):
+        if isinstance(o, dict):
+            chk(f"คู่กรณีคันที่ {i}", o.get("car_type"), o.get("car_brand"))
+    return out
+
+
+def _xml_date_blockers(xml_bytes) -> list:
+    """วันที่ในไฟล์นำเข้าต้องเป็นวันจริง — EMCS ปัดตกทั้งไฟล์ด้วย
+    "The DateTime represented by the string is not supported in calendar GregorianCalendar"
+    เคส #299 15/09/69: วันเกิดคู่กรณี 00/00/2569 → <DRI_BIRTHDAY>2026-00-00 00:00:00</DRI_BIRTHDAY>
+    (บอทโหลดรูปเสร็จแล้วค่อยรู้ — ดักตั้งแต่ตรวจก่อนนำเข้า)"""
+    import re as _re
+    import datetime as _dt
+    if not xml_bytes:
+        return []
+    text = xml_bytes.decode("utf-8", "replace") if isinstance(xml_bytes, bytes) else str(xml_bytes)
+    pat = _re.compile(r"<([A-Z_]+)>\s*(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}):(\d{2}))?\s*</\1>")
+    out, seen = [], set()
+    for m in pat.finditer(text):
+        tag, y, mo, d = m.group(1), int(m.group(2)), int(m.group(3)), int(m.group(4))
+        ok = 1900 <= y <= 2100
+        try:
+            _dt.date(y, mo, d)
+        except ValueError:
+            ok = False
+        if m.group(5) is not None and not (int(m.group(5)) <= 23 and int(m.group(6)) <= 59 and int(m.group(7)) <= 59):
+            ok = False
+        if not ok and m.group(0) not in seen:
+            seen.add(m.group(0))
+            out.append(f"วันที่ในไฟล์ไม่ถูกต้อง <{tag}> = {m.group(2)}-{m.group(3)}-{m.group(4)} "
+                       "— EMCS ปัดตกไฟล์นำเข้าทั้งไฟล์ แก้บนเว็บ se-survey ก่อน (ไม่ทราบ = เว้นว่างหรือใส่ '-')")
+    return out
 
 
 def _id_length_blockers(rep: dict) -> list:

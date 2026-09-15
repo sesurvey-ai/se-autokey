@@ -80,6 +80,23 @@ BRAND_MIN_SCORE = 90
 _NOT_A_BRAND = {"", "N/A", "NA", "ALL", "NONE", "NULL", "0"}
 
 
+# ชื่ออังกฤษที่สะกดต่างจากป้าย EMCS (ISURVEY ส่ง 'MERCEDES-BENZ' แต่ EMCS ใช้ 'BENZ' — เคส #299/#300 15/09/69)
+# WRatio('MERCEDES-BENZ','BENZ') = 90.0 พอดีเส้น BRAND_MIN_SCORE ผ่านแบบเฉียดฉิว → แปลงตรง ๆ ดีกว่าพึ่งดวง
+# ชุดเดียวกับ BRAND_ALIASES ใน se-survey backend/src/services/vehicleBrand.ts
+EN_ALIASES = {
+    "MERCEDES-BENZ": "BENZ", "MERCEDES BENZ": "BENZ", "MERCEDESBENZ": "BENZ", "MERCEDES": "BENZ",
+    "MERCEDES-AMG": "BENZ", "MERC": "BENZ",
+    "LAND ROVER": "LANDROVER", "LAND-ROVER": "LANDROVER", "RANGE ROVER": "LANDROVER",
+    "ROLLS-ROYCE": "ROLLSROYCE", "ROLLS ROYCE": "ROLLSROYCE",
+    "ASTON MARTIN": "ASTONMARTIN", "ASTON-MARTIN": "ASTONMARTIN",
+    "ALFA ROMEO": "ALFA", "ALFA-ROMEO": "ALFA",
+    "HARLEY-DAVIDSON": "HARLEY", "HARLEY DAVIDSON": "HARLEY",
+    "VW": "VOLKSWAGEN", "CHEVY": "CHEVROLET",
+    "LYNK & CO": "LYNK CO", "LYNK&CO": "LYNK CO", "MOTO-GUZZI": "MOTO GUZZI",
+    "ROYAL-ENFIELD": "ROYAL ENFIELD", "CAN AM": "CAN-AM",
+}
+
+
 def _has_thai(s: str) -> bool:
     return any("฀" <= c <= "๿" for c in s)
 
@@ -99,7 +116,8 @@ def normalize_brand(value) -> str:
     if s.upper().strip("-./ ") in _NOT_A_BRAND:
         return ""
     if not _has_thai(s):
-        return s.upper()
+        up = " ".join(s.upper().split())
+        return EN_ALIASES.get(up, up)
     hit = THAI_TO_EMCS.get(s)
     if hit:
         return hit

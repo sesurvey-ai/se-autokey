@@ -198,6 +198,13 @@ def be_date(iso) -> str:
     if not m:
         return ""
     y = int(m.group(1))
+    # ISURVEY ส่ง "2569-00-00" (= ไม่ทราบวันเกิด) มาได้ → ถ้าไม่ใช่วันจริงคืนว่าง ไม่งั้นได้ "00/00/2569"
+    # แล้ว EMCS ปัดตกไฟล์นำเข้าทั้งไฟล์ (เคส #299 เคลม 2026013171626 15/09/69)
+    import datetime as _dt
+    try:
+        _dt.date(y - 543 if y >= 2400 else y, int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return ""
     return f"{m.group(3)}/{m.group(2)}/{y if y >= 2400 else y + 543}"
 
 
