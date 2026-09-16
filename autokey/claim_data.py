@@ -80,20 +80,38 @@ WEAK_TITLES = {"คุณ"}
 
 _MOO_PREFIX = re.compile(r"^(หมู่ที่|หมู่|ม\.)\s*")
 _TUMBON_PREFIX = re.compile(r"^(ตำบล|แขวง|ต\.)\s*")
+# "หมู่ที่ 7" / "หมู่ 7" / "หมู่7" / "ม.7" / "ม. 7" ที่ขึ้นต้นหรือหลังช่องว่าง/จุลภาค — "หมู่บ้าน…" ไม่ติด (ต้องตามด้วยตัวเลข)
+_MOO_IN_TEXT = re.compile(r"(?:^|(?<=[\s,]))(?:หมู่ที่|หมู่|ม\.)\s*(\d{1,3})(?=$|[\s,])")
+
+
+def _tidy(addr: str) -> str:
+    return re.sub(r"^[\s,]+|[\s,]+$", "", re.sub(r"\s*,\s*", ",", re.sub(r"\s+", " ", addr)))
+
+
+def split_moo(address) -> tuple:
+    """แยกหมู่ที่ช่างพิมพ์ปนในบ้านเลขที่ → (บ้านเลขที่ที่ไม่มีหมู่แล้ว, หมู่ '' = ไม่มี) (user สั่ง 16/09/69)"""
+    addr = re.sub(r"\s+", " ", str(address or "").strip())
+    m = _MOO_IN_TEXT.search(addr)
+    if not m:
+        return addr, ""
+    return _tidy(addr[:m.start()] + " " + addr[m.end():]), m.group(1)
 
 
 def driver_address_line(address, moo="", subdistrict="") -> str:
     """ที่อยู่ปัจจุบันผู้ขับขี่รถประกัน → ข้อความช่องเดียวสำหรับ EMCS: "46/23 ม.7 ต.ท้ายบ้าน" (user เคาะ 16/09/69)
     EMCS มีช่องที่อยู่ข้อความเดียว + dropdown จังหวัด/อำเภอ (ไม่มีช่องหมู่/ตำบล) → จังหวัด/อำเภอไม่ใส่ในข้อความ
-    ส่วนไหนว่างข้าม · ที่อยู่มี "ม.7"/"หมู่ 7" อยู่แล้วไม่ต่อหมู่ซ้ำ · มีชื่อตำบลอยู่แล้วไม่ต่อ "ต." ซ้ำ
+    หมู่ที่ปนในบ้านเลขที่แยกออกมาเป็น "ม.<เลข>" เสมอ (ช่องหมู่ที่ให้มาชนะ) · "ต.ตำบล" ที่พิมพ์ปนมาย้ายไปท้าย ·
+    ชื่อตำบลเปล่า ๆ ที่มีอยู่แล้วไม่ต่อซ้ำ · ส่วนไหนว่างข้าม
     ⚠️ สูตรเดียวกับ backend se-survey services/driverAddress.ts (driverAddressLine) — แก้ที่หนึ่งต้องแก้อีกที่"""
-    addr = re.sub(r"\s+", " ", str(address or "").strip())
-    m = _MOO_PREFIX.sub("", str(moo or "").strip()).strip()
+    addr, moo_in_text = split_moo(address)
+    m = _MOO_PREFIX.sub("", str(moo or "").strip()).strip() or moo_in_text
     t = _TUMBON_PREFIX.sub("", str(subdistrict or "").strip()).strip()
+    if t:
+        addr = _tidy(re.sub(r"(?:^|(?<=[\s,]))(?:ตำบล|แขวง|ต\.)\s*" + re.escape(t) + r"(?=$|[\s,])", " ", addr))
     parts = []
     if addr:
         parts.append(addr)
-    if m and not re.search(r"(^|\s)(ม\.|หมู่ที่|หมู่)\s*" + re.escape(m) + r"(\s|$)", addr):
+    if m:
         parts.append(f"ม.{m}")
     if t and t not in addr:
         parts.append(f"ต.{t}")

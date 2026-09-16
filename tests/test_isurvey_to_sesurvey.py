@@ -41,7 +41,8 @@ class FakeAPI:
                 "D_TOTAL_COST": "8000",
                 "Driver": {"drv_name": "วิไลรัตน์ อินเทพ", "drv_gender": "F", "lic_typeID": "15", "relation": "ลูกจ้าง",
                            "age": "29", "birthdate": "1996-09-18", "IDcard_no": "1200500072660",
-                           "drv_provinceID": "20", "drv_amphurID": "2006", "drv_tumbonID": "200708", "lic_issue_provinceID": "48"}},
+                           "drv_provinceID": "20", "drv_amphurID": "2006", "drv_tumbonID": "200708", "lic_issue_provinceID": "48",
+                           "address": "46/23 หมู่ที่ 7"}},
             7: {"Policy": {"policy_no": "525013111407", "assured_name": "บริษัท โตโยต้า ลีสซิ่ง (ประเทศไทย) จำกัด",
                            "policy_TypeID": "ประเภท 1", "effective_date": "2025-10-12", "expiry_date": "2026-10-12",
                            "COMPULSORY_NO": "5260133511673", "ODDD": "1,000", "repair_code": "ซ่อมห้าง", "vehType": "110",
@@ -148,7 +149,8 @@ def test_names_are_emcs_safe():
 def test_driver_subdistrict_from_tumbon_code():
     """ตำบลผู้ขับขี่จากรหัส drv_tumbonID → ชื่อ (16/09/69) · หมู่ไม่แยก (ปนในบ้านเลขที่)"""
     r = _build()["report"]
-    assert r["driver_subdistrict"] == "บ่อวิน" and r["driver_moo"] == ""
+    assert r["driver_subdistrict"] == "บ่อวิน"
+    assert (r["driver_address"], r["driver_moo"]) == ("46/23", "7")      # หมู่ที่ปนในบ้านเลขที่แยกออกมา (16/09/69)
     api = FakeAPI()
     api.tabs[3]["Driver"].pop("drv_tumbonID")
     assert conv.build_case(api, "case1", {"emp_phone": "0988639214"})["report"]["driver_subdistrict"] == ""

@@ -23,6 +23,7 @@
  6. ISURVEY คืน `None` เมื่อค่าว่าง (ไม่ใช่ '') → ต้อง coerce ทุกช่อง
 """
 import re
+from .claim_data import split_moo
 
 from . import isurvey_emcs_map as emcs_map
 from .emcs_names import DISTRICT_NAME, PROVINCE_NAME
@@ -556,12 +557,13 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "driver_last_name": _name(dlast),
         "driver_age": _num(drv.get("age")),
         "driver_gender": _gender_mf(drv.get("drv_gender")),
-        "driver_address": _s(drv.get("address")),
+        # 16/09/69: หมู่ที่ปนในบ้านเลขที่ ("46/23 หมู่ที่ 7") แยกไปช่องหมู่ให้เลย → เว็บโชว์แยกช่อง / EMCS ได้ "46/23 ม.7 ต.ท้ายบ้าน"
+        "driver_address": split_moo(_s(drv.get("address")))[0],
         "driver_province": province_name(drv_prov),
         "driver_district": district_name(api, drv.get("drv_amphurID"), drv_prov),
         # 16/09/69: ตำบลจากรหัส drv_tumbonID (เว็บมีช่องตำบล/หมู่แล้ว) · หมู่ของ ISURVEY ปนอยู่ในบ้านเลขที่ ไม่แยก
         "driver_subdistrict": api._tumbon(_s(drv.get("drv_tumbonID"))) if _s(drv.get("drv_tumbonID")) else "",
-        "driver_moo": "",
+        "driver_moo": split_moo(_s(drv.get("address")))[1],
         "driver_phone": _s(drv.get("drv_phone")),
         "driver_id_card": _s(drv.get("IDcard_no")),
         "driver_license_no": _s(drv.get("lic_no")),
