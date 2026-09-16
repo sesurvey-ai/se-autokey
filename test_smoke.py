@@ -4139,5 +4139,35 @@ check("คู่กรณี: ISO ค.ศ. ถือเป็นวันจร�
       _main._is_real_date("1992-09-13 00:00:00") and _main._is_real_date("29/02/2567")
       and not _main._is_real_date("00/00/2569") and not _main._is_real_date("13/13/2535") and not _main._is_real_date("01/01/69"))
 
+# ---- อัปเดตโปรแกรมผ่านเน็ต (user เคาะ 15/09/69 แผนข้อ 1 — เลิกขน USB: ปุ่ม "ตรวจอัปเดต" โหลด zip จาก se-survey แล้วรีสตาร์ตตัวเอง) ----
+import re as _re_upd  # noqa: E402
+import shutil as _sh_upd  # noqa: E402
+import subprocess as _sp_upd  # noqa: E402
+import autokey as _ak_upd  # noqa: E402
+from autokey import updater as _upd  # noqa: E402
+check("อัปเดตผ่านเน็ต: __version__ เป็น x.y.z (make_release/ปุ่มตรวจอัปเดตเทียบเลขนี้)",
+      _re_upd.fullmatch(r"\d+\.\d+\.\d+", _ak_upd.__version__) is not None, _ak_upd.__version__)
+check("อัปเดตผ่านเน็ต: updater มี check/download/apply_zip/restart/bind_with_retry และ path ตรงกับ backend se-survey",
+      all(callable(getattr(_upd, f, None)) for f in ("check", "download", "apply_zip", "restart", "bind_with_retry"))
+      and _upd.RELEASE_LATEST == "/api/integrations/bot-release/latest" and "{version}" in _upd.RELEASE_ZIP)
+_src_wui_all = pathlib.Path(_wui.__file__).read_text(encoding="utf-8")
+check("อัปเดตผ่านเน็ต: หน้าเว็บมีปุ่มตรวจ/อัปเดต + เลขเวอร์ชันที่หัว และ main() รอพอร์ตว่างหลังรีสตาร์ต",
+      all(k in _wui.PAGE for k in ('id="updcheck"', 'id="updapply"', 'id="appver"', '"/update/check"', '"/update/apply"'))
+      and "bind_with_retry(" in _inspect.getsource(_wui.main))
+_i_apply = _src_wui_all.index('u.path == "/update/apply"')
+_src_apply = _src_wui_all[_i_apply:_src_wui_all.index('u.path == "/settings"', _i_apply)]
+check("อัปเดตผ่านเน็ต: กดได้เฉพาะหน้าในเครื่อง (403) · ห้ามอัปกลางงาน (409) · โหลด+ตรวจ sha256 ก่อนแตกทับ · รีสตาร์ตพอร์ตเดิม",
+      "403" in _src_apply and "_active_count()" in _src_apply and "409" in _src_apply
+      and _src_apply.index("updater.download(") < _src_apply.index("updater.apply_zip(") < _src_apply.index("updater.restart(port=_SERVER_PORT"))
+_js = _wui.PAGE[_wui.PAGE.index("<script>") + len("<script>"):_wui.PAGE.rindex("</script>")]
+if _sh_upd.which("node"):
+    _jsf = pathlib.Path(tempfile.gettempdir()) / "_se_autokey_page_check.js"
+    _jsf.write_text(_js, encoding="utf-8")
+    _r = _sp_upd.run(["node", "--check", str(_jsf)], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    check("อัปเดตผ่านเน็ต: JS ของหน้าเว็บ parse ผ่าน (node --check)", _r.returncode == 0, (_r.stderr or "")[-300:])
+    _jsf.unlink(missing_ok=True)
+else:
+    print("[SKIP] ไม่มี node — ข้ามตรวจ syntax JS ของหน้าเว็บ")
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

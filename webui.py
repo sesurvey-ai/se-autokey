@@ -34,6 +34,9 @@ from urllib.parse import urlparse, parse_qs
 from autokey.config import _load_env_file
 
 BASE = Path(__file__).resolve().parent
+# พอร์ต/host ที่เซิร์ฟเวอร์นี้รันอยู่ — main() ตั้งค่าให้ · ใช้ตอน "อัปเดตและรีสตาร์ต" เปิดโปรเซสใหม่พอร์ตเดิม
+_SERVER_PORT = 8765
+_SERVER_HOST = "127.0.0.1"
 
 
 def _sesurvey_cfg():
@@ -1406,6 +1409,16 @@ class Handler(BaseHTTPRequestHandler):
             # ไม่มี = "รอผู้นำเข้า EMCS หรือติดตั้ง se-autokey" (user เคาะ 04/09/69) · ตอบเบา ๆ ไม่แตะ EMCS/ISURVEY
             from autokey import __version__
             self._send(200, {"ok": True, "app": "se-autokey", "version": __version__})
+        elif u.path == "/update/check":
+            # อัปเดตผ่านเน็ต (15/09/69 แผนข้อ 1): เทียบเวอร์ชันที่รันอยู่กับที่เซิร์ฟเวอร์ se-survey ปล่อยล่าสุด — อ่านอย่างเดียว
+            from autokey import __version__, updater
+            try:
+                url, token = _sesurvey_cfg()
+                info = updater.check(url, token, __version__)
+            except Exception as e:  # noqa: BLE001
+                info = {"current": __version__, "error": f"{type(e).__name__}: {e}"}
+            info["active"] = _active_count()
+            self._send(200, info)
         elif u.path == "/image":
             self._serve_image(parse_qs(u.query))
         elif u.path == "/sesurvey-cases":
@@ -1559,6 +1572,37 @@ class Handler(BaseHTTPRequestHandler):
                        {"continued": continue_run(self._id(p), p.get("payload"))})
         elif u.path == "/forget":
             self._send(200, {"forgot": forget_run(self._id(self._read_json()))})
+        elif u.path == "/update/apply":
+            # อัปเดตโปรแกรมผ่านเน็ต (15/09/69 แผนข้อ 1): โหลด zip จาก se-survey → ตรวจ sha256 → แตกทับตัวเอง → รีสตาร์ต
+            # เฉพาะหน้า operator ในเครื่อง · ห้ามอัปกลางงาน (โปรเซสงานเป็นลูกของตัวนี้ — ปิดตัวแล้วงานพัง)
+            if self._cors_origin() is not None:
+                self._send(403, {"error": "อัปเดตได้จากหน้า operator ในเครื่องเท่านั้น"})
+                return
+            active = _active_count()
+            if active > 0:
+                self._send(409, {"error": f"มีงานกำลังรันอยู่ {active} งาน — รอให้เสร็จก่อนค่อยอัปเดต"})
+                return
+            from autokey import __version__, updater
+            try:
+                url, token = _sesurvey_cfg()
+                info = updater.check(url, token, __version__)
+                if info.get("error"):
+                    self._send(502, {"error": info["error"]})
+                    return
+                if not info.get("update_available"):
+                    self._send(200, {"ok": True, "updated": False,
+                                     "message": f"เป็นเวอร์ชันล่าสุดอยู่แล้ว (v{__version__})"})
+                    return
+                import tempfile as _tf
+                with _tf.TemporaryDirectory(prefix="se-autokey-dl-") as tmp:
+                    z = updater.download(url, token, info["latest"], Path(tmp) / "release.zip", info.get("sha256", ""))
+                    res = updater.apply_zip(z, updater.ROOT)
+            except Exception as e:  # noqa: BLE001
+                self._send(500, {"error": f"อัปเดตไม่สำเร็จ: {type(e).__name__}: {e}"})
+                return
+            print(f"[update] ติดตั้ง v{info['latest']} แล้ว ({res['files']} ไฟล์) — กำลังรีสตาร์ต", flush=True)
+            self._send(200, {"ok": True, "updated": True, "version": info["latest"], **res})
+            updater.restart(port=_SERVER_PORT, host=_SERVER_HOST)
         elif u.path == "/settings":
             # แก้ตารางคนคีย์จากหน้าเว็บ — เฉพาะหน้า operator ท้องถิ่นเท่านั้น
             if self._cors_origin() is not None:
@@ -2019,7 +2063,7 @@ PAGE = r"""<!doctype html>
   <header>
     <div class="logo">SE</div>
     <div>
-      <h1>se-autokey · นำเข้า EMCS</h1>
+      <h1>se-autokey · นำเข้า EMCS <span id="appver" title="เวอร์ชันโปรแกรม — อัปเดตได้ที่แท็บ ตั้งค่า" style="font-size:12px;font-weight:400;color:var(--muted);vertical-align:middle"></span></h1>
       <div class="sub">รายการงานสำรวจจากแอปมือถือ → นำเข้า EMCS · ดูรายละเอียดการนำเข้าแบบเรียลไทม์</div>
     </div>
   </header>
@@ -2363,6 +2407,22 @@ PAGE = r"""<!doctype html>
      </div>
      <!-- ระบบ se-survey (เว็บกลาง) — ปุ่ม "นำเข้า EMCS" บนเว็บใช้ token นี้ดึงข้อมูลเคสมาให้บอท
           เครื่องที่ติดตั้งบอทใหม่ไม่มี token → กดปุ่มแล้วขึ้น "ไม่พบ SESURVEY_API_TOKEN" (04/09/69) -->
+     <!-- อัปเดตโปรแกรมผ่านเน็ต (user เคาะ 15/09/69 แผนข้อ 1) — ไม่ต้องขน USB · โหลดจากเซิร์ฟเวอร์ se-survey ด้วย token บอทตัวเดิม -->
+     <div class="card" style="margin-bottom:12px">
+      <b style="font-size:15px">🔄 เวอร์ชันโปรแกรม <span id="updcur" style="font-weight:400;color:var(--muted)"></span></b>
+      <div style="color:var(--muted);font-size:12.5px;margin:4px 0 10px">
+       อัปเดตผ่านเน็ตจากเซิร์ฟเวอร์ se-survey — ไม่ต้องขน USB · ไม่แตะ <code>.env</code> / สมุดงาน / รูปเคส / Python พกพา ของเครื่องนี้
+      </div>
+      <div class="actions">
+       <button class="ghost" id="updcheck">🔍 ตรวจอัปเดต</button>
+       <button class="run" id="updapply" hidden>⬆ อัปเดตและรีสตาร์ต</button>
+      </div>
+      <div id="updmsg" style="font-size:12.5px;margin-top:8px"></div>
+      <div class="note" style="margin-top:10px">
+       • อัปเดตได้เฉพาะตอน<b>ไม่มีงานกำลังรัน</b> · หลังอัปเดตโปรแกรมรีสตาร์ตเอง หน้านี้โหลดใหม่ให้ (ราว 10–20 วินาที)<br>
+       • หน้าต่างดำบานเดิมจะปิดและมีบานใหม่เปิดขึ้นแทน — ถ้าไม่มีบานใหม่ ให้ดับเบิลคลิก <code>start-webui.bat</code>
+      </div>
+     </div>
      <div class="card" style="margin-bottom:12px">
       <b style="font-size:15px">🌐 ระบบ se-survey (เว็บกลาง)</b>
       <div style="color:var(--muted);font-size:12.5px;margin:4px 0 10px">
@@ -4154,6 +4214,60 @@ async function ssCall(url, body){
 }
 $("#savess").addEventListener("click", () => ssCall("/sesurvey-account", {url:$("#ssurl").value.trim(), token:$("#sskey").value}));
 $("#testss").addEventListener("click", () => ssCall("/sesurvey-test", null));
+
+// ── อัปเดตโปรแกรมผ่านเน็ต (user เคาะ 15/09/69 แผนข้อ 1) ──
+// ตรวจ = GET /update/check (อ่านอย่างเดียว) · อัปเดต = POST /update/apply แล้วรอ /healthz ตอบเวอร์ชันใหม่ค่อยโหลดหน้าใหม่
+var updTarget = null;
+async function loadVersion(){
+  try{
+    const d = await (await fetch("/healthz", {cache:"no-store"})).json();
+    $("#appver").textContent = "v" + d.version;
+    $("#updcur").textContent = "v" + d.version;
+  }catch(e){}
+}
+loadVersion();
+async function updCheck(){
+  const msg = $("#updmsg"), btn = $("#updapply");
+  msg.textContent = "กำลังตรวจ…"; btn.hidden = true; updTarget = null;
+  try{
+    const d = await (await fetch("/update/check", {cache:"no-store"})).json();
+    if (d.error){ msg.innerHTML = '<span style="color:#b91c1c">' + escHtml(d.error) + '</span>'; return; }
+    if (!d.update_available){ msg.textContent = "เป็นเวอร์ชันล่าสุดแล้ว (v" + d.current + ")"; return; }
+    updTarget = d.latest;
+    msg.innerHTML = 'มีเวอร์ชันใหม่ <b>v' + escHtml(d.latest) + '</b> (ตอนนี้ v' + escHtml(d.current) + ')'
+      + (d.size ? ' · ' + Math.round(d.size / 1024) + ' KB' : '')
+      + (d.notes ? '<br>' + escHtml(d.notes) : '')
+      + (d.active ? '<br><span style="color:#b91c1c">มีงานกำลังรัน ' + d.active + ' งาน — รอให้เสร็จก่อนค่อยอัปเดต</span>' : '');
+    btn.hidden = false; btn.disabled = !!d.active;
+  }catch(e){ msg.textContent = "ตรวจไม่ได้: " + e; }
+}
+async function updApply(){
+  if (!updTarget) return;
+  if (!confirm("อัปเดตเป็น v" + updTarget + " แล้วรีสตาร์ตโปรแกรม?\nต้องไม่มีงานกำลังรัน · หน้านี้จะโหลดใหม่เองเมื่อเสร็จ")) return;
+  const msg = $("#updmsg"), btn = $("#updapply");
+  btn.disabled = true; msg.textContent = "กำลังโหลดและติดตั้ง…";
+  try{
+    const r = await postJSON("/update/apply", {});
+    if (!r.ok){ msg.innerHTML = '<span style="color:#b91c1c">' + escHtml(r.data.error || "อัปเดตไม่สำเร็จ") + '</span>'; btn.disabled = false; return; }
+    if (!r.data.updated){ msg.textContent = r.data.message || "ไม่มีอะไรต้องอัปเดต"; btn.hidden = true; return; }
+    const want = r.data.version, t0 = Date.now();
+    msg.textContent = "ติดตั้งแล้ว " + r.data.files + " ไฟล์ — กำลังรีสตาร์ตโปรแกรม รอสักครู่…";
+    const tick = async () => {
+      try{
+        const h = await (await fetch("/healthz", {cache:"no-store"})).json();
+        if (h.version === want){ msg.textContent = "อัปเดตเป็น v" + want + " แล้ว — กำลังโหลดหน้าใหม่"; location.reload(); return; }
+      }catch(e){}
+      if (Date.now() - t0 > 90000){
+        msg.innerHTML = '<span style="color:#b91c1c">รอรีสตาร์ตนานผิดปกติ — ถ้าไม่มีหน้าต่างดำบานใหม่ ให้ดับเบิลคลิก start-webui.bat</span>';
+        return;
+      }
+      setTimeout(tick, 2000);
+    };
+    setTimeout(tick, 3000);
+  }catch(e){ msg.textContent = "อัปเดตไม่สำเร็จ: " + e; btn.disabled = false; }
+}
+$("#updcheck").addEventListener("click", updCheck);
+$("#updapply").addEventListener("click", updApply);
 $("#savesk").addEventListener("click", () => {
   const u = $("#skurl").value.trim();
   if (!u){ $("#skmsg").textContent = "ยังไม่ได้กรอกที่อยู่ระบบ"; return; }
@@ -4244,13 +4358,17 @@ def main():
     ap.add_argument("--no-open", action="store_true",
                     help="ไม่ต้องเปิดเบราว์เซอร์ให้อัตโนมัติ")
     a = ap.parse_args()
+    global _SERVER_PORT, _SERVER_HOST
+    _SERVER_PORT, _SERVER_HOST = a.port, a.host
 
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
 
-    srv = ThreadingHTTPServer((a.host, a.port), Handler)
+    # หลัง "อัปเดตและรีสตาร์ต" ตัวเก่ายังถือพอร์ตอยู่ชั่วครู่ (หรือเปิดซ้อนตอนตัวเก่ากำลังปิด) → รอแล้วลองใหม่ ไม่ล้มทันที
+    from autokey import updater
+    srv = updater.bind_with_retry(lambda: ThreadingHTTPServer((a.host, a.port), Handler), a.port)
     url = f"http://{a.host}:{a.port}"
     print("=" * 56)
     print("  se-autokey web UI พร้อมใช้งาน")

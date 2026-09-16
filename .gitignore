@@ -28,3 +28,6 @@ SURV_REPORT_*.txt
 # ข้อมูลธุรกิจ/พนักงาน + ไฟล์ scratch (อาจมีข้อมูลส่วนตัว/รหัส) — ห้าม commit
 *.xlsx
 New*.txt
+
+# ไฟล์ปล่อยเวอร์ชัน (make-release.bat) — อัปขึ้น R2 ผ่าน backend ไม่ commit
+dist/
