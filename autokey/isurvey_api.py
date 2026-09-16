@@ -18,7 +18,7 @@ import requests
 
 from .browser import log
 from .claim_data import ClaimData, split_thai_name
-from .claim_data import driver_address_line
+from .claim_data import driver_address_line, opponent_address_line
 from . import isurvey_emcs_map as emcs_map
 
 
@@ -247,7 +247,7 @@ class ISurveyAPI:
         "relation": ("relation", None),
         "age": ("age", None), "birthdate": ("birthdate", None),
         "idcard": ("IDcard_no", None), "phone": ("drv_phone", None),
-        "address": ("@address", None),
+        "address": ("@address_opp", None),   # 16/09/69: "46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ" (รูปแบบเดียวกับเส้นเว็บ)
         "lic_no": ("lic_no", None), "lic_type": ("lic_typeID", "liccode"),
         "lic_place": ("lic_issue_provinceID", "prov"),
         "lic_issue_date": ("lic_issueDate", None),
@@ -319,6 +319,15 @@ class ISurveyAPI:
                 out[key] = emcs_map.district(
                     flat.get("drv_amphurID") or flat.get("amphurID"),
                     flat.get("drv_provinceID") or flat.get("provinceID"))
+                continue
+            # '@address_opp' = ที่อยู่ผู้ขับขี่คู่กรณี รูปแบบเดียวกับเส้นเว็บ (user เคาะ 16/09/69):
+            # "46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ" — หมู่ที่ปนในบ้านเลขที่แยกเป็น ม.<เลข> · ตำบล/อำเภอ/จังหวัดจากรหัส
+            if col == "@address_opp":
+                out[key] = opponent_address_line(
+                    flat.get("address", ""), "",
+                    self._tumbon(flat.get("drv_tumbonID") or flat.get("tumbonID")),
+                    self._amphur(flat.get("drv_amphurID") or flat.get("amphurID")),
+                    self._prov(flat.get("drv_provinceID") or flat.get("provinceID")))
                 continue
             if col == "@address":
                 parts = [str(flat.get("address", "") or "").strip(),

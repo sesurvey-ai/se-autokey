@@ -81,7 +81,8 @@ WEAK_TITLES = {"คุณ"}
 _MOO_PREFIX = re.compile(r"^(หมู่ที่|หมู่|ม\.)\s*")
 _TUMBON_PREFIX = re.compile(r"^(ตำบล|แขวง|ต\.)\s*")
 # "หมู่ที่ 7" / "หมู่ 7" / "หมู่7" / "ม.7" / "ม. 7" ที่ขึ้นต้นหรือหลังช่องว่าง/จุลภาค — "หมู่บ้าน…" ไม่ติด (ต้องตามด้วยตัวเลข)
-_MOO_IN_TEXT = re.compile(r"(?:^|(?<=[\s,]))(?:หมู่ที่|หมู่|ม\.)\s*(\d{1,3})(?=$|[\s,])")
+# 16/09/69 รอบคู่กรณี: จับ "261ม.2" (พิมพ์ติดตัวเลข — ข้อมูลจริง) ด้วย
+_MOO_IN_TEXT = re.compile(r"(?:^|(?<=[\s,\d]))(?:หมู่ที่|หมู่|ม\.)\s*(\d{1,3})(?=$|[\s,])")
 
 
 def _tidy(addr: str) -> str:
@@ -97,25 +98,103 @@ def split_moo(address) -> tuple:
     return _tidy(addr[:m.start()] + " " + addr[m.end():]), m.group(1)
 
 
+_AMPHUR_PREFIX = re.compile(r"^(อำเภอ|เขต|อ\.)\s*")
+_PROVINCE_PREFIX = re.compile(r"^(จังหวัด|จ\.)\s*")
+# สระหลัง/วรรณยุกต์ — ตัวถัดจากคำนำหน้าเป็นพวกนี้ = ชื่อจริงขึ้นต้นด้วยคำเดียวกัน ("นายิกา") ไม่ใช่คำนำหน้าติดชื่อ
+_THAI_FOLLOW = re.compile("[\u0e30-\u0e3a\u0e45\u0e47-\u0e4e]")
+
+
+def _canon_tagged(addr: str, prefixes: str, name: str, canon: str) -> str:
+    """"ตำบลท้ายบ้าน"/"ต. ท้ายบ้าน" (หรือ อ./จ. ตาม prefixes) ที่พิมพ์ปนมา → เขียนเป็นรูปแบบเดียว (canon) **อยู่ที่เดิม**
+    ไม่ย้าย — ลำดับที่อยู่เต็มแบบเก่า ("60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี") จึงไม่เพี้ยน"""
+    return _tidy(re.sub(r"(?:^|(?<=[\s,]))(?:" + prefixes + r")\s*" + re.escape(name) + r"(?=$|[\s,])",
+                        lambda _m: canon, addr))
+
+
+def _insert_moo(addr: str, m: str) -> str:
+    """แทรก "ม.<เลข>" ถัดจากบ้านเลขที่ (ก้อนแรกที่มีตัวเลข: "450 ม.2 ซ.เจริญศิลป์ 32") — ไม่มีบ้านเลขที่ค่อยต่อท้าย"""
+    if not m:
+        return addr
+    if not addr:
+        return f"ม.{m}"
+    hit = re.search(r"(?:^|[\s,])([^\s,]*\d[^\s,]*)(?=[\s,]|$)", addr)
+    if not hit:
+        return f"{addr} ม.{m}"
+    return _tidy(f"{addr[:hit.end()]} ม.{m} {addr[hit.end():]}")
+
+
 def driver_address_line(address, moo="", subdistrict="") -> str:
     """ที่อยู่ปัจจุบันผู้ขับขี่รถประกัน → ข้อความช่องเดียวสำหรับ EMCS: "46/23 ม.7 ต.ท้ายบ้าน" (user เคาะ 16/09/69)
     EMCS มีช่องที่อยู่ข้อความเดียว + dropdown จังหวัด/อำเภอ (ไม่มีช่องหมู่/ตำบล) → จังหวัด/อำเภอไม่ใส่ในข้อความ
-    หมู่ที่ปนในบ้านเลขที่แยกออกมาเป็น "ม.<เลข>" เสมอ (ช่องหมู่ที่ให้มาชนะ) · "ต.ตำบล" ที่พิมพ์ปนมาย้ายไปท้าย ·
+    หมู่ที่ปนในบ้านเลขที่แยกออกมาเป็น "ม.<เลข>" เสมอ แทรกถัดจากบ้านเลขที่ (ช่องหมู่ที่ให้มาชนะ) · "ต.ตำบล" ที่พิมพ์ปนมาย้ายไปท้าย ·
     ชื่อตำบลเปล่า ๆ ที่มีอยู่แล้วไม่ต่อซ้ำ · ส่วนไหนว่างข้าม
     ⚠️ สูตรเดียวกับ backend se-survey services/driverAddress.ts (driverAddressLine) — แก้ที่หนึ่งต้องแก้อีกที่"""
     addr, moo_in_text = split_moo(address)
     m = _MOO_PREFIX.sub("", str(moo or "").strip()).strip() or moo_in_text
     t = _TUMBON_PREFIX.sub("", str(subdistrict or "").strip()).strip()
     if t:
-        addr = _tidy(re.sub(r"(?:^|(?<=[\s,]))(?:ตำบล|แขวง|ต\.)\s*" + re.escape(t) + r"(?=$|[\s,])", " ", addr))
-    parts = []
-    if addr:
-        parts.append(addr)
-    if m:
-        parts.append(f"ม.{m}")
+        addr = _canon_tagged(addr, r"ตำบล|แขวง|ต\.", t, f"ต.{t}")
+    addr = _insert_moo(addr, m)
+    parts = [addr] if addr else []
     if t and t not in addr:
         parts.append(f"ต.{t}")
     return " ".join(parts)
+
+
+def opponent_address_line(address, moo="", subdistrict="", district="", province="") -> str:
+    """ที่อยู่ปัจจุบันผู้ขับขี่รถคู่กรณี → "46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ" (user เคาะ 16/09/69)
+    บล็อกคู่กรณีของ EMCS มีช่องข้อความเดียว (dropdown จังหวัด/อำเภอซ่อน) → ต่อ อ./จ. ด้วย · กรุงเทพ = "แขวงบางด้วน เขตภาษีเจริญ กรุงเทพฯ"
+    ชื่อที่มีอยู่แล้วในข้อความ (ที่อยู่เต็มแบบเก่า "60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี") ไม่ต่อซ้ำ
+    ⚠️ สูตรเดียวกับ backend driverAddress.ts (opponentAddressLine)"""
+    addr, moo_in_text = split_moo(address)
+    m = _MOO_PREFIX.sub("", str(moo or "").strip()).strip() or moo_in_text
+    t = _TUMBON_PREFIX.sub("", str(subdistrict or "").strip()).strip()
+    d = _AMPHUR_PREFIX.sub("", str(district or "").strip()).strip()
+    p_raw = _PROVINCE_PREFIX.sub("", str(province or "").strip()).strip()
+    bkk = p_raw.startswith("กรุงเทพ")
+    p = "กรุงเทพฯ" if bkk else p_raw
+    if t:
+        addr = _canon_tagged(addr, r"ตำบล|แขวง|ต\.", t, f"แขวง{t}" if bkk else f"ต.{t}")
+    if d:
+        addr = _canon_tagged(addr, r"อำเภอ|เขต|อ\.", d, f"เขต{d}" if bkk else f"อ.{d}")
+    if p_raw:
+        addr = _canon_tagged(addr, r"จังหวัด|จ\.", p_raw, p if bkk else f"จ.{p}")
+    addr = _insert_moo(addr, m)
+    parts = [addr] if addr else []
+    if t and t not in addr:
+        parts.append(f"แขวง{t}" if bkk else f"ต.{t}")
+    if d and d not in addr:
+        parts.append(f"เขต{d}" if bkk else f"อ.{d}")
+    if p and not (("กรุงเทพ" in addr) if bkk else (p in addr)):
+        parts.append(p if bkk else f"จ.{p}")
+    return " ".join(parts)
+
+
+# คำนำหน้าที่สะกดต่างกันแต่ตัวเดียวกัน — ชื่อที่พิมพ์ "น.ส.สมใจ" มากับคำนำหน้า "นางสาว" ไม่ต่อซ้ำ
+_TITLE_ALIASES = {"นางสาว": ("น.ส.", "นส."), "ด.ช.": ("เด็กชาย",), "ด.ญ.": ("เด็กหญิง",)}
+
+
+def with_title(title, name) -> str:
+    """คำนำหน้า + ชื่อ → "นาย บุญเลี้ยง ชงสุวรรณ" (user เคาะ 16/09/69 — ใช้กับเจ้าของรถ/ผู้ขับขี่คู่กรณีจากเว็บ se-survey)
+    คำนำหน้าเดียวกันที่ติดในชื่ออยู่แล้ว ("นายบุญเลี้ยง") ไม่ซ้ำ · "นายิกา" (ตัวถัดไปเป็นสระ = ชื่อจริง) ไม่ตัด
+    ไม่มีคำนำหน้า = ชื่อตามเดิม · ไม่มีชื่อ = "" (ผู้เรียกใส่ '-' ผ่าน _dash)
+    ⚠️ สูตรเดียวกับ backend driverAddress.ts (withTitle)"""
+    t = " ".join(str(title or "").split())
+    n = " ".join(str(name or "").split())
+    if not n:
+        return ""
+    if not t:
+        return n
+    rest = n
+    for cand in (t, *_TITLE_ALIASES.get(t, ())):
+        if not n.startswith(cand):
+            continue
+        after = n[len(cand):]
+        if after and _THAI_FOLLOW.match(after):
+            break
+        rest = after.strip()
+        break
+    return f"{t} {rest}" if rest else ""
 
 
 def split_thai_name(full: str):

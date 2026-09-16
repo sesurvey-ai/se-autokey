@@ -54,7 +54,7 @@ from autokey.browser import (
 )
 from autokey import isurvey_report, sekey_client
 from autokey.claim_data import ClaimData
-from autokey.claim_data import driver_address_line
+from autokey.claim_data import driver_address_line, opponent_address_line, with_title
 from autokey.config import load_config
 from autokey.images import (
     archive_old_images,
@@ -758,15 +758,19 @@ def _populate_third_parties_from_report(data, rep):
             # AXA ที่ซ่อน) — งานจริงของพนักงานใส่คำนำหน้า "ในชื่อ" เลย เช่น 'นาย พาสกรณ์ มากพูน'
             # แอปบังคับให้เลือกคำนำหน้าอยู่แล้ว (opponent_editor.dart) แต่เดิมถูกทิ้งทั้งค่า
             # → ต่อหน้าชื่อให้ตรงธรรมเนียม (ช่วยให้ resolve_gender อนุมานเพศได้ด้วย)
-            "drv_name": " ".join(
-                x for x in (str(o.get("title") or "").strip(), first, last) if x),
-            "opo_name": str(o.get("owner_name") or "").strip(),
+            # 16/09/69: รูปแบบ "นาย บุญเลี้ยง ชงสุวรรณ" — with_title ไม่ซ้ำคำนำหน้าที่เผลอติดในช่องชื่อ · เพศเลือกจาก gender ด้านล่าง (resolve_gender)
+            "drv_name": with_title(o.get("title"), " ".join(x for x in (first, last) if x)),
+            # เจ้าของรถ (16/09/69): backend ประกอบ owner_name_emcs = คำนำหน้า + ชื่อ "นาย บุญเลี้ยง ชงสุวรรณ" · backend รุ่นเก่าไม่มี → ประกอบเอง
+            "opo_name": str(o.get("owner_name_emcs") or "").strip() or with_title(o.get("owner_title"), o.get("owner_name")),
             # ที่อยู่ "เจ้าของรถ" — เดิมไม่ map ทำให้ตกไป fallback = ที่อยู่ผู้ขับขี่ (คนละคนได้)
             "opo_address": str(o.get("owner_address") or "").strip(),
             "gender": str(o.get("gender") or "").strip(),
             # วันเกิด/อายุ: "-" จากเว็บ → วันนี้/0 (ดู _opponent_birth_age — user เคาะ 10/09/69)
             **_opponent_birth_age(o.get("birthdate"), o.get("age")),
-            "address": str(o.get("address") or "").strip(),
+            # ที่อยู่ผู้ขับขี่คู่กรณี (16/09/69): backend ประกอบ address_emcs = "46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ" จาก 5 ช่อง
+            # (บ้านเลขที่ · หมู่ · ตำบล · อำเภอ · จังหวัด ที่เว็บ/แอปเก็บแยก) · backend รุ่นเก่าไม่มี → ประกอบเอง
+            "address": str(o.get("address_emcs") or "").strip() or opponent_address_line(
+                o.get("address"), o.get("moo"), o.get("subdistrict"), o.get("district"), o.get("home_province")),
             "phone": str(o.get("phone") or "").strip(),
             "idcard": str(o.get("cid") or "").strip(),
             "lic_no": str(o.get("license_no") or "").strip(),

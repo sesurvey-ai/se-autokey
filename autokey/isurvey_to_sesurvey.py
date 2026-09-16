@@ -254,15 +254,32 @@ def _num(v):
     return int(f) if f.is_integer() else f
 
 
+# คำนำหน้าที่ ISURVEY พิมพ์มาได้ → คำที่เว็บ/แอปมีในลิสต์ (น.ส. → นางสาว · เด็กชาย → ด.ช.) เรียงยาวก่อนสั้น
+_TITLE_CANON = (("นางสาว", "นางสาว"), ("น.ส.", "นางสาว"), ("นส.", "นางสาว"), ("นาง", "นาง"), ("นาย", "นาย"),
+                ("ด.ช.", "ด.ช."), ("ด.ญ.", "ด.ญ."), ("เด็กชาย", "ด.ช."), ("เด็กหญิง", "ด.ญ."), ("คุณ", "คุณ"))
+_THAI_FOLLOW = re.compile("[\u0e30-\u0e3a\u0e45\u0e47-\u0e4e]")   # สระหลัง/วรรณยุกต์ → "นายิกา" = ชื่อจริง ไม่ใช่ นาย+ิกา
+
+
 def split_name(full: str):
-    """'นาย นิพันธ์ เหมือนกรุง' → ('นาย', 'นิพันธ์', 'เหมือนกรุง')
+    """'นาย นิพันธ์ เหมือนกรุง' → ('นาย', 'นิพันธ์', 'เหมือนกรุง') · 'น.ส.ชนกานต์ ประยงค์งาม' → ('นางสาว', 'ชนกานต์', …)
 
     ISURVEY เก็บชื่อรวมช่องเดียวและมักมีคำนำหน้าติดมา ส่วน se-survey บังคับแยก 3 ช่อง
     ไม่แยก = ดอกจันแดงค้างทั้งที่ชื่อครบ (เจอกับเส้น XML มาแล้ว)
+    16/09/69: ตัวย่อแปลงเป็นคำเต็ม (เว็บ/แอปมีในลิสต์) · "คุณ" ต้องเว้นวรรค (คุณากร = ชื่อ) · ตัวถัดไปเป็นสระ (นายิกา) = ชื่อจริง
+    ใช้ทั้งผู้ขับขี่และเจ้าของรถคู่กรณี (owner_title/owner_name)
     """
     s = _s(full)
-    title = next((t for t in TITLES if s.startswith(t)), "")
-    rest = s[len(title):].strip() if title else s
+    title, rest = "", s
+    for t, canon in _TITLE_CANON:
+        if not s.startswith(t):
+            continue
+        after = s[len(t):]
+        if t == "คุณ" and not after[:1].isspace():
+            continue
+        if after and _THAI_FOLLOW.match(after):
+            continue
+        title, rest = canon, after.strip()
+        break
     parts = rest.split()
     return title, (parts[0] if parts else ""), " ".join(parts[1:])
 
@@ -636,6 +653,7 @@ def _third_parties(api, case_id) -> list:
         d = r.get("driver") or {}
         opp_parts = api.opponent_parts(case_id, ikey) or []     # ตารางความเสียหายของคันนี้ (ใช้ทั้งรายการ+ยอด)
         title, first, last = split_name(d.get("drv_name"))
+        otitle, ofirst, olast = split_name(r.get("owner_name"))   # เจ้าของรถ: คำนำหน้าแยกช่อง (16/09/69) · บริษัท = ไม่มีคำนำหน้า
         veh = _s(r.get("vehTID"))
         car_prov = _s(r.get("plate_provinceID"))
         home_prov = _s(d.get("drv_provinceID"))
@@ -648,7 +666,11 @@ def _third_parties(api, case_id) -> list:
             "birthdate": be_date(d.get("birthdate")),
             "cid": _s(d.get("IDcard_no")),
             "phone": _s(d.get("drv_phone")),
-            "address": _s(d.get("address")),
+            # ที่อยู่ผู้ขับขี่คู่กรณี (16/09/69): หมู่แยกจากบ้านเลขที่ · ตำบลจากรหัส drv_tumbonID (เว็บ/แอปมีช่องแล้ว)
+            # → EMCS "46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ"
+            "address": split_moo(_s(d.get("address")))[0],
+            "moo": split_moo(_s(d.get("address")))[1],
+            "subdistrict": api._tumbon(_s(d.get("drv_tumbonID"))) if _s(d.get("drv_tumbonID")) else "",
             # 2 จังหวัดคนละความหมาย: province = ป้ายทะเบียน · home_province = ภูมิลำเนา
             "province": province_name(car_prov),
             "home_province": province_name(home_prov),
@@ -659,7 +681,9 @@ def _third_parties(api, case_id) -> list:
             "car_model": _s(r.get("car_model")),
             "car_color": _s(r.get("car_color")),
             "vin": _s(r.get("chassis_no")),
-            "owner_name": _name(r.get("owner_name")),
+            # เจ้าของรถ (16/09/69): "นางลัดดาวรรณ วิปัดทุม" → owner_title นาง + owner_name (บอทรวมกลับ "นาง ลัดดาวรรณ วิปัดทุม" บน EMCS)
+            "owner_title": otitle,
+            "owner_name": _name(" ".join(x for x in (ofirst, olast) if x)) if otitle else _name(r.get("owner_name")),
             "owner_address": _s(r.get("owner_address")),
             # แปลงชื่อบริษัทเป็นชื่อที่ EMCS มีจริง **ตั้งแต่ตอนนำเข้า** (ยังมีคนตรวจอยู่)
             # ไม่ใช่ปล่อยให้บอท fuzzy เดาตอนกรอกซึ่งไม่มีใครดู · แปลงไม่ได้ = ปล่อยชื่อเดิม

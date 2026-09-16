@@ -58,10 +58,10 @@ class FakeAPI:
         self.records = {
             4: [("k4", {"vehTID": "3", "plate_provinceID": "10", "plate_no": "1กก1", "oth_insure_companyID": "136",
                         "oth_insure_company_name": None, "oth_insure_typeID": "52", "oth_policy_no": "P1",
-                        "owner_name": None, "D_SPRP": "1000", "D_LABOUR": "500", "D_OTH": "",
+                        "owner_name": "นางลัดดาวรรณ วิปัดทุม", "D_SPRP": "1000", "D_LABOUR": "500", "D_OTH": "",
                         "driver": {"drv_name": "นาย พาสกรณ์ (ทดสอบ)", "drv_gender": "M", "lic_typeID": "15",
                                    "relation": "เจ้าของรถ", "drv_provinceID": "33", "drv_amphurID": "3306",
-                                   "IDcard_no": "21401661"}})],
+                                   "IDcard_no": "21401661", "address": "94/124 หมู่ 3", "drv_tumbonID": "200708"}})],
             5: [("k5", {"patient": {"person_name": "น.ส. อุมาพร ทดสอบ", "injury_type": "I", "related_accidentID": "2",
                                     "gender": "F", "age": "30"}})],
             6: [("k6", {"property": {"prop_name": "กำแพง", "prop_damage_detail": "กำแพงปูน 2 แผ่น", "damage_cost": "20000",
@@ -303,6 +303,21 @@ def test_survey_location_blank_when_isurvey_has_none():
         acc[k] = None
     r = conv.build_case(api, "case1", {})["report"]
     assert r["survey_place"] == "" and r["survey_province"] == "" and r["survey_district"] == "" and r["survey_subdistrict"] == ""
+
+
+def test_opponent_owner_title_split_and_address_parts():
+    """16/09/69: เจ้าของรถคู่กรณีแยกคำนำหน้า · ที่อยู่ผู้ขับขี่คู่กรณีแยก หมู่/ตำบล (บ้านเลขที่ไม่มีหมู่ปน)"""
+    o = _build()["report"]["opposing_parties"][0]
+    assert (o["owner_title"], o["owner_name"]) == ("นาง", "ลัดดาวรรณ วิปัดทุม")
+    assert (o["address"], o["moo"], o["subdistrict"]) == ("94/124", "3", "บ่อวิน")
+
+
+def test_split_name_abbrev_and_khun_and_vowel_follow():
+    assert conv.split_name("น.ส.ชนกานต์ ประยงค์งาม") == ("นางสาว", "ชนกานต์", "ประยงค์งาม")
+    assert conv.split_name("คุณากร ดี") == ("", "คุณากร", "ดี")
+    assert conv.split_name("คุณ พัลลภ ธาดา") == ("คุณ", "พัลลภ", "ธาดา")
+    assert conv.split_name("นายิกา สุข") == ("", "นายิกา", "สุข")
+    assert conv.split_name("บริษัทเจเคไทย จำกัด") == ("", "บริษัทเจเคไทย", "จำกัด")
 
 
 if __name__ == "__main__":

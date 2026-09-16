@@ -4199,7 +4199,7 @@ check("ที่อยู่ผู้ขับขี่: หมู่ที่�
       _dal("46/23 หมู่ 7", "7", "ท้ายบ้าน") == "46/23 ม.7 ต.ท้ายบ้าน" and _dal("46/23 หมู่ที่ 7", "", "ท้ายบ้าน") == "46/23 ม.7 ต.ท้ายบ้าน"
       and _dal("46/23 ม.7 ต.ท้ายบ้าน", "7", "ท้ายบ้าน") == "46/23 ม.7 ต.ท้ายบ้าน" and _dal("46/23 ต.ท้ายบ้าน หมู่ 7", "", "ท้ายบ้าน") == "46/23 ม.7 ต.ท้ายบ้าน"
       and _dal("46/23 หมู่ 17", "7", "ท้ายบ้าน") == "46/23 ม.7 ต.ท้ายบ้าน" and _dal("หมู่บ้านสวนสน 12/3", "", "") == "หมู่บ้านสวนสน 12/3"
-      and _dal("12 ซ.5", "หมู่ 4", "ต.บางพลี") == "12 ซ.5 ม.4 ต.บางพลี" and _dal("", "", "") == "" and _dal("99/1", None, None) == "99/1")
+      and _dal("12 ซ.5", "หมู่ 4", "ต.บางพลี") == "12 ม.4 ซ.5 ต.บางพลี" and _dal("261ม.2", "", "") == "261 ม.2" and _dal("", "", "") == "" and _dal("99/1", None, None) == "99/1")
 check("ที่อยู่ผู้ขับขี่: split_moo", claim_data.split_moo("46/23 หมู่ที่ 7") == ("46/23", "7") and claim_data.split_moo("ม.12 บ้านโคก") == ("บ้านโคก", "12")
       and claim_data.split_moo("46/23 หมู่7,ท้ายบ้าน") == ("46/23,ท้ายบ้าน", "7") and claim_data.split_moo("46/23") == ("46/23", "") and claim_data.split_moo("หมู่บ้านสวนสน") == ("หมู่บ้านสวนสน", ""))
 _src_ses_addr = _inspect.getsource(_main._populate_claim_from_report)
@@ -4207,6 +4207,32 @@ check("เส้นเว็บ: ใช้ driver_address_emcs ที่ backend
       "gv('driver_address_emcs') or driver_address_line(" in _src_ses_addr and "gv('driver_moo'), gv('driver_subdistrict')" in _src_ses_addr)
 check("เส้น ISURVEY ตรง: ที่อยู่ + ต.<ตำบล> จาก drv_tumbonID",
       'driver_address_line(drv.get("address", ""), "", self._tumbon(drv.get("drv_tumbonID")))' in _inspect.getsource(type(_api).read_claim))
+
+# ---- คู่กรณี (user สั่ง 16/09/69, v1.1.5): เจ้าของรถ "นาย บุญเลี้ยง ชงสุวรรณ" · ที่อยู่ผู้ขับขี่คู่กรณี 5 ส่วน — สูตรเดียวกับ backend driverAddress.ts ----
+_oal = claim_data.opponent_address_line
+check("คู่กรณี: บ้านเลขที่ + ม. + ต. + อ. + จ.", _oal("46/23", "7", "ท้ายบ้าน", "อำเภอเมือง", "สมุทรปราการ") == "46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ"
+      and _oal("49/51 หมู่ที่ 3", "", "", "อำเภอเมือง", "ชลบุรี") == "49/51 ม.3 อ.เมือง จ.ชลบุรี"
+      and _oal("12 ซ.5 ถ.สุขุมวิท", "4", "บางพลี", "อ.บางพลี", "จ.สมุทรปราการ") == "12 ม.4 ซ.5 ถ.สุขุมวิท ต.บางพลี อ.บางพลี จ.สมุทรปราการ"
+      and _oal("99/1", "", "", "", "ชลบุรี") == "99/1 จ.ชลบุรี" and _oal("", "", "", "", "") == "" and _oal(None, None, None, None, None) == "")
+check("คู่กรณี: กรุงเทพ = แขวง/เขต/กรุงเทพฯ · ที่อยู่เต็มแบบเก่าไม่ต่อซ้ำ + ม. แทรกหลังบ้านเลขที่",
+      _oal("28/1 หมู่ 12", "", "บางด้วน", "เขตภาษีเจริญ", "กรุงเทพ ฯ") == "28/1 ม.12 แขวงบางด้วน เขตภาษีเจริญ กรุงเทพฯ"
+      and _oal("28/1 หมู่ 12 บางด้วน เขตภาษีเจริญ กรุงเทพฯ", "", "บางด้วน", "เขตภาษีเจริญ", "กรุงเทพมหานคร") == "28/1 ม.12 บางด้วน เขตภาษีเจริญ กรุงเทพฯ"
+      and _oal("60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี", "", "", "อำเภอท่าใหม่", "จันทบุรี") == "60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี")
+_wt = claim_data.with_title
+check("คู่กรณี: with_title คำนำหน้า + ชื่อ เว้นวรรค · ไม่ซ้ำคำนำหน้าที่ติดในชื่อ · นายิกา ไม่ตัด · ไม่มีชื่อ = ว่าง",
+      _wt("นาย", "บุญเลี้ยง ชงสุวรรณ") == "นาย บุญเลี้ยง ชงสุวรรณ" and _wt("นาย", "นายบุญเลี้ยง ชงสุวรรณ") == "นาย บุญเลี้ยง ชงสุวรรณ"
+      and _wt("นาย", "นาย  บุญเลี้ยง ชงสุวรรณ") == "นาย บุญเลี้ยง ชงสุวรรณ" and _wt("นางสาว", "น.ส.สมใจ ดี") == "นางสาว สมใจ ดี"
+      and _wt("นาย", "นายิกา สุข") == "นาย นายิกา สุข" and _wt("", "นางอุษณีย์ ชงสุวรรณ") == "นางอุษณีย์ ชงสุวรรณ" and _wt("นาย", "") == "" and _wt(None, None) == "")
+_src_tp3 = _inspect.getsource(_main._populate_third_parties_from_report)
+check("เส้นเว็บ: เจ้าของรถ = owner_name_emcs หรือ with_title · ที่อยู่ = address_emcs หรือ opponent_address_line 5 ช่อง · ชื่อผู้ขับขี่ = with_title(title, ชื่อ นามสกุล)",
+      'o.get("owner_name_emcs")' in _src_tp3 and 'with_title(o.get("owner_title"), o.get("owner_name"))' in _src_tp3
+      and 'o.get("address_emcs")' in _src_tp3 and 'o.get("address"), o.get("moo"), o.get("subdistrict"), o.get("district"), o.get("home_province")' in _src_tp3
+      and 'with_title(o.get("title"), " ".join(x for x in (first, last) if x))' in _src_tp3)
+check("EMCS: ผู้ขับขี่คู่กรณี เลือกเพศจาก gender (resolve_gender → rdoGender_0/1) · ชื่อลง txtDri_Name · เจ้าของลง txtOpo_Name",
+      'resolve_gender(tp.get("gender", ""), drv_full)' in _src_tp and 'rdoGender_{idx}' in _src_tp
+      and 'set_text(driver, p + "txtDri_Name", _dash(drv_full))' in _src_tp and 'set_text(driver, p + "txtOpo_Name", _dash(owner))' in _src_tp)
+check("เส้น ISURVEY ตรง: ที่อยู่คู่กรณีรูปแบบเดียวกัน (@address_opp → opponent_address_line)",
+      '"address": ("@address_opp", None)' in _inspect.getsource(type(_api)) and 'if col == "@address_opp":' in _inspect.getsource(type(_api)._apply_map))
 
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
