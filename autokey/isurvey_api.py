@@ -18,6 +18,7 @@ import requests
 
 from .browser import log
 from .claim_data import ClaimData, split_thai_name
+from .claim_data import driver_address_line
 from . import isurvey_emcs_map as emcs_map
 
 
@@ -545,7 +546,8 @@ class ISurveyAPI:
         d.driver_gender = drv.get("drv_gender", "")
         d.driver_relation = drv.get("relation", "")
         d.driver_age = str(drv.get("age", "") or "")
-        d.driver_address = drv.get("address", "")
+        # ที่อยู่ + ต.<ตำบล> (16/09/69 รูปแบบเดียวกับเส้นเว็บ) — จังหวัด/อำเภอไป dropdown ของ EMCS อยู่แล้ว ไม่ใส่ในข้อความ
+        d.driver_address = driver_address_line(drv.get("address", ""), "", self._tumbon(drv.get("drv_tumbonID")))
         d.driver_province = self._prov(drv.get("drv_provinceID"))
         d.driver_amphur = self._amphur(drv.get("drv_amphurID"))
         d.driver_phone = drv.get("drv_phone", "")

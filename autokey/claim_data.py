@@ -1,5 +1,6 @@
 """โครงสร้างข้อมูลเคลมที่อ่านจาก ISURVEY เพื่อส่งต่อให้ EMCS"""
 import json
+import re
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
@@ -75,6 +76,28 @@ _TITLES_NEED_SPACE = {"คุณ"}
 # เพราะสุภาพ ไม่ใช่เพราะเป็นคำนำหน้าจริง (เจอจริง 'คุณ พัลลภ ธาดากิจวณิช'
 # เคลม 2026013158841 ซึ่งบัตรจริงคือ 'นาย') → ถ้ามีหลักฐานดีกว่าให้ใช้อันนั้นแทน
 WEAK_TITLES = {"คุณ"}
+
+
+_MOO_PREFIX = re.compile(r"^(หมู่ที่|หมู่|ม\.)\s*")
+_TUMBON_PREFIX = re.compile(r"^(ตำบล|แขวง|ต\.)\s*")
+
+
+def driver_address_line(address, moo="", subdistrict="") -> str:
+    """ที่อยู่ปัจจุบันผู้ขับขี่รถประกัน → ข้อความช่องเดียวสำหรับ EMCS: "46/23 ม.7 ต.ท้ายบ้าน" (user เคาะ 16/09/69)
+    EMCS มีช่องที่อยู่ข้อความเดียว + dropdown จังหวัด/อำเภอ (ไม่มีช่องหมู่/ตำบล) → จังหวัด/อำเภอไม่ใส่ในข้อความ
+    ส่วนไหนว่างข้าม · ที่อยู่มี "ม.7"/"หมู่ 7" อยู่แล้วไม่ต่อหมู่ซ้ำ · มีชื่อตำบลอยู่แล้วไม่ต่อ "ต." ซ้ำ
+    ⚠️ สูตรเดียวกับ backend se-survey services/driverAddress.ts (driverAddressLine) — แก้ที่หนึ่งต้องแก้อีกที่"""
+    addr = re.sub(r"\s+", " ", str(address or "").strip())
+    m = _MOO_PREFIX.sub("", str(moo or "").strip()).strip()
+    t = _TUMBON_PREFIX.sub("", str(subdistrict or "").strip()).strip()
+    parts = []
+    if addr:
+        parts.append(addr)
+    if m and not re.search(r"(^|\s)(ม\.|หมู่ที่|หมู่)\s*" + re.escape(m) + r"(\s|$)", addr):
+        parts.append(f"ม.{m}")
+    if t and t not in addr:
+        parts.append(f"ต.{t}")
+    return " ".join(parts)
 
 
 def split_thai_name(full: str):

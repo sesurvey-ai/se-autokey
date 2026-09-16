@@ -559,6 +559,9 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         "driver_address": _s(drv.get("address")),
         "driver_province": province_name(drv_prov),
         "driver_district": district_name(api, drv.get("drv_amphurID"), drv_prov),
+        # 16/09/69: ตำบลจากรหัส drv_tumbonID (เว็บมีช่องตำบล/หมู่แล้ว) · หมู่ของ ISURVEY ปนอยู่ในบ้านเลขที่ ไม่แยก
+        "driver_subdistrict": api._tumbon(_s(drv.get("drv_tumbonID"))) if _s(drv.get("drv_tumbonID")) else "",
+        "driver_moo": "",
         "driver_phone": _s(drv.get("drv_phone")),
         "driver_id_card": _s(drv.get("IDcard_no")),
         "driver_license_no": _s(drv.get("lic_no")),

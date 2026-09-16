@@ -4192,5 +4192,17 @@ check("ผู้ขับขี่: มาช่องเดียว (ISURVEY �
 check("ผู้ขับขี่: ว่างทั้งคู่ → ว่าง (fill_driver ใส่ '-' ผ่าน _dash)", _dn("", "") == ("", "")
       and "_driver_name_parts(data)" in _inspect.getsource(emcs.fill_driver) and "_dash(dri_first)" in _inspect.getsource(emcs.fill_driver))
 
+# ---- ที่อยู่ผู้ขับขี่รถประกัน "46/23 ม.7 ต.ท้ายบ้าน" (user เคาะ 16/09/69, v1.1.3) — สูตรเดียวกับ backend driverAddress.ts ----
+_dal = claim_data.driver_address_line
+check("ที่อยู่ผู้ขับขี่: บ้านเลขที่ + ม. + ต.", _dal("46/23", "7", "ท้ายบ้าน") == "46/23 ม.7 ต.ท้ายบ้าน" and _dal("25 ม.3", "", "บ่อวิน") == "25 ม.3 ต.บ่อวิน")
+check("ที่อยู่ผู้ขับขี่: ไม่ต่อหมู่/ตำบลซ้ำถ้ามีอยู่แล้ว · ว่างข้าม",
+      _dal("46/23 หมู่ 7", "7", "ท้ายบ้าน") == "46/23 หมู่ 7 ต.ท้ายบ้าน" and _dal("46/23 ม.7 ต.ท้ายบ้าน", "7", "ท้ายบ้าน") == "46/23 ม.7 ต.ท้ายบ้าน"
+      and _dal("12 ซ.5", "หมู่ 4", "ต.บางพลี") == "12 ซ.5 ม.4 ต.บางพลี" and _dal("", "", "") == "" and _dal("99/1", None, None) == "99/1")
+_src_ses_addr = _inspect.getsource(_main._populate_claim_from_report)
+check("เส้นเว็บ: ใช้ driver_address_emcs ที่ backend ประกอบ ไม่มีค่อยประกอบเองจาก 3 ช่อง",
+      "gv('driver_address_emcs') or driver_address_line(" in _src_ses_addr and "gv('driver_moo'), gv('driver_subdistrict')" in _src_ses_addr)
+check("เส้น ISURVEY ตรง: ที่อยู่ + ต.<ตำบล> จาก drv_tumbonID",
+      'driver_address_line(drv.get("address", ""), "", self._tumbon(drv.get("drv_tumbonID")))' in _inspect.getsource(type(_api).read_claim))
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

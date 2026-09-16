@@ -54,6 +54,7 @@ from autokey.browser import (
 )
 from autokey import isurvey_report, sekey_client
 from autokey.claim_data import ClaimData
+from autokey.claim_data import driver_address_line
 from autokey.config import load_config
 from autokey.images import (
     archive_old_images,
@@ -880,7 +881,9 @@ def _populate_claim_from_report(data, rep):
     data.driver_gender = gv('driver_gender') or data.driver_gender
     data.driver_relation = gv('driver_relation')
     data.driver_age = gv('driver_age')
-    data.driver_address = gv('driver_address')
+    # ที่อยู่ปัจจุบัน: backend ประกอบ "46/23 ม.7 ต.ท้ายบ้าน" มาให้ (driver_address_emcs, 16/09/69) · backend รุ่นเก่าไม่มี → ประกอบเองจาก 3 ช่อง
+    data.driver_address = gv('driver_address_emcs') or driver_address_line(
+        gv('driver_address'), gv('driver_moo'), gv('driver_subdistrict'))
     data.driver_province = gv('driver_province')
     data.driver_amphur = gv('driver_district')
     data.driver_phone = gv('driver_phone')
