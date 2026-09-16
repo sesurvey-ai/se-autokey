@@ -113,6 +113,10 @@ def normalize_brand(value) -> str:
       แล้วไปจบที่ 'หยุดรอคนเลือก' ตาม guard กันเลือก placeholder)
     """
     s = str(value or "").strip()
+    # "-ALL-" = ตัวเลือกจริงใน ddlCmfg ของ EMCS (ทุกประเภทยกเว้น รถอื่นๆ) — เว็บ/แอปใส่ให้ตอน "รอตรวจสอบ" (user พบ 16/09/69)
+    # ต้องเช็คก่อน _NOT_A_BRAND ไม่งั้นถูกตัดขีดเหลือ 'ALL' แล้วกลายเป็น "ไม่ใช่ยี่ห้อ" → บอทหยุดถามยี่ห้อทั้งที่เลือกได้
+    if s.upper() == "-ALL-":
+        return "-ALL-"
     if s.upper().strip("-./ ") in _NOT_A_BRAND:
         return ""
     if not _has_thai(s):

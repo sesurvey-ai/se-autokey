@@ -4234,5 +4234,10 @@ check("EMCS: ผู้ขับขี่คู่กรณี เลือกเ
 check("เส้น ISURVEY ตรง: ที่อยู่คู่กรณีรูปแบบเดียวกัน (@address_opp → opponent_address_line)",
       '"address": ("@address_opp", None)' in _inspect.getsource(type(_api)) and 'if col == "@address_opp":' in _inspect.getsource(type(_api)._apply_map))
 
+# ---- ยี่ห้อ "-ALL-" (ตัวเลือกจริงของ EMCS ยกเว้นรถอื่นๆ — เว็บ/แอปใส่ตอนรอตรวจสอบ, v1.1.6) ----
+_cb = __import__("autokey.car_brand", fromlist=["normalize_brand"])
+check("ยี่ห้อ -ALL- ผ่าน normalize_brand คงค่า (ไม่ถูกตัดเป็นค่าว่างเหมือน '-') · '-'/NA ยังเป็นค่าว่าง",
+      _cb.normalize_brand("-ALL-") == "-ALL-" and _cb.normalize_brand(" -all- ") == "-ALL-" and _cb.normalize_brand("-") == "" and _cb.normalize_brand("NA") == "")
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
