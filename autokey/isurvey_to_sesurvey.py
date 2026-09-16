@@ -177,6 +177,15 @@ def _name(v) -> str:
     return " ".join(_NAME_BAD.sub(" ", _s(v)).split())
 
 
+_ZERO_ONLY = re.compile(r"^[\s0\-]*0[\s0\-]*$")
+
+
+def _zero_dash(s: str) -> str:
+    """กรมธรรม์/เลขเคลมคู่กรณีที่ช่างกรอก "ศูนย์ล้วน" (0 / 00 / 000000 / -0) = ไม่ทราบ → "-" (user เคาะ 16/09/69)
+    เว็บโชว์ '-' ตามกติกาช่องบังคับ · บอทเห็น '-' ก็กรอก '-' ไม่ก๊อป 00 ลง EMCS"""
+    return "-" if s and _ZERO_ONLY.match(s) else s
+
+
 def _s(v) -> str:
     """ISURVEY คืน None เมื่อว่าง — และ 'null' เป็นสตริงในบางช่อง (เจอที่ DD_OTH_COND)
 
@@ -654,8 +663,8 @@ def _third_parties(api, case_id) -> list:
             # (ทางโหมด ISURVEY ตรงของบอทก็ resolve ผ่านรหัสแบบนี้อยู่แล้ว)
             "insurer": to_emcs_insurer(_s(r.get("oth_insure_company_name"))
                                        or _s(api._company(_s(r.get("oth_insure_companyID"))))),
-            "policy_no": _s(r.get("oth_policy_no")),
-            "claim_no": _s(r.get("oth_accident_no")),
+            "policy_no": _zero_dash(_s(r.get("oth_policy_no"))),
+            "claim_no": _zero_dash(_s(r.get("oth_accident_no"))),
             "policy_type": api.master("masterPolicyType", "poTID", "policy_type").get(
                 _s(r.get("oth_insure_typeID")), ""),
             "license_no": _s(d.get("lic_no")),

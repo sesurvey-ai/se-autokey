@@ -4169,5 +4169,16 @@ if _sh_upd.which("node"):
 else:
     print("[SKIP] ไม่มี node — ข้ามตรวจ syntax JS ของหน้าเว็บ")
 
+# ---- กรมธรรม์/เลขเคลมคู่กรณี "ศูนย์ล้วน" = ไม่ทราบ → '-' (user เคาะ 16/09/69 หลังเห็น 00/00 บน EMCS) ----
+check("คู่กรณี: 0 / 00 / 000000 / -0 / ' 00 ' = ไม่ทราบ (ว่าง) · ค่าจริงคงเดิม",
+      all(emcs._zero_unknown(v) == "" for v in ("0", "00", "000000", "-0", " 00 ", "0-0"))
+      and emcs._zero_unknown("P1") == "P1" and emcs._zero_unknown(" 2026013000001 ") == "2026013000001"
+      and emcs._zero_unknown("0A") == "0A" and emcs._zero_unknown("") == "" and emcs._zero_unknown(None) == ""
+      and emcs._zero_unknown("-") == "-")
+_src_tp = _inspect.getsource(emcs.fill_third_parties)
+check("คู่กรณี: fill_third_parties ผ่านกรมธรรม์/เคลมที่ด้วย _zero_unknown ก่อน _dash (ศูนย์ล้วนกลายเป็น '-' และไม่นับเป็นข้อมูลประกัน)",
+      'policy_no = _zero_unknown(tp.get("policy_no", ""))' in _src_tp and 'claim_no = _zero_unknown(tp.get("claim_no", ""))' in _src_tp
+      and _src_tp.index("_zero_unknown(") < _src_tp.index('if not (insurer or policy_no or claim_no or insure_type)'))
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

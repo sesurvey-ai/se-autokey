@@ -77,6 +77,17 @@ def _dash(v):
     s = "" if v is None else str(v)
     return s.strip() or "-"
 
+
+_ZERO_ONLY = re.compile(r"^[\s0\-]*0[\s0\-]*$")
+
+
+def _zero_unknown(v):
+    """ค่า "ศูนย์ล้วน" (0 / 00 / 000000 / -0) = ไม่ทราบ → "" (user เคาะ 16/09/69 — ตระกูลเดียวกับวันเกิด 00/00/00:
+    ช่างกรอก 00 ในกรมธรรม์/เลขเคลมคู่กรณีบน ISURVEY เมื่อไม่ทราบ แล้วบอทเคยก๊อปลง EMCS ตรง ๆ)
+    ค่าอื่นคืนตามเดิม (ตัด space) · ใช้คู่กับ _dash → ช่องบังคับได้ '-' ตามกติกา 23/07/69"""
+    s = "" if v is None else str(v).strip()
+    return "" if s and _ZERO_ONLY.match(s) else s
+
 # ผลคดี → id ของ radio button (แก้บั๊กเดิม: 'รถคู่กรณีเป็นฝ่ายผิด' กับ
 # 'คู่กรณีคันที่' เป็นคนละ label แต่ต้องชี้ radio ตัวเดียวกัน — โค้ดเดิมเทียบ
 # ด้วยข้อความที่ต่อกันจึงไม่มีวันเข้าเงื่อนไข ทำให้ไม่ถูกคลิก)
@@ -621,8 +632,11 @@ def fill_third_parties(driver, data: ClaimData):
         # เลือก 'ไม่มีบริษัทประกันภัย' (EMCS จะปลด required กรมธรรม์/เลขเคลมคู่กรณี
         # ไม่งั้น validation ฟ้อง 'มีประกันภัยที่/กรมธรรม์/เคลมที่' บันทึกไม่ผ่าน)
         insurer = (tp.get("insurer", "") or "").strip()
-        policy_no = (tp.get("policy_no", "") or "").strip()
-        claim_no = (tp.get("claim_no", "") or "").strip()
+        # ศูนย์ล้วน (00 / 000000 / -0) = ไม่ทราบ → ว่าง แล้วให้ _dash ใส่ '-' (user เคาะ 16/09/69) · ไม่ใช่ข้อมูลประกันจริง
+        policy_no = _zero_unknown(tp.get("policy_no", ""))
+        claim_no = _zero_unknown(tp.get("claim_no", ""))
+        if (policy_no, claim_no) != ((tp.get("policy_no", "") or "").strip(), (tp.get("claim_no", "") or "").strip()):
+            log(f"   ~ คู่กรณี {n + 1}: กรมธรรม์/เคลมที่ เป็นศูนย์ล้วน = ไม่ทราบ → '-'")
         insure_type = (tp.get("insure_type", "") or "").strip()
         if not (insurer or policy_no or claim_no or insure_type):
             try:

@@ -145,6 +145,18 @@ def test_names_are_emcs_safe():
     assert r["damaged_property"][0]["owner_name"] == "น.ส. มติกา เจ้าของ"
 
 
+def test_opponent_zero_policy_and_claim_become_dash():
+    """ช่างกรอก 00 / 000000 / -0 ในกรมธรรม์/เลขเคลมคู่กรณีบน ISURVEY = ไม่ทราบ → '-' บนเว็บ (user เคาะ 16/09/69)"""
+    for pol, clm, want_pol, want_clm in [("00", "000000", "-", "-"), ("-0", "0", "-", "-"),
+                                         ("P1", "2026013000001", "P1", "2026013000001"), ("", "", "", "")]:
+        api = FakeAPI()
+        rec = dict(api.records[4])["k4"]
+        rec["oth_policy_no"], rec["oth_accident_no"] = pol, clm
+        o = conv.build_case(api, "case1", {"emp_phone": "0988639214"})["report"]["opposing_parties"][0]
+        assert (o["policy_no"], o["claim_no"]) == (want_pol, want_clm), (pol, clm)
+    assert conv._zero_dash("100") == "100" and conv._zero_dash("0A") == "0A"   # มีตัวอื่นปน = ค่าจริง
+
+
 def test_opponent_insurer_resolved_from_company_code():
     o = _build()["report"]["opposing_parties"][0]
     assert o["insurer"]                                   # เดิม None → ว่างทุกเคส
