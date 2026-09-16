@@ -2170,6 +2170,21 @@ def _fill_ev(driver, prefix, ev_type, batt_no, charger_no, batt_start):
                  _report_date(batt_start))
 
 
+def _driver_name_parts(data: ClaimData) -> tuple:
+    """ชื่อ/นามสกุลผู้ขับขี่รถประกันที่จะกรอก EMCS → (ชื่อ, นามสกุล, ที่มา) — user เคาะ 16/09/69:
+      • ต้นทางแยกช่องมาแล้ว (ปุ่ม "นำเข้า SE Survey": มือถือ/เว็บแยก เพศ·คำนำหน้า·ชื่อ·นามสกุล · งาน ISURVEY ที่ตัวดึงแยกให้ตอนเข้าเว็บ)
+        → ใช้ตามช่องตรง ๆ ตัดเฉพาะคำนำหน้าที่เผลอพิมพ์ติดมาในช่องชื่อ ("น.ส.สรารัตน์") · ชื่อที่มีเว้นวรรคคงไว้ทั้งก้อน
+      • มาช่องเดียว (ปุ่ม "นำเข้า ISURVEY" อ่านตรง / XML: นามสกุลว่าง) → วิธีเดิม: ตัดคำนำหน้าแล้วแยกด้วยช่องว่าง คำแรก = ชื่อ ที่เหลือ = นามสกุล"""
+    first_in = (data.driver_name or "").strip()
+    last_in = (data.driver_surname or "").strip()
+    if last_in:
+        _t, head, rest = split_thai_name(first_in)
+        first = f"{head} {rest}".strip() if rest else head
+        return first or first_in, last_in, "ตามช่องที่ต้นทางแยกมา"
+    _t, first, last = split_thai_name(first_in)
+    return first or first_in, last, "แยกจากช่องเดียวด้วยช่องว่าง"
+
+
 def fill_driver(driver, data: ClaimData):
     log("EMCS: กรอกข้อมูลผู้ขับขี่")
     wait_visible(driver, By.ID, "txtDri_Name01")
@@ -2219,10 +2234,11 @@ def fill_driver(driver, data: ClaimData):
     # ⚠️ **ข้อยกเว้นเดียว: วันเกิดต้องมาก่อนอายุ** ถึงแม้บนหน้าจอ "อายุ" จะอยู่เหนือ "วันเกิด"
     #    เพราะ onblur ของช่องวันเกิดเขียนทับช่องอายุด้วย "อายุ ณ วันนี้" (ดู _fill_age_after_birthdate)
     #    ไล่ตามหน้าจอเป๊ะ ๆ ตรงคู่นี้ = ค่าอายุที่ต้นทางส่งมาหายทุกครั้ง
-    _t, dri_first, dri_last = split_thai_name(
-        f"{data.driver_name} {data.driver_surname}".strip())
-    set_text(driver, "txtDri_Name01", _dash(dri_first or data.driver_name))
-    set_text(driver, "txtDri_LastName01", _dash(dri_last or data.driver_surname))
+    # ชื่อ/นามสกุล: ต้นทางแยกช่องมาแล้วใช้ตามนั้น · มาช่องเดียวค่อยแยกด้วยช่องว่าง (ดู _driver_name_parts, 16/09/69)
+    dri_first, dri_last, _how = _driver_name_parts(data)
+    log(f"   ✓ ชื่อผู้ขับขี่ '{dri_first}' / นามสกุล '{dri_last}' ({_how})")
+    set_text(driver, "txtDri_Name01", _dash(dri_first))
+    set_text(driver, "txtDri_LastName01", _dash(dri_last))
     fuzzy_select(driver, "ddlDri_Relation_ID", data.driver_relation,
                  presleep=1, label="ความสัมพันธ์")
     set_text(driver, "wuCale_Dri_BirthDay_txtCalendar", to_buddhist_date(data.driver_birthdate))

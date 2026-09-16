@@ -4180,5 +4180,17 @@ check("คู่กรณี: fill_third_parties ผ่านกรมธรร�
       'policy_no = _zero_unknown(tp.get("policy_no", ""))' in _src_tp and 'claim_no = _zero_unknown(tp.get("claim_no", ""))' in _src_tp
       and _src_tp.index("_zero_unknown(") < _src_tp.index('if not (insurer or policy_no or claim_no or insure_type)'))
 
+# ---- ชื่อ/นามสกุลผู้ขับขี่รถประกัน: ต้นทางแยกช่องมาแล้วใช้ตามนั้น · ช่องเดียวค่อยแยกด้วยช่องว่าง (user เคาะ 16/09/69, v1.1.2) ----
+def _dn(name, surname):
+    _d = claim_data.ClaimData(driver_name=name, driver_surname=surname)
+    return emcs._driver_name_parts(_d)[:2]
+check("ผู้ขับขี่: แยกช่องมาแล้ว (เว็บ/มือถือ) → ใช้ตามช่อง ชื่อมีเว้นวรรคคงไว้", _dn("สรา รัตน์", "คล้ามกลั่น") == ("สรา รัตน์", "คล้ามกลั่น"))
+check("ผู้ขับขี่: คำนำหน้าเผลอติดในช่องชื่อ → ตัดออก ไม่ซ้ำกับ dropdown", _dn("น.ส.สรารัตน์", "คล้ามกลั่น") == ("สรารัตน์", "คล้ามกลั่น")
+      and _dn("คุณ พัลลภ", "ธาดากิจวณิช") == ("พัลลภ", "ธาดากิจวณิช"))
+check("ผู้ขับขี่: มาช่องเดียว (ISURVEY ตรง/XML) → วิธีเดิม ตัดคำนำหน้า + แยกด้วยช่องว่าง",
+      _dn("คุณ พัลลภ ธาดากิจวณิช", "") == ("พัลลภ", "ธาดากิจวณิช") and _dn("นายกัมปนาท เปรมกิจ", "") == ("กัมปนาท", "เปรมกิจ"))
+check("ผู้ขับขี่: ว่างทั้งคู่ → ว่าง (fill_driver ใส่ '-' ผ่าน _dash)", _dn("", "") == ("", "")
+      and "_driver_name_parts(data)" in _inspect.getsource(emcs.fill_driver) and "_dash(dri_first)" in _inspect.getsource(emcs.fill_driver))
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
