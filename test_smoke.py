@@ -4239,5 +4239,12 @@ _cb = __import__("autokey.car_brand", fromlist=["normalize_brand"])
 check("ยี่ห้อ -ALL- ผ่าน normalize_brand คงค่า (ไม่ถูกตัดเป็นค่าว่างเหมือน '-') · '-'/NA ยังเป็นค่าว่าง",
       _cb.normalize_brand("-ALL-") == "-ALL-" and _cb.normalize_brand(" -all- ") == "-ALL-" and _cb.normalize_brand("-") == "" and _cb.normalize_brand("NA") == "")
 
+# ---- คู่กรณี "รอตรวจสอบ" ชุดค่า user 17/09/69 (รถอื่นๆ ไม่มียี่ห้อ) — ยี่ห้อคู่กรณีว่างต้องข้าม ไม่หยุดถาม (v1.1.7) ----
+_src_scb = _inspect.getsource(emcs._select_car_brand)
+check("EMCS: ยี่ห้อคู่กรณีว่าง = ข้าม ไม่หยุดรอคนเลือก (required=False เฉพาะบล็อกคู่กรณี · ฝั่งรถประกัน fill_car ยังบังคับ)",
+      "required=True):" in _src_scb and "if not car_brand and not required:" in _src_scb
+      and 'brand_id=p + "ddlCmfg", required=False)' in _src_tp
+      and "_select_car_brand(driver, data.car_brand)" in _inspect.getsource(emcs.fill_car))
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

@@ -522,9 +522,11 @@ def fill_third_parties(driver, data: ClaimData):
         #    เพิ่งถูกลบ — บล็อกสร้างใหม่ใช้เวลาโหลดนานกว่า 2 วิ)
         #    ฝั่งรถประกันแก้ไปแล้วตั้งแต่ f81f766 (ยิง __doPostBack ซ้ำ + รอจริง 12 วิ)
         #    แต่ฝั่งคู่กรณีตกหล่น — ตอนนี้ใช้ตัวเดียวกันแล้ว
+        #    17/09/69 (v1.1.7): ยี่ห้อคู่กรณีว่าง = ข้าม ไม่หยุดถาม (required=False) — คู่กรณี "รอตรวจสอบ" จาก
+        #    เว็บ/แอปเป็น รถอื่นๆ ไม่มียี่ห้อ และ EMCS ไม่บังคับยี่ห้อคู่กรณี (ฝั่งรถประกัน fill_car ยังบังคับ)
         _select_car_brand(driver, tp.get("car_brand", ""),
                           label=f"ยี่ห้อรถคู่กรณี {n + 1}",
-                          type_id=p + "ddlCType", brand_id=p + "ddlCmfg")
+                          type_id=p + "ddlCType", brand_id=p + "ddlCmfg", required=False)
         set_text(driver, p + "txtCModel", tp.get("car_model", ""))
         # สีรถคู่กรณี — เดิมไม่เคยแตะช่องนี้ (มีแต่ฝั่งรถประกัน) ทั้งที่มือถือเก็บให้แล้ว
         if str(tp.get("car_color") or "").strip():
@@ -2054,7 +2056,7 @@ def _set_ctype_via_postback(driver, label: str) -> bool:
 
 
 def _select_car_brand(driver, car_brand, label="ยี่ห้อรถ",
-                      type_id="ddlCType", brand_id="ddlCMFG"):
+                      type_id="ddlCType", brand_id="ddlCMFG", required=True):
     """เลือก 'ยี่ห้อรถ' (ddlCMFG) ให้ทน race ของ cascade ประเภทรถ→ยี่ห้อ:
     ตัวเลือกยี่ห้อถูกโหลดจาก onchange postback ของ ddlCType ซึ่งบางครั้ง commit ไม่ทัน
     presleep เดิม → ddlCMFG ว่าง (มีแต่ '-- ระบุ --'). แก้แบบเดียวกับที่คนต้องกดประเภทรถ
@@ -2081,6 +2083,13 @@ def _select_car_brand(driver, car_brand, label="ยี่ห้อรถ",
         except TimeoutException:
             pass
     if _select_has_options(driver, brand_id):
+        if not car_brand and not required:
+            # ยี่ห้อคู่กรณีว่าง (required=False เฉพาะบล็อกคู่กรณี): คู่กรณี "รอตรวจสอบ" = รถอื่นๆ ไม่มียี่ห้อ
+            # (ไม่มี -ALL- ในลิสต์รถอื่นๆ) — EMCS ไม่บังคับยี่ห้อคู่กรณี (vlidOpoCar ไม่ตรวจ ddlCmfg
+            # ยืนยันจากหน้า EMCS จริง 17/09/69) → ข้าม ไม่หยุดรอคนเลือก · ต้องมาถึงตรงนี้หลังรอ postback
+            # ประเภทรถข้างบนแล้วเท่านั้น ไม่งั้นประเภทรถไม่ commit (ดูหมายเหตุที่จุดเรียกในบล็อกคู่กรณี)
+            log(f"   - ข้าม {label} (ว่าง — EMCS ไม่บังคับยี่ห้อคู่กรณี)")
+            return
         fuzzy_select(driver, brand_id, car_brand, label=label,
                      required=True, timeout=5, min_score=BRAND_MIN_SCORE)
     else:
