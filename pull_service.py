@@ -30,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from autokey import isurvey_close, pull_core  # noqa: E402
+from autokey import __version__ as BOT_VERSION  # noqa: E402
 
 TOKEN = os.environ.get("PULL_SERVICE_TOKEN", "")
 SESURVEY_URL = os.environ.get("SESURVEY_API_URL", "https://api.sesurvey.cloud").rstrip("/")
@@ -59,7 +60,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.split("?")[0] == "/healthz":
-            return self._send(200, {"ok": True, "sesurvey": SESURVEY_URL})
+            return self._send(200, {"ok": True, "sesurvey": SESURVEY_URL, "version": BOT_VERSION})
         self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):

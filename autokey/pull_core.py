@@ -17,6 +17,7 @@ import json
 import re
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from datetime import datetime, timedelta
@@ -32,6 +33,15 @@ ISURVEY_EMCS_SENT = "send"
 REPORT_URL = "https://cloud.isurvey.mobi/web/php/report/get_data_report.php"
 #: สถานะ ISURVEY (masterStatus.sttcase_ID) ที่กด "ดึงเข้า" ได้ — 40 รอตรวจข้อมูล · 100 จบงาน (user เคาะ 13/09/69)
 PULLABLE_STATUS_IDS = {"40", "100"}
+# 19/09/69 user: ครั้งก่อนหน้าของเคลมมาเป็น "เคสอ้างอิง" (ปิดตั้งแต่สร้าง ไม่เข้าคิวบอท) ได้เฉพาะที่ **จบงาน** (100) บน ISURVEY แล้ว
+# ใบที่ยังรอตรวจข้อมูล (40) หรือยังไม่จบ ต้องถูกดึงเข้ามาตรวจเป็นงานปกติก่อน — ไม่งั้นจะกลายเป็น "ปิดแล้ว" ทั้งที่ยังไม่เคยเข้า EMCS
+# แล้วบอทครั้งถัดไปติด "ต้องนำเข้าครั้งที่ 1 ก่อน" โดยแก้ผ่านเว็บไม่ได้
+CLOSED_STATUS_ID = "100"
+REVIEW_STATUS_ID = "40"
+
+
+class OpenRoundError(RuntimeError):
+    """ครั้งก่อนหน้ายังไม่จบงานบน ISURVEY และยังไม่มีในเว็บ — ต้องดึงใบนั้นเข้าตรวจก่อน (ข้อความอ่านได้ ส่งกลับหน้าเว็บตรง ๆ)"""
 
 #: ต้องตรงกับ INSURER_BY_JOB_PREFIX ของหน้า import-xml บนเว็บ se-survey
 #: ⛔ prefix ที่ไม่รู้จัก = หยุด ห้าม fallback (เข้าผิดบริษัทใน EMCS ลบไม่ได้)
@@ -126,6 +136,31 @@ def sesurvey_post(base: str, token: str, path: str, payload=None, body: bytes | 
         return None, f"เชื่อมต่อ se-survey ไม่ได้: {e}"
 
 
+def sesurvey_get(base: str, token: str, path: str, timeout: int = 60):
+    """GET ไป backend se-survey ด้วย INTEGRATION_TOKEN — คืน (data, error)"""
+    try:
+        req = urllib.request.Request(f"{base.rstrip('/')}{path}", headers={"Authorization": f"Bearer {token}"}, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8")), None
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = (json.loads(e.read().decode("utf-8")) or {}).get("message") or ""
+        except Exception:
+            pass
+        return None, f"se-survey ตอบ {e.code}" + (f": {detail}" if detail else "")
+    except Exception as e:
+        return None, f"เชื่อมต่อ se-survey ไม่ได้: {e}"
+
+
+def case_exists_on_web(base: str, token: str, survey_no: str) -> tuple[bool, str | None]:
+    """เลขเซอร์เวย์นี้มีเคสในเว็บแล้วไหม (ทุกสถานะ ทุกต้นทาง) — คืน (มี, ข้อผิดพลาดถ้าถามไม่ได้)"""
+    data, err = sesurvey_get(base, token, "/api/integrations/cases/lookup?survey_no=" + urllib.parse.quote(str(survey_no or "")))
+    if err:
+        return False, err
+    return bool((data or {}).get("data")), None
+
+
 def zip_photos(folder) -> bytes:
     """แพ็กรูปที่โหลดมาเป็น zip โครง `case/<หมวด>/<ไฟล์>` ที่ importPhotoZip ของ se-survey อ่านหมวดออก"""
     folder = Path(folder)
@@ -187,9 +222,36 @@ def pull_references(api: ISurveyAPI, claim: str, survey_no: str, insurer: str, s
     refs: list[dict] = []
     if not k or k <= 1:
         return refs, k
+    # 19/09/69 user: ครั้งก่อนหน้าเป็นเคสอ้างอิงได้เฉพาะที่จบงาน (100) — ใบที่ยังไม่จบต้องมีในเว็บเป็นงานปกติแล้ว (ดึงไปก่อนหน้า)
+    # ไม่งั้นหยุดทั้งการดึง แล้วบอกให้ดึงใบนั้นก่อน · ที่มีในเว็บแล้วไม่ดึงซ้ำ
+    open_on_web: set[str] = set()
+    blockers: list[str] = []
+    for it in ordered[: k - 1]:
+        st = str(it.get("sttcase_ID") or "").strip()
+        if st == CLOSED_STATUS_ID:
+            continue
+        no = str(it.get("survey_no") or "")
+        found, lerr = case_exists_on_web(sesurvey_url, token, no)
+        if found:
+            open_on_web.add(no)
+            continue
+        name = str(it.get("status_name") or st or "?")
+        if st == REVIEW_STATUS_ID:
+            msg = f'ครั้งที่ {it["round"]} ({no}) ยังเป็น "{name}" บน ISURVEY — ดึงใบนั้นเข้ามาตรวจก่อน'
+        else:
+            msg = f'ครั้งที่ {it["round"]} ({no}) ยังไม่จบงานบน ISURVEY (สถานะ "{name}") — รอให้ถึง "รอตรวจข้อมูล" แล้วดึงใบนั้นเข้ามาตรวจก่อน'
+        if lerr:
+            msg += f" (ตรวจกับเว็บไม่สำเร็จ: {lerr})"
+        blockers.append(msg)
+    if blockers:
+        raise OpenRoundError(f"ยังดึงครั้งที่ {k} ไม่ได้ — " + " · ".join(blockers))
     for it in ordered[: k - 1]:
         entry = {"survey_no": str(it.get("survey_no") or ""), "round": int(it["round"]), "caseId": None,
                  "skipped": None, "photos": None}
+        if entry["survey_no"] in open_on_web:
+            entry["skipped"] = "มีในระบบแล้ว (งานปกติ ยังไม่จบบน ISURVEY)"
+            refs.append(entry)
+            continue
         try:
             payload = build_case(api, it["caseID"], it)
             payload["insurance_company"] = insurer
@@ -249,6 +311,8 @@ def pull_case(api: ISurveyAPI, claim: str, survey_no: str, sesurvey_url: str, to
     try:
         refs, visit_no = pull_references(api, claim, survey_no, insurer, sesurvey_url, token, created_by,
                                          with_photos=with_photos)
+    except OpenRoundError as e:
+        return None, str(e)     # 19/09/69: ครั้งก่อนหน้ายังไม่จบและยังไม่มีในเว็บ → ไม่ดึงใบนี้ ให้หัวหน้าดึงใบนั้นก่อน
     except Exception as e:
         refs = [{"survey_no": "", "round": 0, "caseId": None, "skipped": f"หาลำดับครั้งของเคลมไม่ได้: {type(e).__name__}"}]
     if visit_no:

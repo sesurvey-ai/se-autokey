@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import sys
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -35,8 +36,24 @@ class FakeAPI:
         return next(j for j in JOBS if j["survey_no"] == invoice)
 
 
-def _harness(monkeypatch, dup_survey_nos=()):
-    posts = []
+class _Posts(list):
+    """list ของ (path, payload) ที่ยิงไปเว็บ + .lookups = เลขเซอร์เวย์ที่ถามผ่าน /cases/lookup"""
+    lookups: list
+
+
+def _harness(monkeypatch, dup_survey_nos=(), web_has=(), lookup_error=None):
+    posts = _Posts()
+    lookups = []
+
+    def fake_get(base, token, path, timeout=60):
+        no = urllib.parse.unquote(path.split("survey_no=")[-1])
+        lookups.append(no)
+        if lookup_error:
+            return None, lookup_error
+        return {"success": True, "data": ({"id": 55, "status": "surveyed"} if no in web_has else None)}, None
+
+    monkeypatch.setattr(pull_core, "sesurvey_get", fake_get)
+    posts.lookups = lookups
 
     def fake_build_case(api, case_id, listrow=None):
         return {"report": {"survey_job_no": listrow["survey_no"]}, "caseFields": {}, "warnings": []}
@@ -142,3 +159,71 @@ def test_iso_bkk_dt():
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# ── 19/09/69 user: ครั้งก่อนหน้าเป็นเคสอ้างอิงเฉพาะที่จบงาน (100) · ใบที่ยังรอตรวจ/ยังไม่จบ ต้องมีในเว็บแล้ว ไม่งั้นหยุดและบอกให้ดึงใบนั้นก่อน ──
+def _jobs_round2(status_id: str, status_name: str):
+    jobs = [dict(j) for j in JOBS]
+    r2 = next(j for j in jobs if j["survey_no"] == "SEABI-410260400230")
+    r2.update({"sttcase_ID": status_id, "status_name": status_name, "close_datetime": ""})
+    return jobs
+
+
+class _OpenAPI(FakeAPI):
+    def __init__(self, jobs):
+        self._jobs = jobs
+
+    def list_claim_jobs(self, claim):
+        return [dict(j) for j in self._jobs]
+
+    def find_case(self, claim, invoice=""):
+        return next(j for j in self._jobs if j["survey_no"] == invoice)
+
+
+def test_open_earlier_round_not_on_web_blocks_pull(monkeypatch):
+    posts = _harness(monkeypatch)
+    api = _OpenAPI(_jobs_round2("40", "รอตรวจข้อมูล"))
+    result, err = pull_core.pull_case(api, "2026013020764", "SEABI-410260401463",
+                                      "https://api.example", "tok", with_photos=False)
+    assert result is None and err
+    assert "ยังดึงครั้งที่ 3 ไม่ได้" in err and "ครั้งที่ 2 (SEABI-410260400230)" in err
+    assert 'ยังเป็น "รอตรวจข้อมูล"' in err and "ดึงใบนั้นเข้ามาตรวจก่อน" in err
+    assert posts == []                                   # ไม่มีอะไรถูกสร้างบนเว็บ (ไม่มีอ้างอิง ไม่มีใบหลัก)
+    assert posts.lookups == ["SEABI-410260400230"]       # ถามเว็บเฉพาะใบที่ยังไม่จบ (ครั้งที่ 1 จบงานไม่ต้องถาม)
+
+
+def test_open_earlier_round_already_on_web_passes_without_repull(monkeypatch):
+    posts = _harness(monkeypatch, web_has=("SEABI-410260400230",))
+    api = _OpenAPI(_jobs_round2("40", "รอตรวจข้อมูล"))
+    result, err = pull_core.pull_case(api, "2026013020764", "SEABI-410260401463",
+                                      "https://api.example", "tok", with_photos=False)
+    assert err is None
+    nos = [pl["report"]["survey_job_no"] for _, pl in posts]
+    assert nos == ["SEABI-110260301484", "SEABI-410260401463"]   # ครั้งที่ 1 อ้างอิง · ครั้งที่ 2 ไม่ดึงซ้ำ · ใบหลัก
+    refs = result["references"]
+    assert refs[0]["round"] == 1 and refs[0]["caseId"] is not None
+    assert refs[1]["round"] == 2 and refs[1]["caseId"] is None and "งานปกติ" in refs[1]["skipped"]
+    assert posts[-1][1]["visit_no"] == 3 and result["visit_no"] == 3
+
+
+def test_unfinished_earlier_round_has_wait_message(monkeypatch):
+    posts = _harness(monkeypatch)
+    api = _OpenAPI(_jobs_round2("20", "กำลังสำรวจ"))
+    result, err = pull_core.pull_case(api, "2026013020764", "SEABI-410260401463",
+                                      "https://api.example", "tok", with_photos=False)
+    assert result is None and "ยังไม่จบงานบน ISURVEY" in err and 'สถานะ "กำลังสำรวจ"' in err and posts == []
+
+
+def test_lookup_failure_is_reported_in_message(monkeypatch):
+    posts = _harness(monkeypatch, lookup_error="se-survey ตอบ 503")
+    api = _OpenAPI(_jobs_round2("40", "รอตรวจข้อมูล"))
+    result, err = pull_core.pull_case(api, "2026013020764", "SEABI-410260401463",
+                                      "https://api.example", "tok", with_photos=False)
+    assert result is None and "ตรวจกับเว็บไม่สำเร็จ: se-survey ตอบ 503" in err and posts == []
+
+
+def test_closed_earlier_rounds_never_ask_web(monkeypatch):
+    posts = _harness(monkeypatch)
+    result, err = pull_core.pull_case(FakeAPI(), "2026013020764", "SEABI-410260401463",
+                                      "https://api.example", "tok", with_photos=False)
+    assert err is None and posts.lookups == []            # ครั้งที่ 1–2 จบงาน → อ้างอิงตามเดิม ไม่ต้องถามเว็บ
