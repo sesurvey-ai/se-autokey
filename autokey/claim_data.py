@@ -578,3 +578,48 @@ class ClaimData:
         if not lines:
             lines.append("✅ ข้อมูลครบทุก field")
         return "\n".join(lines)
+
+
+# ── วันเกิด/อายุ (user เคาะ 19/09/69) ─────────────────────────────────────────
+_THAI_DATE_RE = re.compile(r"^\s*(\d{1,2})/(\d{1,2})/(\d{2,4})\s*$")
+_ISO_DATE_RE = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})")
+
+
+def parse_real_date(s):
+    """วันที่ 'dd/mm/yyyy' (พ.ศ. หรือ ค.ศ.) หรือ ISO 'yyyy-mm-dd' → (ปี ค.ศ., เดือน, วัน) เฉพาะ **วันจริงในปฏิทิน** ช่วง ค.ศ. 1900–2100
+    ไม่ใช่วันจริง (00/00/00 · 00/00/2569 · "-" · ว่าง · 31/02) → None — ISURVEY ส่ง 00/00/00 แทน "ไม่ทราบ" มาได้ (เคส #324)"""
+    from datetime import date
+    t = str(s or "").strip().split("|")[0].strip()
+    m = _THAI_DATE_RE.match(t)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if y < 100:            # ปี 2 หลัก (00) = ไม่ทราบ
+            return None
+        y_ce = y - 543 if y >= 2400 else y
+    else:
+        m = _ISO_DATE_RE.match(t)
+        if not m:
+            return None
+        y_ce, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if not (1900 <= y_ce <= 2100):
+        return None
+    try:
+        date(y_ce, mo, d)
+    except ValueError:
+        return None
+    return (y_ce, mo, d)
+
+
+def age_from_date(s, today=None) -> str:
+    """อายุ (ปีเต็ม ณ วันนี้) จากวันเกิด — สูตรเดียวกับแอป (kAgeFromThaiDate) และตัวออก XML ของเว็บ (xmlAge)
+    ไม่ใช่วันจริง หรืออายุไม่อยู่ในช่วง 1–129 → '' (EMCS ไม่รับ 0 — เคส #282)"""
+    from datetime import date
+    p = parse_real_date(s)
+    if not p:
+        return ""
+    y, mo, d = p
+    t = today or date.today()
+    a = t.year - y
+    if (t.month, t.day) < (mo, d):
+        a -= 1
+    return str(a) if 0 < a < 130 else ""

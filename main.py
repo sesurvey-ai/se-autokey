@@ -54,7 +54,7 @@ from autokey.browser import (
 )
 from autokey import isurvey_report, sekey_client
 from autokey.claim_data import ClaimData
-from autokey.claim_data import driver_address_line, opponent_address_line, with_title
+from autokey.claim_data import age_from_date, driver_address_line, opponent_address_line, with_title
 from autokey.config import load_config
 from autokey.images import (
     archive_old_images,
@@ -700,7 +700,8 @@ def _opponent_birth_age(birthdate, age) -> dict:
     หัวหน้าตรวจบนเว็บใส่ "-" ให้คู่กรณี "รอตรวจสอบ" ตามกติกาช่องข้อความบังคับ แต่ 2 ช่องนี้ใส่ "-" ไม่ได้
     (แอปมือถือเป็นตัวเลือกวันที่ จึงไม่มีปัญหา) — user เคาะ 10/09/69:
       · วันเกิดไม่ใช่วันที่ ("-"/ว่าง) → **วันนี้** และถ้าอายุก็ไม่ใช่ตัวเลข → **1** (EMCS ไม่รับ 0 — user เจอ #282 10/09/69)
-      · วันเกิดถูกแต่อายุไม่ใช่ตัวเลข → ปล่อยว่าง ให้ EMCS คำนวณจากวันเกิดเอง (onblur ของช่องวันเกิด)
+      · วันเกิดถูกแต่อายุไม่ใช่ตัวเลข/เป็น 0 → **คำนวณเอง** จากวันเกิด (ปีเต็ม ณ วันนี้ สูตรเดียวกับไฟล์ XML — user เคาะ 19/09/69 v1.1.8;
+        เดิมปล่อยว่างให้ EMCS คิดตอน blur) · คำนวณไม่ได้ → ว่าง ให้ EMCS คิดเอง
       · มาถูกทั้งคู่ → กรอกตามจริง
     """
     bd = str(birthdate or "").strip()
@@ -715,7 +716,7 @@ def _opponent_birth_age(birthdate, age) -> dict:
         bd = f"{t.day:02d}/{t.month:02d}/{t.year + 543}"
         ag = ag if valid_age else "1"
     elif not valid_age:
-        ag = ""
+        ag = age_from_date(bd)
     return {"birthdate": bd, "age": ag}
 
 

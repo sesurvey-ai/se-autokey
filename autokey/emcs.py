@@ -54,6 +54,8 @@ from .insurer_map import resolve_insurer_code_by_job_no
 # ไว้ที่นี่เพื่อให้ผู้เรียกเดิม (main.py, webui.py, test_smoke.py) ไม่ต้องแก้
 from .claim_data import (  # noqa: F401
     CHILD_TITLE_AGE,
+    age_from_date,
+    parse_real_date,
     CLAIM_TYPE_NAMES,
     DRY_CLAIM_TYPE,
     THAI_TITLES,
@@ -588,12 +590,26 @@ def fill_third_parties(driver, data: ClaimData):
             except Exception:
                 log(f"   ⚠️ เลือกเพศคู่กรณีคันที่ {n + 1} ไม่ได้")
 
-        set_text(driver, p + "wuCale_Dri_BirthDay_txtCalendar",
-                 iso_to_thai_date(tp.get("birthdate", "")))
+        # วันเกิด/อายุผู้ขับขี่คู่กรณี (user เคาะ 19/09/69, v1.1.8):
+        #  · วันเกิดไม่ใช่วันจริง (ISURVEY ส่ง 00/00/00 = ไม่ทราบ) → **ไม่พิมพ์** (เดิมพิมพ์ 00/00/543 → EMCS เด้ง
+        #    "เกิน 100 ปี" งานพังกลางคู่กรณี #324) ปล่อยให้ด่านช่องบังคับของ EMCS ฟ้องตอนบันทึก แล้วบอทหยุดรอคนเติมตามกลไกเดิม
+        #    (เส้นเว็บไม่มาถึงตรงนี้ — _opponent_birth_age ใน main.py จัดการก่อน และเว็บกั้นอนุมัติวันเกิดไม่จริงแล้ว)
+        #  · อายุว่าง/ไม่ใช่ตัวเลข/เป็น 0 แต่วันเกิดจริง → คำนวณเอง (ปีเต็ม ณ วันนี้ สูตรเดียวกับไฟล์ XML) แทนปล่อยให้ EMCS คิดตอน blur
+        _bd = iso_to_thai_date(tp.get("birthdate", ""))
+        _age = str(tp.get("age", "") or "").strip()
+        if _bd and not parse_real_date(_bd):
+            log(f"   ⚠️ วันเกิดผู้ขับขี่คู่กรณี {n + 1} ไม่ใช่วันจริง ({_bd}) — ไม่กรอก ให้ EMCS ฟ้องช่องบังคับแล้วคนเติม")
+            _bd = ""
+        if not (re.fullmatch(r"\d{1,3}", _age) and int(_age) > 0):
+            _calc = age_from_date(_bd) if _bd else ""
+            if _calc:
+                log(f"   ~ อายุผู้ขับขี่คู่กรณี {n + 1} '{_age}' ไม่ใช่ตัวเลข/เป็น 0 → คำนวณจากวันเกิด = {_calc}")
+            _age = _calc
+        set_text(driver, p + "wuCale_Dri_BirthDay_txtCalendar", _bd)
         # ⛔ อายุต้องมาหลังวันเกิดเสมอ — onblur ช่องวันเกิดเขียนทับช่องอายุ
         #    (ดู _fill_age_after_birthdate)
         _fill_age_after_birthdate(driver, p + "wuCale_Dri_BirthDay_txtCalendar",
-                                  p + "txtDri_Age", tp.get("age", ""),
+                                  p + "txtDri_Age", _age,
                                   label=f"ผู้ขับขี่คู่กรณี {n + 1}")
         set_text(driver, p + "txtDri_Adrress", _dash(tp.get("address", "")))
 

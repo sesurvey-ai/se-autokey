@@ -3825,7 +3825,7 @@ check("อายุผู้ขับขี่: กรอกหลังวั�
       < _dsrc.index("_fill_age_after_birthdate("))
 _tsrc = _insp.getsource(emcs.fill_third_parties)
 check("อายุผู้ขับขี่คู่กรณี: กรอกหลังวันเกิด ผ่านตัวช่วยเดียวกัน (บล็อกคู่กรณีผูก onblur เหมือนกัน)",
-      'p + "txtDri_Age", tp.get("age", "")' in _tsrc
+      'p + "txtDri_Age", _age,' in _tsrc   # 19/09/69 v1.1.8: อายุผ่านตัวแปรที่คำนวณ/ตรวจแล้ว ไม่ใช่ค่าดิบจากต้นทาง
       and 'set_text(driver, p + "txtDri_Age"' not in _tsrc
       and _tsrc.index('iso_to_thai_date(tp.get("birthdate", ""))')
       < _tsrc.index("_fill_age_after_birthdate("))
@@ -4133,7 +4133,8 @@ _oba = _main._opponent_birth_age
 _today_be = _dt_chk.now().strftime("%d/%m/") + str(_dt_chk.now().year + 543)
 check("คู่กรณี: 00/00/00 + อายุ 0 → วันนี้ + อายุ 1 (เหมือน '-' ตามกติกา 10/09/69)",
       _oba("00/00/00", "0") == {"birthdate": _today_be, "age": "1"})
-check("คู่กรณี: วันเกิดจริง + อายุ 0 → อายุว่าง ให้ EMCS คำนวณเอง", _oba("13/09/2535", "0") == {"birthdate": "13/09/2535", "age": ""})
+check("คู่กรณี: วันเกิดจริง + อายุ 0 → คำนวณอายุเองจากวันเกิด (19/09/69 v1.1.8 — เดิมปล่อยว่างให้ EMCS คิด)",
+      _oba("13/09/2535", "0") == {"birthdate": "13/09/2535", "age": claim_data.age_from_date("13/09/2535")} and claim_data.age_from_date("13/09/2535") != "")
 check("คู่กรณี: วันเกิดจริง + อายุจริง → ตามเดิม", _oba("13/09/2535", "34") == {"birthdate": "13/09/2535", "age": "34"})
 check("คู่กรณี: ISO ค.ศ. ถือเป็นวันจริง · เดือน 13/ปี 2 หลัก/00/00/2569 ไม่ใช่",
       _main._is_real_date("1992-09-13 00:00:00") and _main._is_real_date("29/02/2567")
@@ -4245,6 +4246,24 @@ check("EMCS: ยี่ห้อคู่กรณีว่าง = ข้าม 
       "required=True):" in _src_scb and "if not car_brand and not required:" in _src_scb
       and 'brand_id=p + "ddlCmfg", required=False)' in _src_tp
       and "_select_car_brand(driver, data.car_brand)" in _inspect.getsource(emcs.fill_car))
+
+# ---- อายุ/วันเกิดผู้ขับขี่คู่กรณี (user เคาะ 19/09/69, v1.1.8) ----
+from datetime import date as _date
+_prd, _afd = claim_data.parse_real_date, claim_data.age_from_date
+check("วันจริง: 17/05/2533 · 1990-05-17 · 17/05/1990 ผ่าน · 00/00/00 · 00/00/543 · 00/00/2569 · 2569-00-00 · '-' · '' · 31/02/2530 ไม่ผ่าน",
+      _prd("17/05/2533") == (1990, 5, 17) and _prd("1990-05-17") == (1990, 5, 17) and _prd("17/05/1990") == (1990, 5, 17)
+      and all(_prd(x) is None for x in ("00/00/00", "00/00/543", "00/00/2569", "2569-00-00", "-", "", "31/02/2530")))
+check("อายุจากวันเกิด: ปีเต็ม ณ วันนี้ นับเดือน/วัน (สูตรเดียวกับ XML/แอป) · ไม่ใช่วันจริง = '' · 0 ปี = ''",
+      _afd("01/01/2500", _date(2026, 9, 19)) == "69" and _afd("20/09/2500", _date(2026, 9, 19)) == "68"
+      and _afd("19/09/2500", _date(2026, 9, 19)) == "69" and _afd("00/00/00") == "" and _afd("-") == "" and _afd("01/01/2569", _date(2026, 9, 19)) == "")
+_src_oba = _inspect.getsource(_main._opponent_birth_age)
+check("เส้นเว็บ: วันเกิดจริง + อายุไม่ใช่ตัวเลข/0 → คำนวณเอง (age_from_date) · วันเกิดไม่จริง → วันนี้+1 คงเดิม (เคสเก่า)",
+      "ag = age_from_date(bd)" in _src_oba and 'ag = ag if valid_age else "1"' in _src_oba
+      and _main._opponent_birth_age("01/01/2500", "0")["age"] == _afd("01/01/2500") and _main._opponent_birth_age("01/01/2500", "-")["age"] == _afd("01/01/2500")
+      and _main._opponent_birth_age("01/01/2500", "45")["age"] == "45" and _main._opponent_birth_age("00/00/00", "0")["age"] == "1")
+check("เส้น ISURVEY ตรง: วันเกิดไม่จริงไม่พิมพ์ (ให้ EMCS ฟ้องช่องบังคับ → หยุดรอคน) · อายุไม่ใช่ตัวเลข/0 → คำนวณจากวันเกิด",
+      "if _bd and not parse_real_date(_bd):" in _src_tp and '_calc = age_from_date(_bd) if _bd else ""' in _src_tp
+      and 'set_text(driver, p + "wuCale_Dri_BirthDay_txtCalendar", _bd)' in _src_tp)
 
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
