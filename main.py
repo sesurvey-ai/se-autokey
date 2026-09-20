@@ -694,6 +694,12 @@ def _is_real_date(s: str) -> bool:
         return False
 
 
+def _ph(v) -> str:
+    """ช่องข้อความคู่กรณี: "รอตรวจสอบ" ที่คนพิมพ์ = ไม่ทราบ → "-" (user เคาะ 20/09/69 เหมือนผู้บาดเจ็บ)"""
+    s = str(v or "").strip()
+    return "-" if s == "รอตรวจสอบ" else s
+
+
 def _opponent_birth_age(birthdate, age) -> dict:
     """วันเกิด/อายุคู่กรณีจากเว็บ → ค่าที่ EMCS รับ (บังคับทั้งคู่ วันเกิดต้องเป็นวันที่ อายุต้องเป็นตัวเลข)
 
@@ -734,8 +740,9 @@ def _populate_third_parties_from_report(data, rep):
     for i, o in enumerate(opp):
         if not isinstance(o, dict):
             continue
-        first = str(o.get("first_name") or "").strip()
-        last = str(o.get("last_name") or "").strip()
+        # "รอตรวจสอบ" ที่คนพิมพ์ในชื่อ = ไม่ทราบ → "-" แล้วไม่เอามาต่อ (เคส #528 เคยได้ "คุณ รอตรวจสอบ -") — user เคาะ 20/09/69
+        first = _ph(str(o.get("first_name") or "").strip())
+        last = _ph(str(o.get("last_name") or "").strip())
         # ชื่อ key ต้องตรงกับที่ fill_third_parties อ่าน (emcs.py): idcard/lic_no/lic_issue_date
         # (report ใช้ cid/license_no/license_start — remap ให้ตรง ไม่งั้นช่องบัตร/ใบขับขี่ว่าง)
         tp = {
@@ -760,7 +767,7 @@ def _populate_third_parties_from_report(data, rep):
             # แอปบังคับให้เลือกคำนำหน้าอยู่แล้ว (opponent_editor.dart) แต่เดิมถูกทิ้งทั้งค่า
             # → ต่อหน้าชื่อให้ตรงธรรมเนียม (ช่วยให้ resolve_gender อนุมานเพศได้ด้วย)
             # 16/09/69: รูปแบบ "นาย บุญเลี้ยง ชงสุวรรณ" — with_title ไม่ซ้ำคำนำหน้าที่เผลอติดในช่องชื่อ · เพศเลือกจาก gender ด้านล่าง (resolve_gender)
-            "drv_name": with_title(o.get("title"), " ".join(x for x in (first, last) if x)),
+            "drv_name": with_title(o.get("title"), " ".join(x for x in (first, last) if x and x != "-") or "-"),
             # เจ้าของรถ (16/09/69): backend ประกอบ owner_name_emcs = คำนำหน้า + ชื่อ "นาย บุญเลี้ยง ชงสุวรรณ" · backend รุ่นเก่าไม่มี → ประกอบเอง
             "opo_name": str(o.get("owner_name_emcs") or "").strip() or with_title(o.get("owner_title"), o.get("owner_name")),
             # ที่อยู่ "เจ้าของรถ" — เดิมไม่ map ทำให้ตกไป fallback = ที่อยู่ผู้ขับขี่ (คนละคนได้)

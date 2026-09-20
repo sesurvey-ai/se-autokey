@@ -71,6 +71,18 @@ from .images import ZIP_CAT_TO_EMCS, list_images
 from .loss_type_map import loss_type_from_acc_type
 
 
+def _opp_clean(tp: dict) -> dict:
+    """คู่กรณี (user เคาะ 20/09/69, v1.1.14): ค่า "รอตรวจสอบ" ที่คนพิมพ์ในทุก key ที่เป็นข้อความ → "-" (ไม่ทราบ)
+    ยกเว้นทะเบียน (plate_no) → "00" ตามชุดรอตรวจสอบ · key อื่นคงเดิม — เคส #528 เคยได้ "รอตรวจสอบ" ลง EMCS ตรง ๆ ที่เลขบัตร/ที่อยู่/ชื่อ"""
+    out = {}
+    for k, v in (tp or {}).items():
+        if isinstance(v, str) and v.strip() == "รอตรวจสอบ":
+            out[k] = "00" if k == "plate_no" else "-"
+        else:
+            out[k] = v
+    return out
+
+
 def _inj_text(v) -> str:
     """ช่องข้อความของผู้บาดเจ็บ (user เคาะ 20/09/69): คนพิมพ์ "รอตรวจสอบ" แทนไม่ทราบ → "-" (EMCS ไม่ควรได้คำนี้)
     ค่าอื่นคงเดิม (ตัดช่องว่างหัวท้าย) · ช่องบังคับครอบด้วย _dash อีกชั้น: ว่าง → "-" ด้วย"""
@@ -513,6 +525,7 @@ def fill_third_parties(driver, data: ClaimData):
 
     for n, tp in enumerate(tps[:MAX_OPPONENTS]):
         p = OPO_PREFIX.format(n=n)
+        tp = _opp_clean(tp)   # "รอตรวจสอบ" → "-" (ทะเบียน → "00") — user เคาะ 20/09/69
         log(f"   --- คันที่ {n + 1}: {tp.get('plate_no', '')} "
             f"{tp.get('car_brand', '')} ---")
 

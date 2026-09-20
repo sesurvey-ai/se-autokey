@@ -123,13 +123,21 @@ def _insert_moo(addr: str, m: str) -> str:
     return _tidy(f"{addr[:hit.end()]} ม.{m} {addr[hit.end():]}")
 
 
+_PLACEHOLDERS = {"-", "รอตรวจสอบ"}
+
+
+def is_placeholder(v) -> bool:
+    """ตัวแทนค่า "ไม่ทราบ" ที่คนพิมพ์/ระบบเติม (user เคาะ 20/09/69): "-" และ "รอตรวจสอบ" — ไม่ใช่ข้อมูลจริง (สูตรเดียวกับ backend driverAddress.ts)"""
+    return str(v or "").strip() in _PLACEHOLDERS
+
+
 def driver_address_line(address, moo="", subdistrict="") -> str:
     """ที่อยู่ปัจจุบันผู้ขับขี่รถประกัน → ข้อความช่องเดียวสำหรับ EMCS: "46/23 ม.7 ต.ท้ายบ้าน" (user เคาะ 16/09/69)
     EMCS มีช่องที่อยู่ข้อความเดียว + dropdown จังหวัด/อำเภอ (ไม่มีช่องหมู่/ตำบล) → จังหวัด/อำเภอไม่ใส่ในข้อความ
     หมู่ที่ปนในบ้านเลขที่แยกออกมาเป็น "ม.<เลข>" เสมอ แทรกถัดจากบ้านเลขที่ (ช่องหมู่ที่ให้มาชนะ) · "ต.ตำบล" ที่พิมพ์ปนมาย้ายไปท้าย ·
     ชื่อตำบลเปล่า ๆ ที่มีอยู่แล้วไม่ต่อซ้ำ · ส่วนไหนว่างข้าม
     ⚠️ สูตรเดียวกับ backend se-survey services/driverAddress.ts (driverAddressLine) — แก้ที่หนึ่งต้องแก้อีกที่"""
-    addr, moo_in_text = split_moo(address)
+    addr, moo_in_text = split_moo("" if is_placeholder(address) else address)   # บ้านเลขที่ "-"/"รอตรวจสอบ" = ไม่ทราบ (20/09/69)
     m = _MOO_PREFIX.sub("", str(moo or "").strip()).strip() or moo_in_text
     t = _TUMBON_PREFIX.sub("", str(subdistrict or "").strip()).strip()
     if t:
@@ -146,7 +154,7 @@ def opponent_address_line(address, moo="", subdistrict="", district="", province
     บล็อกคู่กรณีของ EMCS มีช่องข้อความเดียว (dropdown จังหวัด/อำเภอซ่อน) → ต่อ อ./จ. ด้วย · กรุงเทพ = "แขวงบางด้วน เขตภาษีเจริญ กรุงเทพฯ"
     ชื่อที่มีอยู่แล้วในข้อความ (ที่อยู่เต็มแบบเก่า "60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี") ไม่ต่อซ้ำ
     ⚠️ สูตรเดียวกับ backend driverAddress.ts (opponentAddressLine)"""
-    addr, moo_in_text = split_moo(address)
+    addr, moo_in_text = split_moo("" if is_placeholder(address) else address)   # บ้านเลขที่ "-"/"รอตรวจสอบ" = ไม่ทราบ (20/09/69)
     m = _MOO_PREFIX.sub("", str(moo or "").strip()).strip() or moo_in_text
     t = _TUMBON_PREFIX.sub("", str(subdistrict or "").strip()).strip()
     d = _AMPHUR_PREFIX.sub("", str(district or "").strip()).strip()
@@ -181,6 +189,11 @@ def with_title(title, name) -> str:
     ⚠️ สูตรเดียวกับ backend driverAddress.ts (withTitle)"""
     t = " ".join(str(title or "").split())
     n = " ".join(str(name or "").split())
+    # ตัวแทนค่า (user เคาะ 20/09/69): "-"/"รอตรวจสอบ" → "-" · "ไม่ทราบชื่อ" คงเดิม — ไม่ต่อคำนำหน้า (EMCS เคยได้ "คุณ -" เคส #528)
+    if is_placeholder(n):
+        return "-"
+    if n == "ไม่ทราบชื่อ":
+        return n
     if not n:
         return ""
     if not t:

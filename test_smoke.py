@@ -4231,7 +4231,7 @@ _src_tp3 = _inspect.getsource(_main._populate_third_parties_from_report)
 check("เส้นเว็บ: เจ้าของรถ = owner_name_emcs หรือ with_title · ที่อยู่ = address_emcs หรือ opponent_address_line 5 ช่อง · ชื่อผู้ขับขี่ = with_title(title, ชื่อ นามสกุล)",
       'o.get("owner_name_emcs")' in _src_tp3 and 'with_title(o.get("owner_title"), o.get("owner_name"))' in _src_tp3
       and 'o.get("address_emcs")' in _src_tp3 and 'o.get("address"), o.get("moo"), o.get("subdistrict"), o.get("district"), o.get("home_province")' in _src_tp3
-      and 'with_title(o.get("title"), " ".join(x for x in (first, last) if x))' in _src_tp3)
+      and 'with_title(o.get("title"), " ".join(x for x in (first, last) if x and x != "-") or "-")' in _src_tp3)
 check("EMCS: ผู้ขับขี่คู่กรณี เลือกเพศจาก gender (resolve_gender → rdoGender_0/1) · ชื่อลง txtDri_Name · เจ้าของลง txtOpo_Name",
       'resolve_gender(tp.get("gender", ""), drv_full)' in _src_tp and 'rdoGender_{idx}' in _src_tp
       and 'set_text(driver, p + "txtDri_Name", _dash(drv_full))' in _src_tp and 'set_text(driver, p + "txtOpo_Name", _dash(owner))' in _src_tp)
@@ -4288,6 +4288,20 @@ check("ผู้บาดเจ็บ: _inj_text/_inj_num แปลง 'รอ�
       and 'set_text(driver, p + "txtInj_Injure", _dash(_inj_text(inj.get("injure", ""))))' in _src_inj
       and 'set_text(driver, p + "txtInj_Age", _inj_num(inj.get("age", "")))' in _src_inj
       and 'set_text(driver, p + "txtInj_Cost", _inj_num(inj.get("cost", "")))' in _src_inj)
+
+# ---- คู่กรณี: ตัวแทนค่า (user เคาะ 20/09/69 หลังเคส #528, v1.1.14) ----
+check("with_title: ตัวแทนค่าไม่ต่อคำนำหน้า ('คุณ','-')='-' · ('คุณ','รอตรวจสอบ')='-' · ('นาย','ไม่ทราบชื่อ')='ไม่ทราบชื่อ' · ชื่อจริงยังต่อ",
+      _wt("คุณ", "-") == "-" and _wt("คุณ", "รอตรวจสอบ") == "-" and _wt("นาย", "ไม่ทราบชื่อ") == "ไม่ทราบชื่อ" and _wt("", "รอตรวจสอบ") == "-"
+      and _wt("นาย", "บุญเลี้ยง ชงสุวรรณ") == "นาย บุญเลี้ยง ชงสุวรรณ")
+check("ที่อยู่: บ้านเลขที่ 'รอตรวจสอบ'/'-' ไม่เอามาประกอบ (เคส #528 เคยได้ 'รอตรวจสอบ ต.ท้ายบ้าน …')",
+      _oal("รอตรวจสอบ", "", "ท้ายบ้าน", "อำเภอเมือง", "สมุทรปราการ") == "ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ" and _oal("-", "", "", "", "") == ""
+      and claim_data.driver_address_line("รอตรวจสอบ", "", "ท้ายบ้าน") == "ต.ท้ายบ้าน" and claim_data.is_placeholder(" - ") and not claim_data.is_placeholder("46/23"))
+check("เส้นเว็บ: ชื่อผู้ขับขี่คู่กรณี 'รอตรวจสอบ' + '-' → '-' (ไม่มีคำนำหน้า) · ชื่อจริงยังต่อคำนำหน้า",
+      _main._ph("รอตรวจสอบ") == "-" and _main._ph(" สมชาย ") == "สมชาย"
+      and 'first = _ph(str(o.get("first_name") or "").strip())' in _src_tp3)
+check("EMCS: _opp_clean แปลง 'รอตรวจสอบ' → '-' ทุกช่องข้อความ ทะเบียน → '00' · เรียกต้นลูปกรอกคู่กรณี",
+      emcs._opp_clean({"idcard": "รอตรวจสอบ", "plate_no": "รอตรวจสอบ", "address": "46/23", "damages": []}) == {"idcard": "-", "plate_no": "00", "address": "46/23", "damages": []}
+      and "tp = _opp_clean(tp)" in _src_tp)
 
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)
