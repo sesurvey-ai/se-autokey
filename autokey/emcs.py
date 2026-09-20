@@ -55,6 +55,8 @@ from .insurer_map import resolve_insurer_code_by_job_no
 from .claim_data import (  # noqa: F401
     CHILD_TITLE_AGE,
     age_from_date,
+    birth_placeholder_if_this_year,
+    name_or_unknown,
     parse_real_date,
     CLAIM_TYPE_NAMES,
     DRY_CLAIM_TYPE,
@@ -80,10 +82,14 @@ def _opp_clean(tp: dict) -> dict:
         dashes = bool(s) and set(s) == {"-"}
         if k == "plate_no" and s is not None and (s == "" or s == "รอตรวจสอบ" or dashes):
             out[k] = "00"                        # ไม่มีทะเบียน / "--" ของ ISURVEY / "รอตรวจสอบ" → 00 (ชุดรอตรวจสอบ · user เคาะ 20/09/69)
+        elif k == "drv_name" and s is not None and (s == "" or s == "รอตรวจสอบ" or dashes):
+            out[k] = "ไม่ทราบชื่อ"                 # ชื่อผู้ขับขี่ไม่ทราบ → "ไม่ทราบชื่อ" (user เคาะ 21/09/69 — เดิม "-")
         elif s is not None and (s == "รอตรวจสอบ" or (dashes and len(s) >= 2)):
             out[k] = "-"
         else:
             out[k] = v
+    if not str(out.get("drv_name") or "").strip():
+        out["drv_name"] = "ไม่ทราบชื่อ"              # key ไม่มี/ว่าง = ไม่ทราบชื่อ (ไม่เอาชื่อเจ้าของรถมาแทนอีก — 21/09/69)
     if not str(out.get("plate_no") or "").strip():
         out["plate_no"] = "00"                  # key ไม่มีเลย (เส้น ISURVEY ตรง) ก็ต้องมีทะเบียน — EMCS บังคับ
     return out
@@ -671,6 +677,10 @@ def fill_third_parties(driver, data: ClaimData):
         #  · อายุว่าง/ไม่ใช่ตัวเลข/เป็น 0 แต่วันเกิดจริง → คำนวณเอง (ปีเต็ม ณ วันนี้ สูตรเดียวกับไฟล์ XML) แทนปล่อยให้ EMCS คิดตอน blur
         _bd = iso_to_thai_date(tp.get("birthdate", ""))
         _age = str(tp.get("age", "") or "").strip()
+        # วันเกิดปีปัจจุบัน (01/01/2569 ที่คนพิมพ์แทน "ไม่ทราบ" — เคส #433) → 01/01/2500 + อายุ 69 (user เคาะ 21/09/69)
+        if _bd and birth_placeholder_if_this_year(_bd) != _bd:
+            log(f"   ~ วันเกิดผู้ขับขี่คู่กรณี {n + 1} '{_bd}' เป็นปีปัจจุบัน = ไม่ทราบ → ใช้ 01/01/2500")
+            _bd = "01/01/2500"
         if _bd and not parse_real_date(_bd):
             log(f"   ⚠️ วันเกิดผู้ขับขี่คู่กรณี {n + 1} ไม่ใช่วันจริง ({_bd}) — ไม่กรอก ให้ EMCS ฟ้องช่องบังคับแล้วคนเติม")
             _bd = ""
@@ -1173,7 +1183,7 @@ def fill_injuries(driver, data: ClaimData):
         # (แยกช่อง txtInj_Name01 / ช่องเดียว txtInj_Name / แถว divAXA) → กรอกช่องที่
         # vlidInjPerson เช็คไว้เสมอ แล้วเติมช่องของ layout ที่โผล่จริงเพิ่ม
         # (set_text มี JS fallback เขียนช่องที่ซ่อนอยู่ได้ จึงปลอดภัยที่จะกรอกทั้งคู่)
-        full = _inj_text(inj.get("name", ""))
+        full = name_or_unknown(_inj_text(inj.get("name", "")))   # ไม่ทราบ (ว่าง/รอตรวจสอบ/ขีด) → "ไม่ทราบชื่อ" (21/09/69)
         title, first, last = split_thai_name(full)
         set_text(driver, p + "txtInj_Name", _dash(full))
         if _is_displayed(driver, p + "txtInj_Name01"):
@@ -1300,7 +1310,7 @@ def fill_assets(driver, data: ClaimData):
         #   AXA   = แถว divAXA: คำนำหน้า (ddlAsset_Title_ID) + ชื่อ + นามสกุล แยกช่อง
         # เดิมเช็คแค่ "dropdown มี options ไหม" ซึ่งเป็นจริงแม้แถว AXA ถูกซ่อน → เคส AXA
         # ที่มีทรัพย์สินเสียหาย กดบันทึกแล้ว EMCS ฟ้อง 'กรุณาใส่ชื่อเจ้าของทรัพย์สิน' ค้าง
-        owner = _ast_text(a.get("owner_name", ""))
+        owner = name_or_unknown(_ast_text(a.get("owner_name", "")))   # ไม่ทราบ → "ไม่ทราบชื่อ" (21/09/69)
         title, first, last = split_thai_name(owner)
         set_text(driver, p + "txtOwner", _dash(owner))
         if _is_displayed(driver, p + "divAXA"):
@@ -2386,9 +2396,13 @@ def fill_driver(driver, data: ClaimData):
     set_text(driver, "txtDri_LastName01", _dash(dri_last))
     fuzzy_select(driver, "ddlDri_Relation_ID", _drv_choice(data.driver_relation),
                  presleep=1, label="ความสัมพันธ์")
-    set_text(driver, "wuCale_Dri_BirthDay_txtCalendar", to_buddhist_date(data.driver_birthdate))
+    # วันเกิดปีปัจจุบัน (01/01/2569 ที่คนพิมพ์แทน "ไม่ทราบ") → 01/01/2500 + อายุ 69 (user เคาะ 21/09/69)
+    _dbd_src = birth_placeholder_if_this_year(to_buddhist_date(data.driver_birthdate)) if data.driver_birthdate else data.driver_birthdate
+    if _dbd_src == "01/01/2500" and to_buddhist_date(data.driver_birthdate) != "01/01/2500":
+        log(f"   ~ วันเกิดผู้ขับขี่ '{data.driver_birthdate}' เป็นปีปัจจุบัน = ไม่ทราบ → ใช้ 01/01/2500")
+    set_text(driver, "wuCale_Dri_BirthDay_txtCalendar", to_buddhist_date(_dbd_src))
     # อายุ 0/ไม่ใช่ตัวเลข หรือวันเกิดตัวแทนค่า 01/01/2500 → คำนวณจากวันเกิดเอง (เคส #460, 20/09/69)
-    _drv_age = _driver_age_value(data.driver_age, data.driver_birthdate)
+    _drv_age = _driver_age_value(data.driver_age, _dbd_src)
     if _drv_age != str(data.driver_age or "").strip():
         log(f"   ℹ️ อายุผู้ขับขี่: ต้นทางให้ {str(data.driver_age or '').strip() or 'ว่าง'} → ใช้ "
             f"{_drv_age or 'ให้ EMCS คำนวณ'} (จากวันเกิด {data.driver_birthdate or '-'})")

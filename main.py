@@ -54,7 +54,8 @@ from autokey.browser import (
 )
 from autokey import isurvey_report, sekey_client
 from autokey.claim_data import ClaimData
-from autokey.claim_data import age_from_date, driver_address_line, opponent_address_line, with_title
+from autokey.claim_data import (age_from_date, birth_placeholder_if_this_year, driver_address_line, name_or_unknown,
+                                opponent_address_line, with_title)
 from autokey.config import load_config
 from autokey.images import (
     archive_old_images,
@@ -725,6 +726,9 @@ def _opponent_birth_age(birthdate, age) -> dict:
     # ⛔ ต้องเป็น "วันจริง" ไม่ใช่แค่รูปแบบ — ISURVEY ส่ง "00/00/00" (ไม่ทราบ) มาได้ (เคส #324 เคลม 2026013075977 15/09/69):
     #    regex เดิมผ่าน แล้วบอทพิมพ์ 00/00/00 ลง EMCS → alert "ไม่อนุญาตให้ระบุวันเดือนปีเกิดเกิน 100 ปี" งานพังกลางคู่กรณี
     valid_bd = _is_real_date(bd)
+    # วันเกิดปีปัจจุบัน/อนาคต (01/01/2569 ที่คนพิมพ์แทน "ไม่ทราบ" — เคส #433) → ตัวแทนค่า 01/01/2500 (อายุ 69) — user เคาะ 21/09/69
+    if valid_bd and birth_placeholder_if_this_year(bd) != bd:
+        bd = "01/01/2500"
     # อายุ 0 ไม่ใช่อายุคนขับจริง (ISURVEY ให้ 0 คู่กับวันเกิดไม่ทราบ) และ EMCS ไม่รับ 0 (#282) → ถือว่าไม่ทราบ
     valid_age = bool(re.fullmatch(r"\d{1,3}", ag)) and int(ag) > 0
     if not valid_bd:
@@ -779,7 +783,8 @@ def _populate_third_parties_from_report(data, rep):
             # แอปบังคับให้เลือกคำนำหน้าอยู่แล้ว (opponent_editor.dart) แต่เดิมถูกทิ้งทั้งค่า
             # → ต่อหน้าชื่อให้ตรงธรรมเนียม (ช่วยให้ resolve_gender อนุมานเพศได้ด้วย)
             # 16/09/69: รูปแบบ "นาย บุญเลี้ยง ชงสุวรรณ" — with_title ไม่ซ้ำคำนำหน้าที่เผลอติดในช่องชื่อ · เพศเลือกจาก gender ด้านล่าง (resolve_gender)
-            "drv_name": with_title(o.get("title"), " ".join(x for x in (first, last) if x and x != "-") or "-"),
+            # ไม่ทราบชื่อ (ว่าง/รอตรวจสอบ/ขีด) → "ไม่ทราบชื่อ" (user เคาะ 21/09/69 — เดิม "-") · with_title ไม่ต่อคำนำหน้าให้ค่านี้
+            "drv_name": name_or_unknown(with_title(o.get("title"), " ".join(x for x in (first, last) if x and x != "-"))),
             # เจ้าของรถ (16/09/69): backend ประกอบ owner_name_emcs = คำนำหน้า + ชื่อ "นาย บุญเลี้ยง ชงสุวรรณ" · backend รุ่นเก่าไม่มี → ประกอบเอง
             "opo_name": str(o.get("owner_name_emcs") or "").strip() or with_title(o.get("owner_title"), o.get("owner_name")),
             # ที่อยู่ "เจ้าของรถ" — เดิมไม่ map ทำให้ตกไป fallback = ที่อยู่ผู้ขับขี่ (คนละคนได้)
@@ -847,7 +852,7 @@ def _populate_injuries_from_report(data, rep):
         if not _addr and _ph(g('address')) == "-":
             _addr = "-"      # บ้านเลขที่ "รอตรวจสอบ"/"-" อย่างเดียว = ไม่ทราบ → "-" (กติกา 20/09/69)
         out.append({
-            "name": g('name_emcs') or with_title(g('title'), g('name')),
+            "name": name_or_unknown(g('name_emcs') or with_title(g('title'), g('name'))),   # ไม่ทราบ → "ไม่ทราบชื่อ" (21/09/69)
             "age": g('age'),
             "citizen_id": g('cid'),
             "job": g('occupation'),

@@ -23,7 +23,7 @@
  6. ISURVEY คืน `None` เมื่อค่าว่าง (ไม่ใช่ '') → ต้อง coerce ทุกช่อง
 """
 import re
-from .claim_data import split_moo
+from .claim_data import name_or_unknown, split_moo
 
 from . import isurvey_emcs_map as emcs_map
 from .emcs_names import DISTRICT_NAME, PROVINCE_NAME
@@ -659,7 +659,8 @@ def _third_parties(api, case_id) -> list:
         home_prov = _s(d.get("drv_provinceID"))
         out.append({
             "title": title,
-            "first_name": _name(first),
+            # ชื่อผู้ขับขี่ไม่ทราบ (ช่างพิมพ์ "รอตรวจสอบ"/"--"/ว่าง) → "ไม่ทราบชื่อ" ตั้งแต่ตอนดึง (user เคาะ 21/09/69 เคส #433)
+            "first_name": name_or_unknown(_name(first)) if not _name(last) else _name(first),
             "last_name": _name(last),
             "gender": GENDER_MAP.get(_s(d.get("drv_gender")), ""),
             "age": _s(d.get("age")),
@@ -768,7 +769,7 @@ def _injuries(api, case_id, warnings: list) -> list:
         out.append({
             "person_type": ptype,
             "title": ititle,
-            "name": _name(" ".join(x for x in (ifirst, ilast) if x)) if ititle else _name(r.get("person_name")),
+            "name": name_or_unknown(_name(" ".join(x for x in (ifirst, ilast) if x)) if ititle else _name(r.get("person_name"))),   # ไม่ทราบ → "ไม่ทราบชื่อ" (21/09/69)
             "age": _s(r.get("age")),
             "cid": icid,
             "id_type": "foreign" if icid and not re.fullmatch(r"\d{13}", icid) else "thai",
@@ -816,7 +817,7 @@ def _assets(api, case_id) -> list:
             "detail": _s(r.get("prop_damage_detail")),
             "estimated_cost": _s(r.get("damage_cost")),
             "owner_title": otitle,
-            "owner_name": _name(" ".join(x for x in (ofirst, olast) if x)) if otitle else _name(r.get("owner_name")),
+            "owner_name": name_or_unknown(_name(" ".join(x for x in (ofirst, olast) if x)) if otitle else _name(r.get("owner_name"))),   # ไม่ทราบ → "ไม่ทราบชื่อ" (21/09/69)
             "owner_address": _s(r.get("owner_address")),
             "owner_phone": _s(r.get("owner_phone")),
         })

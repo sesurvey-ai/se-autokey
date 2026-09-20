@@ -4249,7 +4249,7 @@ _src_tp3 = _inspect.getsource(_main._populate_third_parties_from_report)
 check("เส้นเว็บ: เจ้าของรถ = owner_name_emcs หรือ with_title · ที่อยู่ = address_emcs หรือ opponent_address_line 5 ช่อง · ชื่อผู้ขับขี่ = with_title(title, ชื่อ นามสกุล)",
       'o.get("owner_name_emcs")' in _src_tp3 and 'with_title(o.get("owner_title"), o.get("owner_name"))' in _src_tp3
       and 'o.get("address_emcs")' in _src_tp3 and 'o.get("address"), o.get("moo"), o.get("subdistrict"), o.get("district"), o.get("home_province")' in _src_tp3
-      and 'with_title(o.get("title"), " ".join(x for x in (first, last) if x and x != "-") or "-")' in _src_tp3)
+      and 'name_or_unknown(with_title(o.get("title"), " ".join(x for x in (first, last) if x and x != "-")))' in _src_tp3)
 check("EMCS: ผู้ขับขี่คู่กรณี เลือกเพศจาก gender (resolve_gender → rdoGender_0/1) · ชื่อลง txtDri_Name · เจ้าของลง txtOpo_Name",
       'resolve_gender(tp.get("gender", ""), drv_full)' in _src_tp and 'rdoGender_{idx}' in _src_tp
       and 'set_text(driver, p + "txtDri_Name", _dash(drv_full))' in _src_tp and 'set_text(driver, p + "txtOpo_Name", _dash(owner))' in _src_tp)
@@ -4300,7 +4300,7 @@ _src_inj = _inspect.getsource(emcs.fill_injuries)
 check("ผู้บาดเจ็บ: _inj_text/_inj_num แปลง 'รอตรวจสอบ' และ _dash ครอบช่องบังคับ (ชื่อ/บัตร/รพ./อาการ)",
       emcs._inj_text("รอตรวจสอบ") == "-" and emcs._inj_text(" สมชาย ") == "สมชาย" and emcs._dash(emcs._inj_text("")) == "-"
       and emcs._dash(emcs._inj_text("รอตรวจสอบ")) == "-" and emcs._inj_num("รอตรวจสอบ") == "" and emcs._inj_num("35") == "35"
-      and 'full = _inj_text(inj.get("name", ""))' in _src_inj
+      and 'full = name_or_unknown(_inj_text(inj.get("name", "")))' in _src_inj
       and 'set_text(driver, p + "txtCitizen_ID", _dash(_inj_text(inj.get("citizen_id", ""))))' in _src_inj
       and 'set_text(driver, p + "txtInj_Hos_Name", _dash(_inj_text(inj.get("hospital", ""))))' in _src_inj
       and 'set_text(driver, p + "txtInj_Injure", _dash(_inj_text(inj.get("injure", ""))))' in _src_inj
@@ -4348,7 +4348,7 @@ check("หน้าหลัก: เลขบัตร/ใบขับขี่/
       and 'set_text(driver, "txtDri_TelNo", _dash(_drv_text(data.driver_phone)))' in _src_all_drv
       and 'set_text(driver, "txtDri_Address", _drv_text(data.driver_address))' in _src_all_drv
       and 'set_text(driver, "txtDri_DrvPlace", _drv_text(data.driver_license_place))' in _src_all_drv
-      and '_drv_age = _driver_age_value(data.driver_age, data.driver_birthdate)' in _src_all_drv
+      and '_drv_age = _driver_age_value(data.driver_age, _dbd_src)' in _src_all_drv
       and _src_all_drv.index('_drv_age = _driver_age_value(') < _src_all_drv.index('"txtDri_Age",\n                              _drv_age)'))
 
 # ---- ดรอปดาวน์ผู้ขับขี่ "0" = ยังไม่เลือก (เคส #460, v1.1.20): บอทข้าม ไม่หยุดถาม ----
@@ -4369,7 +4369,7 @@ check("ทรัพย์สิน: _ast_text/_ast_num แปลง 'รอต�
       and 'set_text(driver, p + "txtAsset_Damage", _dash(_ast_text(a.get("damage_detail", ""))))' in _src_fa
       and 'set_text(driver, p + "txtAsset_Damage_Cause", _dash(_ast_text(a.get("damage_cause", ""))))' in _src_fa
       and 'set_text(driver, p + "txtCost_Damage", _ast_num(a.get("damage_cost", "")))' in _src_fa
-      and 'owner = _ast_text(a.get("owner_name", ""))' in _src_fa
+      and 'owner = name_or_unknown(_ast_text(a.get("owner_name", "")))' in _src_fa
       and 'set_text(driver, p + "txtAddress", _ast_text(a.get("owner_address", "")))' in _src_fa
       and 'set_text(driver, p + "txtTel_No", _ast_num(a.get("owner_phone", "")))' in _src_fa)
 
@@ -4387,7 +4387,7 @@ check("ผู้บาดเจ็บจาก report: backend เก่าไ�
       f"{_d_inj2.injuries[0]['name']} | {_d_inj2.injuries[0]['address']}")
 check("ผู้บาดเจ็บจาก report: backend ใหม่ส่ง name_emcs/address_emcs → ใช้ตามนั้น (กรุงเทพ = แขวง/เขต) · ชื่อ '-' ไม่ต่อคำนำหน้า · บ้านเลขที่ 'รอตรวจสอบ' อย่างเดียว → '-'",
       _d_inj2.injuries[1]['name'] == 'นาง สมหญิง ดีงาม' and _d_inj2.injuries[1]['address'] == 'แขวงบางด้วน เขตภาษีเจริญ กรุงเทพฯ'
-      and _d_inj2.injuries[2]['name'] == '-' and _d_inj2.injuries[2]['address'] == '-',
+      and _d_inj2.injuries[2]['name'] == 'ไม่ทราบชื่อ' and _d_inj2.injuries[2]['address'] == '-',
       f"{_d_inj2.injuries[1]['name']} | {_d_inj2.injuries[1]['address']} | {_d_inj2.injuries[2]['name']} | {_d_inj2.injuries[2]['address']}")
 _src_inj3 = _inspect.getsource(emcs.fill_injuries)
 check("fill_injuries: ทะเบียนผู้บาดเจ็บไม่มี (บุคคลภายนอกรถ/ไม่ auto-fill) → '00' แทนคำว่า 'บุคคลภายนอก' (กติกาเดียวกับคู่กรณี 21/09/69)",
@@ -4397,6 +4397,29 @@ check("ตัวดึง ISURVEY: ผู้บาดเจ็บแยก title
       '"title": ititle,' in _src_conv and '"home_province": api._prov(' in _src_conv and '"subdistrict": api._tumbon(' in _src_conv
       and '"id_type": "foreign" if icid and not re.fullmatch(' in _src_conv and '"owner_title": otitle,' in _src_conv
       and _conv.split_name("นายสมศักดิ์ มั่นคง") == ("นาย", "สมศักดิ์", "มั่นคง") and _conv.split_name("บริษัท เอบีซี จำกัด")[0] == "")
+
+# ---- ไม่ทราบชื่อ + วันเกิดปีปัจจุบัน (user เคาะ 21/09/69 เคส #433, v1.1.23) ----
+_this_be = __import__("datetime").date.today().year + 543
+_exp69b = str(_this_be - 2500)
+check("name_or_unknown: ว่าง/รอตรวจสอบ/ขีด → 'ไม่ทราบชื่อ' · ชื่อจริงคงเดิม · birth_placeholder_if_this_year: ปีนี้ → 01/01/2500 · ปีจริงคงเดิม",
+      claim_data.name_or_unknown("") == "ไม่ทราบชื่อ" and claim_data.name_or_unknown("รอตรวจสอบ") == "ไม่ทราบชื่อ" and claim_data.name_or_unknown("---") == "ไม่ทราบชื่อ"
+      and claim_data.name_or_unknown(" สมชาย ใจดี ") == "สมชาย ใจดี" and claim_data.name_or_unknown("ไม่ทราบชื่อ") == "ไม่ทราบชื่อ"
+      and claim_data.birth_placeholder_if_this_year(f"01/01/{_this_be}") == "01/01/2500" and claim_data.birth_placeholder_if_this_year("15/05/2515") == "15/05/2515"
+      and claim_data.birth_placeholder_if_this_year("00/00/2569") == "00/00/2569")
+check("เส้นเว็บ: ชื่อผู้ขับขี่คู่กรณี 'รอตรวจสอบ'/ว่าง → 'ไม่ทราบชื่อ' (ไม่ต่อคำนำหน้า) · วันเกิดปีนี้ + อายุ 0 → 01/01/2500 + อายุ 69",
+      _main._opponent_birth_age(f"01/01/{_this_be}", "0") == {"birthdate": "01/01/2500", "age": _exp69b}
+      and _main._opponent_birth_age("15/05/2515", "0")["birthdate"] == "15/05/2515"
+      and 'name_or_unknown(with_title(o.get("title"), " ".join(x for x in (first, last) if x and x != "-")))' in _inspect.getsource(_main)
+      and claim_data.with_title("คุณ", "ไม่ทราบชื่อ") == "ไม่ทราบชื่อ")
+check("เส้น ISURVEY: _opp_clean drv_name ว่าง/รอตรวจสอบ/-- → 'ไม่ทราบชื่อ' (key หายก็เติม ไม่เอาชื่อเจ้าของแทน) · fill_third_parties วันเกิดปีนี้ → 01/01/2500",
+      emcs._opp_clean({"drv_name": "รอตรวจสอบ"})["drv_name"] == "ไม่ทราบชื่อ" and emcs._opp_clean({"drv_name": "--"})["drv_name"] == "ไม่ทราบชื่อ"
+      and emcs._opp_clean({})["drv_name"] == "ไม่ทราบชื่อ" and emcs._opp_clean({"drv_name": "นาย สมชาย"})["drv_name"] == "นาย สมชาย"
+      and "if _bd and birth_placeholder_if_this_year(_bd) != _bd:" in _src_tp)
+check("ผู้บาดเจ็บ/ทรัพย์สิน/ผู้ขับขี่รถประกัน: ชื่อผ่าน name_or_unknown · วันเกิดผู้ขับขี่ปีนี้ → 01/01/2500",
+      'full = name_or_unknown(_inj_text(inj.get("name", "")))' in _inspect.getsource(emcs.fill_injuries)
+      and 'owner = name_or_unknown(_ast_text(a.get("owner_name", "")))' in _inspect.getsource(emcs.fill_assets)
+      and '_dbd_src = birth_placeholder_if_this_year(to_buddhist_date(data.driver_birthdate))' in _inspect.getsource(emcs.fill_driver)
+      and "name_or_unknown(g('name_emcs') or with_title(g('title'), g('name')))" in _inspect.getsource(_main))
 
 # ---- คู่กรณี: ตัวแทนค่า (user เคาะ 20/09/69 หลังเคส #528, v1.1.14) ----
 check("with_title: ตัวแทนค่าไม่ต่อคำนำหน้า ('คุณ','-')='-' · ('คุณ','รอตรวจสอบ')='-' · ('นาย','ไม่ทราบชื่อ')='ไม่ทราบชื่อ' · ชื่อจริงยังต่อ",
@@ -4409,7 +4432,7 @@ check("เส้นเว็บ: ชื่อผู้ขับขี่คู�
       _main._ph("รอตรวจสอบ") == "-" and _main._ph(" สมชาย ") == "สมชาย"
       and 'first = _ph(str(o.get("first_name") or "").strip())' in _src_tp3)
 check("EMCS: _opp_clean แปลง 'รอตรวจสอบ' → '-' ทุกช่องข้อความ ทะเบียน → '00' · เรียกต้นลูปกรอกคู่กรณี",
-      emcs._opp_clean({"idcard": "รอตรวจสอบ", "plate_no": "รอตรวจสอบ", "address": "46/23", "damages": []}) == {"idcard": "-", "plate_no": "00", "address": "46/23", "damages": []}
+      emcs._opp_clean({"idcard": "รอตรวจสอบ", "plate_no": "รอตรวจสอบ", "address": "46/23", "damages": []}) == {"idcard": "-", "plate_no": "00", "address": "46/23", "damages": [], "drv_name": "ไม่ทราบชื่อ"}
       and "tp = _opp_clean(tp)" in _src_tp)
 
 # ---- user สั่ง 20/09/69 (v1.1.15): "--" = ตัวแทนค่า · ทะเบียนว่าง/"--" → 00 · วันเกิด 01/01/2500 → อายุคำนวณเสมอ ----
@@ -4417,7 +4440,7 @@ check("ตัวแทนค่า '--': is_placeholder · with_title ไม่�
       claim_data.is_placeholder("--") and claim_data.is_placeholder("---") and not claim_data.is_placeholder("")
       and _wt("คุณ", "--") == "-" and _main._ph("--") == "-" and _oal("--", "", "ท้ายบ้าน", "อำเภอเมือง", "สมุทรปราการ") == "ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ")
 check("_opp_clean: ทะเบียน ว่าง/'--'/'รอตรวจสอบ' → 00 (key หายก็เติม) · '--' ช่องอื่น → '-' · '-' เดี่ยวคงเดิม",
-      emcs._opp_clean({"plate_no": "--", "idcard": "--", "phone": "-", "address": "46/23"}) == {"plate_no": "00", "idcard": "-", "phone": "-", "address": "46/23"}
+      emcs._opp_clean({"plate_no": "--", "idcard": "--", "phone": "-", "address": "46/23"}) == {"plate_no": "00", "idcard": "-", "phone": "-", "address": "46/23", "drv_name": "ไม่ทราบชื่อ"}
       and emcs._opp_clean({"plate_no": ""})["plate_no"] == "00" and emcs._opp_clean({"opo_name": "x"})["plate_no"] == "00"
       and emcs._opp_clean({"plate_no": "2ฒห533"})["plate_no"] == "2ฒห533" and emcs._inj_text("--") == "-" and emcs._inj_num("--") == "")
 check("วันเกิดตัวแทนค่า 01/01/2500 → อายุคำนวณเสมอ (เส้นเว็บ _opponent_birth_age + เส้น ISURVEY fill_third_parties)",
