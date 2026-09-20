@@ -2766,6 +2766,11 @@ check("การ์ด SE Survey: ปุ่ม ตรวจ/ทดสอบ/XML 
       and "⚡ นำเข้า EMCS + ส่งงานใหม่</button>'" in _page
       and "<b>🧪 ทดสอบ</b> = dry-run" not in _page)
 
+check("แท็บ SE Survey: ปุ่ม 'ทดสอบ' ข้างช่องเลขเคส + 'ตรวจที่เลือก' ซ่อนไว้ก่อน (v1.1.18) — ปุ่มนำเข้าที่เลือกยังชิดขวา",
+      '<button class="run" id="sedrybtn" hidden ' in _page
+      and '<button class="run" id="sechkall" hidden ' in _page
+      and '<button class="run" id="serunall" style="margin-left:auto;' in _page)
+
 # ---- เลข e-Survey บนหัวการ์ด (คว้าจาก log ไม่ต้องเพิ่ม marker) ----
 check("การ์ด: มีป้ายเลข e-Survey", 'class="es" hidden' in _page and ".es{" in _page)
 check("การ์ด: regex จับเลข e-Survey ใช้ได้จริง (ห้ามมี \\\\d ที่ escape ผิด)",

@@ -2097,15 +2097,17 @@ PAGE = r"""<!doctype html>
           <select id="seby" title="กรองรายการตามคนที่อนุมัติเคส (user สั่ง 15/09/69)"><option value="">ทุกคน</option></select>
         </div>
         <button class="run" id="serunbtn" style="padding:11px 14px">⚡ นำเข้า</button>
-        <button class="run" id="sedrybtn" style="padding:11px 14px;background:#64748b" title="ดึง+ตรวจ XML+รูป แล้วหยุด ไม่แตะ EMCS">🧪 ทดสอบ</button>
+        <!-- 🧪 ทดสอบ (dry-run) ซ่อนไว้ก่อน (user 20/09/69: ไม่ค่อยได้ใช้) — เอา hidden ออกเพื่อเปิดคืน (handler ยังอยู่) -->
+        <button class="run" id="sedrybtn" hidden style="padding:11px 14px;background:#64748b" title="ดึง+ตรวจ XML+รูป แล้วหยุด ไม่แตะ EMCS">🧪 ทดสอบ</button>
       </div>
       <div id="setoolbar" hidden style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 2px">
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
           <input type="checkbox" id="seall"> เลือกทั้งหมด
         </label>
         <span id="secount" style="color:var(--muted);font-size:13px"></span>
-        <button class="run" id="sechkall" style="margin-left:auto;padding:7px 12px;font-size:13px;background:#64748b">🔍 ตรวจที่เลือก</button>
-        <button class="run" id="serunall" style="padding:7px 12px;font-size:13px">⚡ นำเข้าที่เลือก</button>
+        <!-- 🔍 ตรวจที่เลือก ซ่อนไว้ก่อน (user 20/09/69) — margin-left:auto ย้ายไปปุ่มถัดไปให้ชิดขวาเหมือนเดิม -->
+        <button class="run" id="sechkall" hidden style="padding:7px 12px;font-size:13px;background:#64748b">🔍 ตรวจที่เลือก</button>
+        <button class="run" id="serunall" style="margin-left:auto;padding:7px 12px;font-size:13px">⚡ นำเข้าที่เลือก</button>
         <button class="run" id="serunallsend" style="padding:7px 12px;font-size:13px;background:#b45309" title="นำเข้าแล้วกดส่งงานใหม่ให้ทันที ทุกเคสที่เลือก — ส่งแล้วแก้ไม่ได้">⚡ นำเข้า + ส่งงานใหม่ ที่เลือก</button>
       </div>
       <div id="sequeue" hidden style="margin:8px 0;padding:8px 10px;border-radius:8px;background:#0f172a11;font-size:13px"></div>
