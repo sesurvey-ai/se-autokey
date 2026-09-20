@@ -2113,8 +2113,7 @@ PAGE = r"""<!doctype html>
       <div class="note" style="margin-top:12px">
         <b>⚡ นำเข้า EMCS</b> = กรอก + อัปรูป + บันทึก draft แล้วหยุด (ตรวจแล้วกดส่งเอง) ·
         <b>⚡ นำเข้า EMCS + ส่งงานใหม่</b> = นำเข้าแล้วกดส่ง + แจ้ง ISURVEY + se-key ให้ทันที ไม่หยุดให้ตรวจ
-        (ส่งแล้วแก้ไม่ได้ · ตรวจกลับไม่ตรง = ไม่ส่ง) ·
-        <b>🧪 ทดสอบ</b> = dry-run ไม่แตะ EMCS
+        (ส่งแล้วแก้ไม่ได้ · ตรวจกลับไม่ตรง = ไม่ส่ง)
       </div>
      </div>
     </div>
@@ -3203,6 +3202,8 @@ function renderSeCasesFromCache(){
     $("#setoolbar").hidden = true;
     return;
   }
+  // ปุ่ม 🔍 ตรวจ / 🧪 ทดสอบ / 📄 XML บนการ์ด — ซ่อนไว้ก่อน (user 20/09/69: ไม่ค่อยได้ใช้) · โค้ดยังอยู่ เปลี่ยนเป็น true เพื่อเปิดคืน
+  const SE_SHOW_EXTRA_BTNS = false;
   seCasesBox.innerHTML = rows.map(c => {
     const id = String(c.id);
     const claim = escAttr(c.claim_no||"");
@@ -3220,11 +3221,13 @@ function renderSeCasesFromCache(){
       act = '<span style="color:var(--ok);font-weight:600;font-size:12.5px">✓ ส่งเข้า AutoKey แล้ว</span>';
     } else {
       act = '<button class="run seact" data-id="'+id+'" data-claim="'+claim+'" data-mode="import" data-live="1" title="สร้าง draft แล้วหยุด — ตรวจบน EMCS แล้วกดส่งเอง">⚡ นำเข้า EMCS</button>'
-          + '<button class="run seact" data-id="'+id+'" data-claim="'+claim+'" data-mode="import" data-live="1" data-autosend="1" style="background:#b45309" title="นำเข้าแล้วกดส่งงานใหม่ให้ทันที ไม่หยุดให้ตรวจ — ส่งแล้วแก้ไม่ได้">⚡ นำเข้า EMCS + ส่งงานใหม่</button>'
-          + '<button class="run seact" data-id="'+id+'" data-claim="'+claim+'" data-mode="import" style="background:#64748b" title="ดึง+ตรวจ ไม่แตะ EMCS">🧪 ทดสอบ</button>';
+          + '<button class="run seact" data-id="'+id+'" data-claim="'+claim+'" data-mode="import" data-live="1" data-autosend="1" style="background:#b45309" title="นำเข้าแล้วกดส่งงานใหม่ให้ทันที ไม่หยุดให้ตรวจ — ส่งแล้วแก้ไม่ได้">⚡ นำเข้า EMCS + ส่งงานใหม่</button>';
+      // 🧪 ทดสอบ (dry-run) — ซ่อนไว้ก่อน (user 20/09/69: ไม่ค่อยได้ใช้) เปิดคืนด้วย SE_SHOW_EXTRA_BTNS
+      if (SE_SHOW_EXTRA_BTNS) act += '<button class="run seact" data-id="'+id+'" data-claim="'+claim+'" data-mode="import" style="background:#64748b" title="ดึง+ตรวจ ไม่แตะ EMCS">🧪 ทดสอบ</button>';
     }
-    if (!imported) act = '<button class="run sechk" data-id="'+id+'" style="background:#64748b">🔍 ตรวจ</button>' + act;
-    act += '<button class="xmlbtn" data-id="'+id+'" style="background:transparent;color:var(--muted);border:1px solid var(--line)" title="ดาวน์โหลด XML (.txt) ไป import EMCS เอง — สำรอง">📄 XML</button>';
+    // 🔍 ตรวจ + 📄 XML — ซ่อนไว้ก่อนเช่นกัน (ตรวจได้จากหน้าเคสบนเว็บ · XML สำรองโหลดจากเว็บได้)
+    if (SE_SHOW_EXTRA_BTNS && !imported) act = '<button class="run sechk" data-id="'+id+'" style="background:#64748b">🔍 ตรวจ</button>' + act;
+    if (SE_SHOW_EXTRA_BTNS) act += '<button class="xmlbtn" data-id="'+id+'" style="background:transparent;color:var(--muted);border:1px solid var(--line)" title="ดาวน์โหลด XML (.txt) ไป import EMCS เอง — สำรอง">📄 XML</button>';
     // แถวเหมือนแท็บ ISURVEY: เลขเคลมตัวหนา + เลขเซอร์เวย์บรรทัดล่าง
     // ที่เหลือ (บริษัทประกัน/ผู้สำรวจ/เลขเคส) ย้ายไป tooltip — คอลัมน์แคบ
     // โชว์แล้วโดน ellipsis ตัดจนอ่านไม่ออกอยู่ดี
@@ -3240,6 +3243,14 @@ function renderSeCasesFromCache(){
                   c.approved_by ? "ผู้ตรวจ " + c.approved_by : "",
                   vn > 0 ? "ครั้งที่ " + vn + (vt > 1 ? "/" + vt : "") : "",
                   "เคส #" + id].filter(Boolean).join(" · ");
+    // จำนวนคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน (user ขอ 20/09/69) — backend นับจากรายงานที่มีผล (ครั้งที่ 2+ = ของครั้งที่ 1)
+    // backend เก่าไม่ส่งมา → ไม่แสดงบรรทัดนี้ · ที่มีของ (>0) ทำตัวหนาให้เห็นว่าบอทต้องกรอกบล็อกนั้น
+    const countsLine = (c.opponent_count === undefined || c.opponent_count === null) ? '' :
+      '<div class="case-cnt" style="font-size:12px;color:var(--muted);margin-top:2px" title="จำนวนที่บอทจะกรอกเข้า EMCS (ครั้งที่ 2+ นับจากครั้งที่ 1) · ตัวหนา = มี">'
+      + [["คู่กรณี", c.opponent_count], ["ผู้บาดเจ็บ", c.injured_count], ["ทรัพย์สิน", c.property_count]]
+          .map(([lab, n]) => { const k = Number(n || 0); return k > 0 ? '<b style="color:#0f172a">' + lab + ' ' + k + '</b>' : lab + ' ' + k; })
+          .join(' · ')
+      + '</div>';
     return '<div class="case-item">'
       + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">'
       +   '<span style="display:flex;align-items:center;gap:8px;min-width:0">'
@@ -3250,6 +3261,7 @@ function renderSeCasesFromCache(){
       + '</div>'
       + '<div class="case-claim" title="'+escAttr(more)+'">'
       +   escHtml(c.survey_job_no||"-") + visitBadge + '</div>'
+      + countsLine
       + '<div class="case-btns">'+act+'</div>'
       + '<div class="sepanel" data-for="'+id+'" hidden style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#0f172a11;font-size:12.5px"></div>'
       + '</div>';

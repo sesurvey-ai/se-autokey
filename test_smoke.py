@@ -2753,6 +2753,19 @@ check("waitbar: เขียน title แท็บด้วย (แจ้งเ�
 check("waitbar: กด 'ไปที่งาน' → เลื่อนไปการ์ด + กะพริบ",
       "scrollIntoView" in _page and 'classList.add("flash")' in _page)
 
+# ---- การ์ดแท็บ "นำเข้า SE Survey" (user ขอ 20/09/69, v1.1.17): จำนวนคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สิน + ซ่อนปุ่ม ตรวจ/ทดสอบ/XML ----
+check("การ์ด SE Survey: บรรทัดจำนวน คู่กรณี · ผู้บาดเจ็บ · ทรัพย์สิน จาก opponent_count/injured_count/property_count (backend เก่าไม่ส่ง = ไม่แสดง)",
+      "const countsLine = (c.opponent_count === undefined || c.opponent_count === null) ? '' :" in _page
+      and '[["คู่กรณี", c.opponent_count], ["ผู้บาดเจ็บ", c.injured_count], ["ทรัพย์สิน", c.property_count]]' in _page
+      and "      + countsLine\n      + '<div class=\"case-btns\">'+act+'</div>'" in _page)
+check("การ์ด SE Survey: ปุ่ม ตรวจ/ทดสอบ/XML ซ่อนไว้ก่อน (SE_SHOW_EXTRA_BTNS=false) — ปุ่มนำเข้า 2 ปุ่มยังอยู่",
+      "const SE_SHOW_EXTRA_BTNS = false;" in _page
+      and "if (SE_SHOW_EXTRA_BTNS) act += '<button class=\"run seact\"" in _page
+      and "if (SE_SHOW_EXTRA_BTNS && !imported) act = '<button class=\"run sechk\"" in _page
+      and "if (SE_SHOW_EXTRA_BTNS) act += '<button class=\"xmlbtn\"" in _page
+      and "⚡ นำเข้า EMCS + ส่งงานใหม่</button>'" in _page
+      and "<b>🧪 ทดสอบ</b> = dry-run" not in _page)
+
 # ---- เลข e-Survey บนหัวการ์ด (คว้าจาก log ไม่ต้องเพิ่ม marker) ----
 check("การ์ด: มีป้ายเลข e-Survey", 'class="es" hidden' in _page and ".es{" in _page)
 check("การ์ด: regex จับเลข e-Survey ใช้ได้จริง (ห้ามมี \\\\d ที่ escape ผิด)",
