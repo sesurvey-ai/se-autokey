@@ -4265,5 +4265,14 @@ check("เส้น ISURVEY ตรง: วันเกิดไม่จริ�
       "if _bd and not parse_real_date(_bd):" in _src_tp and '_calc = age_from_date(_bd) if _bd else ""' in _src_tp
       and 'set_text(driver, p + "wuCale_Dri_BirthDay_txtCalendar", _bd)' in _src_tp)
 
+# ---- โหมด 'นำเข้า + ส่งงานใหม่': ส่ง EMCS สำเร็จแล้วปิด Chrome (user ขอ 20/09/69, v1.1.11) ----
+_src_rsi = _inspect.getsource(_main.run_sesurvey_import)
+_src_os = _inspect.getsource(_main._offer_submit)
+check("auto-send: ส่งสำเร็จ → driver.quit() · ไม่ส่ง/ส่งไม่สำเร็จ → เปิดค้าง (ผ่านค่าคืนของ _offer_submit)",
+      "sent = _offer_submit(driver, cfg, data, esurvey, auto=True" in _src_rsi and "if sent:" in _src_rsi
+      and _src_rsi.index("if sent:") < _src_rsi.index("driver.quit()", _src_rsi.index("if sent:"))
+      and _src_os.count("return True") == 2 and "return True" in _src_os.split("announce_sent(")[1][:200]
+      and "return True" not in _src_os.split("wait_for_submit(")[0])
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

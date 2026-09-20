@@ -1722,8 +1722,16 @@ def run_sesurvey_import(cfg, args):
             log(f"   ℹ️ เคสมาจาก '{src}' ไม่ใช่ ISURVEY — หลังส่งจะไม่แจ้ง ISURVEY (บันทึก se-key ตามปกติ)")
         banner("LIVE: draft สร้างแล้ว" + (f" (e-Survey {esurvey})" if esurvey else "")
                + " — โหมด 'นำเข้า + ส่งงานใหม่': กดส่งต่อทันที")
-        _offer_submit(driver, cfg, data, esurvey, auto=True, notify_isurvey=notify,
-                      after_sent=lambda msg: _mark_emcs_submitted(cfg, case_id, hdrs, esurvey, msg))
+        sent = _offer_submit(driver, cfg, data, esurvey, auto=True, notify_isurvey=notify,
+                             after_sent=lambda msg: _mark_emcs_submitted(cfg, case_id, hdrs, esurvey, msg))
+        if sent:
+            # user ขอ 20/09/69: โหมด 'นำเข้า + ส่งงานใหม่' ส่ง EMCS สำเร็จแล้วไม่ต้องเปิด Chrome ค้าง (ไม่มีอะไรให้คนกดต่อ)
+            # ส่งไม่สำเร็จ/ไม่ได้ส่ง (ติดข้อที่บอทกรอกแทนไม่ได้ · ค่าไม่ตรง) ยังเปิดค้างให้คนตรวจเหมือนเดิม
+            log("🧹 ส่งงานแล้ว → ปิด Chrome")
+            try:
+                driver.quit()
+            except Exception:
+                pass
         return
 
     banner(f"LIVE: สร้าง draft ใน EMCS สำเร็จ"
@@ -1979,7 +1987,7 @@ def _offer_submit(driver, cfg, data, esurvey: str = "", auto: bool = False,
     # 2026013063304: ISURVEY ReadTimeout 30 วิ แต่การ์ดหายไปแล้ว คนไม่รู้เลย)
     if res["ok"] and sekey_ok:
         announce_sent(data.claim_value, esurvey, keyer)   # ครบ → การ์ดปิดตัวเองได้
-        return
+        return True   # EMCS ส่งแล้ว (20/09/69: ผู้เรียกโหมด auto ใช้ตัดสินปิด Chrome)
     _bad = []
     if not res["ok"]:
         _bad.append(f"แจ้ง ISURVEY ไม่สำเร็จ ({res['text'][:80]})")
@@ -1988,6 +1996,7 @@ def _offer_submit(driver, cfg, data, esurvey: str = "", auto: bool = False,
     log("⚠️ EMCS ส่งงานแล้ว แต่ " + " และ ".join(_bad)
         + f" — สั่งซ้ำได้ด้วย: main.py --claim {data.claim_value} --report-isurvey")
     announce_send_failed(data.claim_value, "EMCS ส่งแล้ว แต่ " + " และ ".join(_bad))
+    return True   # EMCS ส่งแล้วจริง (ที่พลาดคือแจ้งต้นทาง สั่งซ้ำได้ ไม่ต้องใช้ Chrome)
 
 
 def main():
