@@ -4351,6 +4351,15 @@ check("หน้าหลัก: เลขบัตร/ใบขับขี่/
       and '_drv_age = _driver_age_value(data.driver_age, data.driver_birthdate)' in _src_all_drv
       and _src_all_drv.index('_drv_age = _driver_age_value(') < _src_all_drv.index('"txtDri_Age",\n                              _drv_age)'))
 
+# ---- ดรอปดาวน์ผู้ขับขี่ "0" = ยังไม่เลือก (เคส #460, v1.1.20): บอทข้าม ไม่หยุดถาม ----
+check("ผู้ขับขี่รถประกัน: '0'/'-- ระบุ --' ของประเภทใบขับขี่/ความสัมพันธ์/คำนำหน้า → '' (ข้าม ไม่หยุดถาม) · ค่าจริงคงเดิม · ทั้ง main._choice และ emcs._drv_choice",
+      emcs._drv_choice("0") == "" and emcs._drv_choice("-- ระบุ --") == "" and emcs._drv_choice(" ใบขับขี่รถยนต์ส่วนบุคคล ") == "ใบขับขี่รถยนต์ส่วนบุคคล"
+      and _main._choice("0") == "" and _main._choice(" นาย ") == "นาย" and _main._choice(None) == ""
+      and 'fuzzy_select(driver, "ddlEmcs_License_Type", _drv_choice(data.driver_license_type),' in _inspect.getsource(emcs)
+      and 'fuzzy_select(driver, "ddlDri_Relation_ID", _drv_choice(data.driver_relation),' in _inspect.getsource(emcs)
+      and "data.driver_title = _choice(gv('driver_title'))" in _inspect.getsource(_main)
+      and "data.driver_license_type = _choice(gv('driver_license_type'))" in _inspect.getsource(_main))
+
 # ---- คู่กรณี: ตัวแทนค่า (user เคาะ 20/09/69 หลังเคส #528, v1.1.14) ----
 check("with_title: ตัวแทนค่าไม่ต่อคำนำหน้า ('คุณ','-')='-' · ('คุณ','รอตรวจสอบ')='-' · ('นาย','ไม่ทราบชื่อ')='ไม่ทราบชื่อ' · ชื่อจริงยังต่อ",
       _wt("คุณ", "-") == "-" and _wt("คุณ", "รอตรวจสอบ") == "-" and _wt("นาย", "ไม่ทราบชื่อ") == "ไม่ทราบชื่อ" and _wt("", "รอตรวจสอบ") == "-"

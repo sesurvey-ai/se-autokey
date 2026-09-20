@@ -700,6 +700,13 @@ def _ph(v) -> str:
     return "-" if (s == "รอตรวจสอบ" or (s and set(s) == {"-"})) else s   # "--" ของ ISURVEY = ไม่ทราบ ด้วย
 
 
+def _choice(v) -> str:
+    """ดรอปดาวน์บนเว็บที่ใช้ "0" เป็น "-- ระบุ --" (คำนำหน้า/ความสัมพันธ์/ประเภทใบขับขี่ ผู้ขับขี่รถประกัน):
+    "0"/"-- ระบุ --" = ยังไม่เลือก → "" ให้บอทข้าม ไม่หยุดถาม (เคส #460 20/09/69 — EMCS ไม่บังคับประเภทใบขับขี่)"""
+    s = str(v or "").strip()
+    return "" if s in ("0", "-- ระบุ --") else s
+
+
 PLACEHOLDER_BIRTHDATES = ("01/01/2500", "1/1/2500")   # วันเกิดตัวแทนค่าของชุดรอตรวจสอบ (17/09/69)
 
 
@@ -892,11 +899,11 @@ def _populate_claim_from_report(data, rep):
     data.insure_engine = gv('engine_no')
     data.insure_name = gv('assured_name')
     # ผู้ขับขี่ (se-survey มีคำนำหน้า/เพศตรง ๆ)
-    data.driver_title = gv('driver_title')
+    data.driver_title = _choice(gv('driver_title'))
     data.driver_name = gv('driver_first_name') or data.driver_name
     data.driver_surname = gv('driver_last_name') or data.driver_surname
     data.driver_gender = gv('driver_gender') or data.driver_gender
-    data.driver_relation = gv('driver_relation')
+    data.driver_relation = _choice(gv('driver_relation'))
     data.driver_age = gv('driver_age')
     # ที่อยู่ปัจจุบัน: backend ประกอบ "46/23 ม.7 ต.ท้ายบ้าน" มาให้ (driver_address_emcs, 16/09/69) · backend รุ่นเก่าไม่มี → ประกอบเองจาก 3 ช่อง
     data.driver_address = gv('driver_address_emcs') or driver_address_line(
@@ -907,7 +914,7 @@ def _populate_claim_from_report(data, rep):
     data.driver_idcard = gv('driver_id_card')
     data.driver_license_no = gv('driver_license_no')
     data.driver_license_place = gv('driver_license_place')
-    data.driver_license_type = gv('driver_license_type')
+    data.driver_license_type = _choice(gv('driver_license_type'))
     data.driver_birthdate = gv('driver_birthdate')
     data.license_issue_date = gv('driver_license_start')
     data.license_expiry_date = gv('driver_license_end')

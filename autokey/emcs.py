@@ -102,6 +102,12 @@ def _drv_text(v) -> str:
     return _inj_text(v)
 
 
+def _drv_choice(v) -> str:
+    """ดรอปดาวน์ผู้ขับขี่รถประกันจากเว็บ: "0"/"-- ระบุ --" = ยังไม่เลือก → "" (fuzzy_select ข้าม ไม่หยุดถาม — เคส #460 20/09/69)"""
+    s = str(v or "").strip()
+    return "" if s in ("0", "-- ระบุ --") else s
+
+
 def _driver_age_value(age, birthdate) -> str:
     """อายุผู้ขับขี่รถประกันที่จะกรอก: อายุ 0/ไม่ใช่ตัวเลข หรือวันเกิดตัวแทนค่า 01/01/2500 → คำนวณจากวันเกิด (สูตร XML)
     คำนวณไม่ได้ → '' = ปล่อยให้ EMCS คำนวณเอง · อายุจริง+วันเกิดจริง → ใช้ต้นทาง (อายุ ณ วันเกิดเหตุ)
@@ -2367,7 +2373,7 @@ def fill_driver(driver, data: ClaimData):
     log(f"   ✓ ชื่อผู้ขับขี่ '{dri_first}' / นามสกุล '{dri_last}' ({_how})")
     set_text(driver, "txtDri_Name01", _dash(dri_first))
     set_text(driver, "txtDri_LastName01", _dash(dri_last))
-    fuzzy_select(driver, "ddlDri_Relation_ID", data.driver_relation,
+    fuzzy_select(driver, "ddlDri_Relation_ID", _drv_choice(data.driver_relation),
                  presleep=1, label="ความสัมพันธ์")
     set_text(driver, "wuCale_Dri_BirthDay_txtCalendar", to_buddhist_date(data.driver_birthdate))
     # อายุ 0/ไม่ใช่ตัวเลข หรือวันเกิดตัวแทนค่า 01/01/2500 → คำนวณจากวันเกิดเอง (เคส #460, 20/09/69)
@@ -2387,7 +2393,8 @@ def fill_driver(driver, data: ClaimData):
     set_text(driver, "txtDri_TelNo", _dash(_drv_text(data.driver_phone)))
     set_text(driver, "txtDri_CardID", _dash(_drv_text(data.driver_idcard)))
     set_text(driver, "txtDri_DrvID", _dash(_drv_text(data.driver_license_no)))
-    fuzzy_select(driver, "ddlEmcs_License_Type", data.driver_license_type,
+    # "0"/"-- ระบุ --" = ยังไม่เลือกบนเว็บ → ข้าม (EMCS ไม่บังคับ — เคส #460 20/09/69)
+    fuzzy_select(driver, "ddlEmcs_License_Type", _drv_choice(data.driver_license_type),
                  presleep=1, label="ประเภทใบขับขี่")
     set_text(driver, "txtDri_DrvPlace", _drv_text(data.driver_license_place))
     set_text(driver, "wuCale_Dri_DrvDate_Start_txtCalendar", to_buddhist_date(data.license_issue_date))
