@@ -302,7 +302,7 @@ def _emcs_safe(elem_id, value: str) -> str:
     (เทียบตรงตัวอย่างเดียวจะพลาดคู่กรณีทั้งหมด ซึ่งเป็นที่ที่ "2+" โผล่บ่อยที่สุด)
     """
     eid = str(elem_id or "")
-    if not any(c in value for c in ("+", "%", EM_DASH, "*", BULLET)):
+    if not any(c in value for c in ("+", "%", EM_DASH, "*", BULLET, ",")):
         return value
     if not any(eid == f or eid.endswith("_" + f) for f in EMCS_EATS_FIELDS):
         return value
@@ -328,6 +328,11 @@ def _emcs_safe(elem_id, value: str) -> str:
         # bullet หายทั้งตัวเหมือน em-dash (เหลือช่องว่างคู่) → ยัติภังค์ คงโครง list เดิม
         changed.append(f"• → '-' {out.count(BULLET)} จุด")
         out = out.replace(BULLET, "-")
+    if "," in out:
+        # คอมมาก็โดนกลืน (ผลการดำเนินงาน "7,000 บาท" → EMCS เก็บ "7000 บาท" เคส #446 21/09/69) → ตัดทิ้งก่อนกรอก
+        # ให้เหมือนที่ EMCS เก็บจริง ตัวตรวจกลับจะได้ไม่ฟ้อง 10/11 ทั้งที่ข้อมูลครบ (เว้นวรรคหลังคอมมายังอยู่)
+        changed.append(f"ตัด ',' ทิ้ง {out.count(',')} ตัว")
+        out = out.replace(",", "")
     log(f"   ~ {elem_id}: {' · '.join(changed)} (EMCS กลืนอักขระพวกนี้ตอนบันทึก)")
     return out
 
