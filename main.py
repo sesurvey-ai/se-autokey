@@ -840,13 +840,19 @@ def _populate_injuries_from_report(data, rep):
         g = lambda k: str(p.get(k) or "").strip()   # noqa: E731
         if not (g('name') or g('cid')):
             continue
+        # 21/09/69: คำนำหน้าแยกช่อง + ที่อยู่ 5 ช่อง — backend ประกอบมาให้ (name_emcs "นาย สมชาย ใจดี" · address_emcs
+        # "46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ") · backend รุ่นเก่าไม่มี → ประกอบเองสูตรเดียวกับคู่กรณี
+        _addr = g('address_emcs') or opponent_address_line(
+            g('address'), g('moo'), g('subdistrict'), g('district'), g('home_province'))
+        if not _addr and _ph(g('address')) == "-":
+            _addr = "-"      # บ้านเลขที่ "รอตรวจสอบ"/"-" อย่างเดียว = ไม่ทราบ → "-" (กติกา 20/09/69)
         out.append({
-            "name": g('name'),
+            "name": g('name_emcs') or with_title(g('title'), g('name')),
             "age": g('age'),
             "citizen_id": g('cid'),
             "job": g('occupation'),
             "car_regno": g('car_reg'),
-            "address": g('address'),
+            "address": _addr,
             "tel_no": g('phone'),
             "hospital": g('hospital'),
             "cost": g('treat_cost'),

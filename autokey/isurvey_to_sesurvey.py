@@ -760,15 +760,25 @@ def _injuries(api, case_id, warnings: list) -> list:
             warnings.append(
                 f'ระดับการบาดเจ็บของ "{who}" ({_s(r.get("injury_detail")) or "ไม่ระบุ"}) '
                 "ระบุแทนไม่ได้ — เลือกเองบนหน้าเว็บ")
+        # 21/09/69 (user สั่ง): คำนำหน้าแยกช่อง (ISURVEY เก็บรวมในชื่อ) · ที่อยู่แยก บ้านเลขที่/หมู่/ตำบล/อำเภอ/จังหวัด
+        # (เว็บมีช่องแยกแล้ว — เดิมรวมเป็นข้อความเดียว _full_address) · ชนิดบัตร: ไม่ใช่ 13 หลัก = ต่างชาติ
+        ititle, ifirst, ilast = split_name(r.get("person_name"))
+        iaddr, imoo = split_moo(_s(r.get("address")))
+        icid = _s(r.get("IDcard_no"))
         out.append({
             "person_type": ptype,
-            "name": _name(r.get("person_name")),
+            "title": ititle,
+            "name": _name(" ".join(x for x in (ifirst, ilast) if x)) if ititle else _name(r.get("person_name")),
             "age": _s(r.get("age")),
-            "cid": _s(r.get("IDcard_no")),
+            "cid": icid,
+            "id_type": "foreign" if icid and not re.fullmatch(r"\d{13}", icid) else "thai",
             "gender": GENDER_MAP.get(_s(r.get("gender")), ""),
             "occupation": _s(r.get("occupation")),
-            # ที่อยู่เต็ม: API แยกตำบล/อำเภอ/จังหวัดคนละคอลัมน์ ส่งแค่ address จะได้ '15/9 ม.9'
-            "address": _full_address(api, r),
+            "address": iaddr,
+            "moo": imoo,
+            "subdistrict": api._tumbon(_s(r.get("tumbonID")) or _s(r.get("drv_tumbonID"))),
+            "district": api._amphur(_s(r.get("amphurID")) or _s(r.get("drv_amphurID"))),
+            "home_province": api._prov(_s(r.get("provinceID")) or _s(r.get("drv_provinceID"))),
             "phone": _s(r.get("person_phone")),
             "work_place": _s(r.get("work_place")),
             "income": _s(r.get("salary")),
@@ -798,11 +808,15 @@ def _assets(api, case_id) -> list:
         if not ikey:
             continue
         r = _flat(api.get_record(case_id, 6, ikey))   # ห่อใต้ 'property' เหมือน tab-5 ห่อใต้ 'patient'
+        # 21/09/69: คำนำหน้าเจ้าของแยกช่อง (เฉพาะที่ขึ้นต้นด้วยคำนำหน้าคน — บริษัทไม่มี) · ที่อยู่ ISURVEY เป็นข้อความเดียว
+        # เก็บในช่องบ้านเลขที่ (ตัวประกอบไม่ต่อซ้ำ) หัวหน้าแยกจังหวัด/อำเภอ/ตำบลบนเว็บได้ถ้าต้องการ
+        otitle, ofirst, olast = split_name(r.get("owner_name"))
         out.append({
             "item": _s(r.get("prop_name")),
             "detail": _s(r.get("prop_damage_detail")),
             "estimated_cost": _s(r.get("damage_cost")),
-            "owner_name": _name(r.get("owner_name")),
+            "owner_title": otitle,
+            "owner_name": _name(" ".join(x for x in (ofirst, olast) if x)) if otitle else _name(r.get("owner_name")),
             "owner_address": _s(r.get("owner_address")),
             "owner_phone": _s(r.get("owner_phone")),
         })

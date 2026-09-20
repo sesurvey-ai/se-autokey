@@ -1224,13 +1224,12 @@ def fill_injuries(driver, data: ClaimData):
             log(f"   ✓ เลขทะเบียน (กรอก/override): {manual}")
         elif auto:
             log(f"   ✓ เลขทะเบียน auto-fill จากประเภทบุคคล: {auto}")
-        elif pt == "05":
-            # บุคคลภายนอกรถ — ไม่มีรถผูก ไม่ auto-fill → ใส่ 'บุคคลภายนอก' ให้ผ่าน gate
-            set_text(driver, p + "txtCar_RegNo", "บุคคลภายนอก")
-            log("   ✓ เลขทะเบียน = 'บุคคลภายนอก' (บุคคลภายนอกรถ ไม่มีรถผูก)")
         else:
-            log(f"   ⚠️ เลขทะเบียนผู้บาดเจ็บ {n + 1} ว่าง (ไม่ auto-fill + ไม่มีค่ากรอก) "
-                "— อาจติด gate หน้าค่าใช้จ่าย ต้องกรอกเองบน EMCS")
+            # ไม่มีทะเบียน (บุคคลภายนอกรถ ไม่มีรถผูก / EMCS ไม่ auto-fill) → "00" กติกาเดียวกับคู่กรณี
+            # (user เคาะ 21/09/69 — เดิมใส่คำว่า 'บุคคลภายนอก') ให้ผ่าน gate หน้าค่าใช้จ่าย
+            set_text(driver, p + "txtCar_RegNo", "00")
+            log("   ✓ เลขทะเบียน = '00' (ไม่มีทะเบียน — "
+                + ("บุคคลภายนอกรถ ไม่มีรถผูก" if pt == "05" else "EMCS ไม่ auto-fill + ไม่มีค่ากรอก") + ")")
         set_text(driver, p + "txtInj_Address", _inj_text(inj.get("address", "")))
         set_text(driver, p + "txtInj_Tel_No", _inj_num(inj.get("tel_no", "")))
         # โรงพยาบาล = ฟิลด์บังคับ EMCS; ไม่มีข้อมูลจริง → _dash คืน "-" ให้ผ่าน gate + เซฟบล็อกได้

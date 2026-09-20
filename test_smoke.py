@@ -4373,6 +4373,31 @@ check("ทรัพย์สิน: _ast_text/_ast_num แปลง 'รอต�
       and 'set_text(driver, p + "txtAddress", _ast_text(a.get("owner_address", "")))' in _src_fa
       and 'set_text(driver, p + "txtTel_No", _ast_num(a.get("owner_phone", "")))' in _src_fa)
 
+from autokey import isurvey_to_sesurvey as _conv
+# ---- ผู้บาดเจ็บ/ทรัพย์สิน (user สั่ง 21/09/69, v1.1.22): คำนำหน้า · ที่อยู่ 5 ช่อง · ทะเบียนไม่มี → 00 ----
+_d_inj2 = claim_data.ClaimData()
+_main._populate_claim_from_report(_d_inj2, {'injured_persons': [
+    {'title': 'นาย', 'name': 'สมชาย ใจดี', 'cid': '1100800629296', 'person_type': 'บุคคลภายนอกรถ', 'gender': 'ชาย',
+     'address': '46/23', 'moo': '7', 'subdistrict': 'ท้ายบ้าน', 'district': 'อำเภอเมือง', 'home_province': 'สมุทรปราการ'},
+    {'title': 'นาง', 'name': 'สมหญิง ดีงาม', 'cid': '-', 'person_type': 'ผู้โดยสาร - รถประกัน', 'gender': 'หญิง',
+     'name_emcs': 'นาง สมหญิง ดีงาม', 'address_emcs': 'แขวงบางด้วน เขตภาษีเจริญ กรุงเทพฯ', 'address': '', 'home_province': 'กรุงเทพมหานคร'},
+    {'title': 'คุณ', 'name': '-', 'cid': 'รอตรวจสอบ', 'person_type': 'ผู้ขับขี่ - รถคู่กรณี', 'gender': 'ชาย', 'address': 'รอตรวจสอบ'}]})
+check("ผู้บาดเจ็บจาก report: backend เก่าไม่มี name_emcs/address_emcs → ประกอบเอง 'นาย สมชาย ใจดี' + '46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ'",
+      _d_inj2.injuries[0]['name'] == 'นาย สมชาย ใจดี' and _d_inj2.injuries[0]['address'] == '46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ',
+      f"{_d_inj2.injuries[0]['name']} | {_d_inj2.injuries[0]['address']}")
+check("ผู้บาดเจ็บจาก report: backend ใหม่ส่ง name_emcs/address_emcs → ใช้ตามนั้น (กรุงเทพ = แขวง/เขต) · ชื่อ '-' ไม่ต่อคำนำหน้า · บ้านเลขที่ 'รอตรวจสอบ' อย่างเดียว → '-'",
+      _d_inj2.injuries[1]['name'] == 'นาง สมหญิง ดีงาม' and _d_inj2.injuries[1]['address'] == 'แขวงบางด้วน เขตภาษีเจริญ กรุงเทพฯ'
+      and _d_inj2.injuries[2]['name'] == '-' and _d_inj2.injuries[2]['address'] == '-',
+      f"{_d_inj2.injuries[1]['name']} | {_d_inj2.injuries[1]['address']} | {_d_inj2.injuries[2]['name']} | {_d_inj2.injuries[2]['address']}")
+_src_inj3 = _inspect.getsource(emcs.fill_injuries)
+check("fill_injuries: ทะเบียนผู้บาดเจ็บไม่มี (บุคคลภายนอกรถ/ไม่ auto-fill) → '00' แทนคำว่า 'บุคคลภายนอก' (กติกาเดียวกับคู่กรณี 21/09/69)",
+      'set_text(driver, p + "txtCar_RegNo", "00")' in _src_inj3 and '"บุคคลภายนอก")' not in _src_inj3)
+_src_conv = _inspect.getsource(_conv._injuries) + _inspect.getsource(_conv._assets)
+check("ตัวดึง ISURVEY: ผู้บาดเจ็บแยก title/ที่อยู่ 5 ช่อง/id_type · ทรัพย์สินแยก owner_title",
+      '"title": ititle,' in _src_conv and '"home_province": api._prov(' in _src_conv and '"subdistrict": api._tumbon(' in _src_conv
+      and '"id_type": "foreign" if icid and not re.fullmatch(' in _src_conv and '"owner_title": otitle,' in _src_conv
+      and _conv.split_name("นายสมศักดิ์ มั่นคง") == ("นาย", "สมศักดิ์", "มั่นคง") and _conv.split_name("บริษัท เอบีซี จำกัด")[0] == "")
+
 # ---- คู่กรณี: ตัวแทนค่า (user เคาะ 20/09/69 หลังเคส #528, v1.1.14) ----
 check("with_title: ตัวแทนค่าไม่ต่อคำนำหน้า ('คุณ','-')='-' · ('คุณ','รอตรวจสอบ')='-' · ('นาย','ไม่ทราบชื่อ')='ไม่ทราบชื่อ' · ชื่อจริงยังต่อ",
       _wt("คุณ", "-") == "-" and _wt("คุณ", "รอตรวจสอบ") == "-" and _wt("นาย", "ไม่ทราบชื่อ") == "ไม่ทราบชื่อ" and _wt("", "รอตรวจสอบ") == "-"

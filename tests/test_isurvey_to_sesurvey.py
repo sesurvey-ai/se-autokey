@@ -143,7 +143,8 @@ def test_names_are_emcs_safe():
     assert r["assured_name"] == "บริษัท โตโยต้า ลีสซิ่ง ประเทศไทย จำกัด"   # วงเล็บหาย ช่องว่างยุบ
     assert " " not in r["acc_surveyor"] and r["acc_surveyor"] == "SEC343 นาย มี วงษ์สุวรรณ"
     assert r["opposing_parties"][0]["first_name"] == "พาสกรณ์"
-    assert r["damaged_property"][0]["owner_name"] == "น.ส. มติกา เจ้าของ"
+    # 21/09/69: คำนำหน้าเจ้าของทรัพย์สินแยกช่อง (น.ส. → นางสาว) · วงเล็บในชื่อหาย
+    assert (r["damaged_property"][0]["owner_title"], r["damaged_property"][0]["owner_name"]) == ("นางสาว", "มติกา เจ้าของ")
 
 
 def test_driver_subdistrict_from_tumbon_code():
