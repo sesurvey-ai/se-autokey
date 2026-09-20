@@ -260,6 +260,20 @@ _TITLE_CANON = (("นางสาว", "นางสาว"), ("น.ส.", "น�
 _THAI_FOLLOW = re.compile("[\u0e30-\u0e3a\u0e45\u0e47-\u0e4e]")   # สระหลัง/วรรณยุกต์ → "นายิกา" = ชื่อจริง ไม่ใช่ นาย+ิกา
 
 
+def _id_type(cid: str, name: str) -> str:
+    """ชนิดบัตร (21/09/69): มีตัวอักษรอังกฤษ → ต่างชาติ · 13 หลัก → คนไทย · เลขล้วนไม่ครบ 13 + ชื่อไม่มีตัวอักษรไทย → ต่างชาติ
+    (เลขใบอนุญาตทำงาน/พาสปอร์ตตัวเลขล้วน — ตรวจแล้ว 4 เคสคนจีน 7–8 หลัก EMCS รับ) · เลขล้วน + ชื่อไทย → คนไทย ให้เว็บเตือนหลักไม่ครบ (เคส #504)
+    ⛔ เดิมตีจากความยาวอย่างเดียว → บัตรไทยพิมพ์เกิน 1 หลักกลายเป็น "ต่างชาติ" แล้วหลุดอนุมัติ"""
+    c = (cid or "").strip()
+    if not c:
+        return "thai"
+    if re.search(r"[A-Za-z]", c):
+        return "foreign"
+    if re.fullmatch(r"\d{13}", c):
+        return "thai"
+    return "thai" if re.search(r"[ก-๙]", name or "") else "foreign"
+
+
 def split_name(full: str):
     """'นาย นิพันธ์ เหมือนกรุง' → ('นาย', 'นิพันธ์', 'เหมือนกรุง') · 'น.ส.ชนกานต์ ประยงค์งาม' → ('นางสาว', 'ชนกานต์', …)
 
@@ -594,7 +608,7 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
         # บัตร 13 หลัก = คนไทย · อย่างอื่น (พาสปอร์ต/ต่างด้าว) = ต่างชาติ — เว็บมีช่องนี้แต่เดิมไม่เคยตั้ง
         # ชนิดบัตร: ต่างชาติเฉพาะเมื่อมีตัวอักษร (พาสปอร์ต) · ตัวเลขล้วนทุกความยาว = คนไทย ให้เว็บเตือนเลขผิด/หลักไม่ครบ
         # (เดิมตีจากความยาว → เลข 14 หลักที่พิมพ์เกินถูกตีเป็น "ต่างชาติ" แล้วหลุดอนุมัติ เคส #504 21/09/69)
-        "driver_id_type": "foreign" if re.search(r"[A-Za-z]", _s(drv.get("IDcard_no"))) else "thai",
+        "driver_id_type": _id_type(_s(drv.get("IDcard_no")), _s(drv.get("drv_name"))),
     })
     if not veh:
         warnings.append('ISURVEY ไม่ได้ระบุ "ประเภทรถ" ของรถประกัน — เลือกเองบนหน้าเว็บ')
@@ -774,7 +788,7 @@ def _injuries(api, case_id, warnings: list) -> list:
             "name": name_or_unknown(_name(" ".join(x for x in (ifirst, ilast) if x)) if ititle else _name(r.get("person_name"))),   # ไม่ทราบ → "ไม่ทราบชื่อ" (21/09/69)
             "age": _s(r.get("age")),
             "cid": icid,
-            "id_type": "foreign" if re.search(r"[A-Za-z]", icid) else "thai",   # ต่างชาติเฉพาะมีตัวอักษร (21/09/69 เคส #504)
+            "id_type": _id_type(icid, _s(r.get("person_name"))),
             "gender": GENDER_MAP.get(_s(r.get("gender")), ""),
             "occupation": _s(r.get("occupation")),
             "address": iaddr,
