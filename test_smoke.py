@@ -4398,7 +4398,8 @@ check("fill_injuries: ทะเบียนผู้บาดเจ็บไม�
 _src_conv = _inspect.getsource(_conv._injuries) + _inspect.getsource(_conv._assets)
 check("ตัวดึง ISURVEY: ผู้บาดเจ็บแยก title/ที่อยู่ 5 ช่อง/id_type · ทรัพย์สินแยก owner_title",
       '"title": ititle,' in _src_conv and '"home_province": api._prov(' in _src_conv and '"subdistrict": api._tumbon(' in _src_conv
-      and '"id_type": "foreign" if icid and not re.fullmatch(' in _src_conv and '"owner_title": otitle,' in _src_conv
+      and '"id_type": "foreign" if re.search(r"[A-Za-z]", icid) else "thai"' in _src_conv and '"owner_title": otitle,' in _src_conv
+      and '"driver_id_type": "foreign" if re.search(r"[A-Za-z]", _s(drv.get("IDcard_no"))) else "thai"' in _inspect.getsource(_conv)   # 21/09/69 เคส #504: ตัวเลขล้วนทุกความยาว = คนไทย
       and _conv.split_name("นายสมศักดิ์ มั่นคง") == ("นาย", "สมศักดิ์", "มั่นคง") and _conv.split_name("บริษัท เอบีซี จำกัด")[0] == "")
 
 # ---- ไม่ทราบชื่อ + วันเกิดปีปัจจุบัน (user เคาะ 21/09/69 เคส #433, v1.1.23) ----

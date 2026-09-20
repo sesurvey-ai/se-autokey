@@ -592,7 +592,9 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
             _s(drv.get("lic_typeID")), ""),
         "driver_relation": _relation(drv.get("relation")),
         # บัตร 13 หลัก = คนไทย · อย่างอื่น (พาสปอร์ต/ต่างด้าว) = ต่างชาติ — เว็บมีช่องนี้แต่เดิมไม่เคยตั้ง
-        "driver_id_type": "foreign" if _s(drv.get("IDcard_no")) and not re.fullmatch(r"\d{13}", _s(drv.get("IDcard_no"))) else "thai",
+        # ชนิดบัตร: ต่างชาติเฉพาะเมื่อมีตัวอักษร (พาสปอร์ต) · ตัวเลขล้วนทุกความยาว = คนไทย ให้เว็บเตือนเลขผิด/หลักไม่ครบ
+        # (เดิมตีจากความยาว → เลข 14 หลักที่พิมพ์เกินถูกตีเป็น "ต่างชาติ" แล้วหลุดอนุมัติ เคส #504 21/09/69)
+        "driver_id_type": "foreign" if re.search(r"[A-Za-z]", _s(drv.get("IDcard_no"))) else "thai",
     })
     if not veh:
         warnings.append('ISURVEY ไม่ได้ระบุ "ประเภทรถ" ของรถประกัน — เลือกเองบนหน้าเว็บ')
@@ -772,7 +774,7 @@ def _injuries(api, case_id, warnings: list) -> list:
             "name": name_or_unknown(_name(" ".join(x for x in (ifirst, ilast) if x)) if ititle else _name(r.get("person_name"))),   # ไม่ทราบ → "ไม่ทราบชื่อ" (21/09/69)
             "age": _s(r.get("age")),
             "cid": icid,
-            "id_type": "foreign" if icid and not re.fullmatch(r"\d{13}", icid) else "thai",
+            "id_type": "foreign" if re.search(r"[A-Za-z]", icid) else "thai",   # ต่างชาติเฉพาะมีตัวอักษร (21/09/69 เคส #504)
             "gender": GENDER_MAP.get(_s(r.get("gender")), ""),
             "occupation": _s(r.get("occupation")),
             "address": iaddr,
