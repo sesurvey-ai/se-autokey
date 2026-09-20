@@ -4263,7 +4263,7 @@ _src_oba = _inspect.getsource(_main._opponent_birth_age)
 check("เส้นเว็บ: วันเกิดจริง + อายุไม่ใช่ตัวเลข/0 → คำนวณเอง (age_from_date) · วันเกิดไม่จริง → วันนี้+1 คงเดิม (เคสเก่า)",
       "ag = age_from_date(bd)" in _src_oba and 'ag = ag if valid_age else "1"' in _src_oba
       and _main._opponent_birth_age("01/01/2500", "0")["age"] == _afd("01/01/2500") and _main._opponent_birth_age("01/01/2500", "-")["age"] == _afd("01/01/2500")
-      and _main._opponent_birth_age("01/01/2500", "45")["age"] == "45" and _main._opponent_birth_age("00/00/00", "0")["age"] == "1")
+      and _main._opponent_birth_age("13/09/2535", "45")["age"] == "45" and _main._opponent_birth_age("00/00/00", "0")["age"] == "1")
 check("เส้น ISURVEY ตรง: วันเกิดไม่จริงไม่พิมพ์ (ให้ EMCS ฟ้องช่องบังคับ → หยุดรอคน) · อายุไม่ใช่ตัวเลข/0 → คำนวณจากวันเกิด",
       "if _bd and not parse_real_date(_bd):" in _src_tp and '_calc = age_from_date(_bd) if _bd else ""' in _src_tp
       and 'set_text(driver, p + "wuCale_Dri_BirthDay_txtCalendar", _bd)' in _src_tp)
@@ -4302,6 +4302,18 @@ check("เส้นเว็บ: ชื่อผู้ขับขี่คู�
 check("EMCS: _opp_clean แปลง 'รอตรวจสอบ' → '-' ทุกช่องข้อความ ทะเบียน → '00' · เรียกต้นลูปกรอกคู่กรณี",
       emcs._opp_clean({"idcard": "รอตรวจสอบ", "plate_no": "รอตรวจสอบ", "address": "46/23", "damages": []}) == {"idcard": "-", "plate_no": "00", "address": "46/23", "damages": []}
       and "tp = _opp_clean(tp)" in _src_tp)
+
+# ---- user สั่ง 20/09/69 (v1.1.15): "--" = ตัวแทนค่า · ทะเบียนว่าง/"--" → 00 · วันเกิด 01/01/2500 → อายุคำนวณเสมอ ----
+check("ตัวแทนค่า '--': is_placeholder · with_title ไม่ต่อคำนำหน้า · _ph → '-' · ที่อยู่ไม่ประกอบ",
+      claim_data.is_placeholder("--") and claim_data.is_placeholder("---") and not claim_data.is_placeholder("")
+      and _wt("คุณ", "--") == "-" and _main._ph("--") == "-" and _oal("--", "", "ท้ายบ้าน", "อำเภอเมือง", "สมุทรปราการ") == "ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ")
+check("_opp_clean: ทะเบียน ว่าง/'--'/'รอตรวจสอบ' → 00 (key หายก็เติม) · '--' ช่องอื่น → '-' · '-' เดี่ยวคงเดิม",
+      emcs._opp_clean({"plate_no": "--", "idcard": "--", "phone": "-", "address": "46/23"}) == {"plate_no": "00", "idcard": "-", "phone": "-", "address": "46/23"}
+      and emcs._opp_clean({"plate_no": ""})["plate_no"] == "00" and emcs._opp_clean({"opo_name": "x"})["plate_no"] == "00"
+      and emcs._opp_clean({"plate_no": "2ฒห533"})["plate_no"] == "2ฒห533" and emcs._inj_text("--") == "-" and emcs._inj_num("--") == "")
+check("วันเกิดตัวแทนค่า 01/01/2500 → อายุคำนวณเสมอ (เส้นเว็บ _opponent_birth_age + เส้น ISURVEY fill_third_parties)",
+      _main._opponent_birth_age("01/01/2500", "1")["age"] == _afd("01/01/2500") and _main._opponent_birth_age("01/01/2500", "")["age"] == _afd("01/01/2500")
+      and 'if _bd in ("01/01/2500", "1/1/2500"):' in _src_tp)
 
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

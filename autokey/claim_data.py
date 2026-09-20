@@ -128,7 +128,8 @@ _PLACEHOLDERS = {"-", "รอตรวจสอบ"}
 
 def is_placeholder(v) -> bool:
     """ตัวแทนค่า "ไม่ทราบ" ที่คนพิมพ์/ระบบเติม (user เคาะ 20/09/69): "-" และ "รอตรวจสอบ" — ไม่ใช่ข้อมูลจริง (สูตรเดียวกับ backend driverAddress.ts)"""
-    return str(v or "").strip() in _PLACEHOLDERS
+    s = str(v or "").strip()
+    return s in _PLACEHOLDERS or (s != "" and set(s) == {"-"})   # "--" ที่ ISURVEY ส่งมาแทนไม่ทราบ ก็นับ (20/09/69)
 
 
 def driver_address_line(address, moo="", subdistrict="") -> str:

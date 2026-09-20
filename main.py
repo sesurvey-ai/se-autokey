@@ -697,7 +697,10 @@ def _is_real_date(s: str) -> bool:
 def _ph(v) -> str:
     """ช่องข้อความคู่กรณี: "รอตรวจสอบ" ที่คนพิมพ์ = ไม่ทราบ → "-" (user เคาะ 20/09/69 เหมือนผู้บาดเจ็บ)"""
     s = str(v or "").strip()
-    return "-" if s == "รอตรวจสอบ" else s
+    return "-" if (s == "รอตรวจสอบ" or (s and set(s) == {"-"})) else s   # "--" ของ ISURVEY = ไม่ทราบ ด้วย
+
+
+PLACEHOLDER_BIRTHDATES = ("01/01/2500", "1/1/2500")   # วันเกิดตัวแทนค่าของชุดรอตรวจสอบ (17/09/69)
 
 
 def _opponent_birth_age(birthdate, age) -> dict:
@@ -721,6 +724,8 @@ def _opponent_birth_age(birthdate, age) -> dict:
         t = datetime.now()
         bd = f"{t.day:02d}/{t.month:02d}/{t.year + 543}"
         ag = ag if valid_age else "1"
+    elif bd in PLACEHOLDER_BIRTHDATES:
+        ag = age_from_date(bd) or ag   # วันเกิดตัวแทนค่า → อายุคำนวณจากปีนั้นเสมอ ไม่ใช้อายุที่เก็บไว้ (เคส #528 อายุ 1 ค้างจากกติกาเก่า) — user เคาะ 20/09/69
     elif not valid_age:
         ag = age_from_date(bd)
     return {"birthdate": bd, "age": ag}

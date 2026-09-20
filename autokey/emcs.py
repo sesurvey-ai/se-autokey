@@ -76,10 +76,16 @@ def _opp_clean(tp: dict) -> dict:
     ยกเว้นทะเบียน (plate_no) → "00" ตามชุดรอตรวจสอบ · key อื่นคงเดิม — เคส #528 เคยได้ "รอตรวจสอบ" ลง EMCS ตรง ๆ ที่เลขบัตร/ที่อยู่/ชื่อ"""
     out = {}
     for k, v in (tp or {}).items():
-        if isinstance(v, str) and v.strip() == "รอตรวจสอบ":
-            out[k] = "00" if k == "plate_no" else "-"
+        s = v.strip() if isinstance(v, str) else None
+        dashes = bool(s) and set(s) == {"-"}
+        if k == "plate_no" and s is not None and (s == "" or s == "รอตรวจสอบ" or dashes):
+            out[k] = "00"                        # ไม่มีทะเบียน / "--" ของ ISURVEY / "รอตรวจสอบ" → 00 (ชุดรอตรวจสอบ · user เคาะ 20/09/69)
+        elif s is not None and (s == "รอตรวจสอบ" or (dashes and len(s) >= 2)):
+            out[k] = "-"
         else:
             out[k] = v
+    if not str(out.get("plate_no") or "").strip():
+        out["plate_no"] = "00"                  # key ไม่มีเลย (เส้น ISURVEY ตรง) ก็ต้องมีทะเบียน — EMCS บังคับ
     return out
 
 
@@ -87,13 +93,13 @@ def _inj_text(v) -> str:
     """ช่องข้อความของผู้บาดเจ็บ (user เคาะ 20/09/69): คนพิมพ์ "รอตรวจสอบ" แทนไม่ทราบ → "-" (EMCS ไม่ควรได้คำนี้)
     ค่าอื่นคงเดิม (ตัดช่องว่างหัวท้าย) · ช่องบังคับครอบด้วย _dash อีกชั้น: ว่าง → "-" ด้วย"""
     s = "" if v is None else str(v).strip()
-    return "-" if s == "รอตรวจสอบ" else s
+    return "-" if (s == "รอตรวจสอบ" or (len(s) >= 2 and set(s) == {"-"})) else s
 
 
 def _inj_num(v) -> str:
     """ช่องตัวเลข/โทร/วันที่ของผู้บาดเจ็บ: "รอตรวจสอบ" → ว่าง (ใส่ "-" ไม่ได้ EMCS ปัดตก) · ค่าอื่นคงเดิม"""
     s = "" if v is None else str(v).strip()
-    return "" if s == "รอตรวจสอบ" else s
+    return "" if (s == "รอตรวจสอบ" or (s and set(s) == {"-"})) else s
 
 
 def _dash(v):
@@ -633,6 +639,8 @@ def fill_third_parties(driver, data: ClaimData):
         if _bd and not parse_real_date(_bd):
             log(f"   ⚠️ วันเกิดผู้ขับขี่คู่กรณี {n + 1} ไม่ใช่วันจริง ({_bd}) — ไม่กรอก ให้ EMCS ฟ้องช่องบังคับแล้วคนเติม")
             _bd = ""
+        if _bd in ("01/01/2500", "1/1/2500"):
+            _age = age_from_date(_bd) or _age   # วันเกิดตัวแทนค่า (ชุดรอตรวจสอบ) → อายุคำนวณจากปีนั้นเสมอ (20/09/69)
         if not (re.fullmatch(r"\d{1,3}", _age) and int(_age) > 0):
             _calc = age_from_date(_bd) if _bd else ""
             if _calc:
