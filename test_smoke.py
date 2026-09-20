@@ -4277,5 +4277,17 @@ check("auto-send: ส่งสำเร็จ → driver.quit() · ไม่ส�
       and _src_os.count("return True") == 2 and "return True" in _src_os.split("announce_sent(")[1][:200]
       and "return True" not in _src_os.split("wait_for_submit(")[0])
 
+# ---- ผู้บาดเจ็บ (user เคาะ 20/09/69, v1.1.13): ช่องบังคับว่าง → "-" · "รอตรวจสอบ" → "-" (ช่องตัวเลข → ว่าง) ----
+_src_inj = _inspect.getsource(emcs.fill_injuries)
+check("ผู้บาดเจ็บ: _inj_text/_inj_num แปลง 'รอตรวจสอบ' และ _dash ครอบช่องบังคับ (ชื่อ/บัตร/รพ./อาการ)",
+      emcs._inj_text("รอตรวจสอบ") == "-" and emcs._inj_text(" สมชาย ") == "สมชาย" and emcs._dash(emcs._inj_text("")) == "-"
+      and emcs._dash(emcs._inj_text("รอตรวจสอบ")) == "-" and emcs._inj_num("รอตรวจสอบ") == "" and emcs._inj_num("35") == "35"
+      and 'full = _inj_text(inj.get("name", ""))' in _src_inj
+      and 'set_text(driver, p + "txtCitizen_ID", _dash(_inj_text(inj.get("citizen_id", ""))))' in _src_inj
+      and 'set_text(driver, p + "txtInj_Hos_Name", _dash(_inj_text(inj.get("hospital", ""))))' in _src_inj
+      and 'set_text(driver, p + "txtInj_Injure", _dash(_inj_text(inj.get("injure", ""))))' in _src_inj
+      and 'set_text(driver, p + "txtInj_Age", _inj_num(inj.get("age", "")))' in _src_inj
+      and 'set_text(driver, p + "txtInj_Cost", _inj_num(inj.get("cost", "")))' in _src_inj)
+
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

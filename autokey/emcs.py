@@ -71,6 +71,19 @@ from .images import ZIP_CAT_TO_EMCS, list_images
 from .loss_type_map import loss_type_from_acc_type
 
 
+def _inj_text(v) -> str:
+    """ช่องข้อความของผู้บาดเจ็บ (user เคาะ 20/09/69): คนพิมพ์ "รอตรวจสอบ" แทนไม่ทราบ → "-" (EMCS ไม่ควรได้คำนี้)
+    ค่าอื่นคงเดิม (ตัดช่องว่างหัวท้าย) · ช่องบังคับครอบด้วย _dash อีกชั้น: ว่าง → "-" ด้วย"""
+    s = "" if v is None else str(v).strip()
+    return "-" if s == "รอตรวจสอบ" else s
+
+
+def _inj_num(v) -> str:
+    """ช่องตัวเลข/โทร/วันที่ของผู้บาดเจ็บ: "รอตรวจสอบ" → ว่าง (ใส่ "-" ไม่ได้ EMCS ปัดตก) · ค่าอื่นคงเดิม"""
+    s = "" if v is None else str(v).strip()
+    return "" if s == "รอตรวจสอบ" else s
+
+
 def _dash(v):
     """ฟิลด์ 'บังคับ' (required) EMCS ชนิด text: คืน '-' เมื่อไม่มีข้อมูลจริง (กติกา user 2026-07-23)
     → ผ่าน required-field gate แล้ว save draft ได้ (set_text ข้ามค่าว่าง จึงต้อง fallback เอง);
@@ -1060,7 +1073,7 @@ def fill_injuries(driver, data: ClaimData):
         # (แยกช่อง txtInj_Name01 / ช่องเดียว txtInj_Name / แถว divAXA) → กรอกช่องที่
         # vlidInjPerson เช็คไว้เสมอ แล้วเติมช่องของ layout ที่โผล่จริงเพิ่ม
         # (set_text มี JS fallback เขียนช่องที่ซ่อนอยู่ได้ จึงปลอดภัยที่จะกรอกทั้งคู่)
-        full = inj.get("name", "")
+        full = _inj_text(inj.get("name", ""))
         title, first, last = split_thai_name(full)
         set_text(driver, p + "txtInj_Name", _dash(full))
         if _is_displayed(driver, p + "txtInj_Name01"):
@@ -1091,9 +1104,9 @@ def fill_injuries(driver, data: ClaimData):
         else:
             log(f"   ⚠️ ไม่ทราบเพศผู้บาดเจ็บ {n + 1} (ISURVEY ว่าง + ชื่อไม่มีคำนำหน้า)")
 
-        set_text(driver, p + "txtInj_Age", inj.get("age", ""))
-        set_text(driver, p + "txtCitizen_ID", _dash(inj.get("citizen_id", "")))
-        set_text(driver, p + "txtInj_Job", inj.get("job", ""))
+        set_text(driver, p + "txtInj_Age", _inj_num(inj.get("age", "")))
+        set_text(driver, p + "txtCitizen_ID", _dash(_inj_text(inj.get("citizen_id", ""))))
+        set_text(driver, p + "txtInj_Job", _inj_text(inj.get("job", "")))
         # เลขทะเบียน — EMCS เติมให้อัตโนมัติจาก ddlPerson_Type แล้ว (รถประกัน/คู่กรณี
         # ตามประเภท) → อ่าน readback: มีค่าแล้ว "ห้ามเขียนทับด้วยค่าว่าง" (บั๊กเดิมที่ทำให้
         # billing gate เด้ง); เติมเองเฉพาะตอนยังว่าง (เช่น บุคคลภายนอกรถ) + มีค่าจากผู้ใช้
@@ -1118,24 +1131,24 @@ def fill_injuries(driver, data: ClaimData):
         else:
             log(f"   ⚠️ เลขทะเบียนผู้บาดเจ็บ {n + 1} ว่าง (ไม่ auto-fill + ไม่มีค่ากรอก) "
                 "— อาจติด gate หน้าค่าใช้จ่าย ต้องกรอกเองบน EMCS")
-        set_text(driver, p + "txtInj_Address", inj.get("address", ""))
-        set_text(driver, p + "txtInj_Tel_No", inj.get("tel_no", ""))
+        set_text(driver, p + "txtInj_Address", _inj_text(inj.get("address", "")))
+        set_text(driver, p + "txtInj_Tel_No", _inj_num(inj.get("tel_no", "")))
         # โรงพยาบาล = ฟิลด์บังคับ EMCS; ไม่มีข้อมูลจริง → _dash คืน "-" ให้ผ่าน gate + เซฟบล็อกได้
-        set_text(driver, p + "txtInj_Hos_Name", _dash(inj.get("hospital", "")))
-        set_text(driver, p + "txtInj_Cost", inj.get("cost", ""))
+        set_text(driver, p + "txtInj_Hos_Name", _dash(_inj_text(inj.get("hospital", ""))))
+        set_text(driver, p + "txtInj_Cost", _inj_num(inj.get("cost", "")))
 
         # ประเภทบาดเจ็บ — ddlWounded_Type รับได้ทั้ง code XML (01-06) และป้ายไทย
         wt = (inj.get("wounded_type", "") or "").strip()
         if wt:
             _select_code_or_label(driver, p + "ddlWounded_Type", wt,
                                   f"ประเภทบาดเจ็บ {n + 1}")
-        set_text(driver, p + "txtInj_Injure", _dash(inj.get("injure", "")))
+        set_text(driver, p + "txtInj_Injure", _dash(_inj_text(inj.get("injure", ""))))
 
         # ── ฟิลด์เสริม form-carried (id ยืนยันจาก ผู้บาดเจ็บ.html; EMCS ไม่บังคับ,
         #    set_text ข้ามค่าว่างเอง + มี JS fallback สำหรับ calendar readonly) ──
-        set_text(driver, p + "txtInj_Work_Place", inj.get("work_place", ""))
-        set_text(driver, p + "txtInj_Position", inj.get("position", ""))
-        set_text(driver, p + "txtInj_Income", inj.get("income", ""))
+        set_text(driver, p + "txtInj_Work_Place", _inj_text(inj.get("work_place", "")))
+        set_text(driver, p + "txtInj_Position", _inj_text(inj.get("position", "")))
+        set_text(driver, p + "txtInj_Income", _inj_num(inj.get("income", "")))
         # ช่วงวันรักษา — XML เป็น ISO ค.ศ. (toXmlCE) → แปลงเป็นไทยเหมือน birthdate คู่กรณี
         set_text(driver, p + "wuCale_From_Date_txtCalendar",
                  iso_to_thai_date(inj.get("treat_from", "")))
