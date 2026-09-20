@@ -229,9 +229,16 @@ def district_index(district_id: str, province_id: str):
 
 
 def _plate(s: str) -> str:
-    """ลบช่องว่างในเลขทะเบียน — EMCS ไม่รับช่องว่าง (server reject เงียบๆ)
-    เช่น ISURVEY ให้ '9กฆ 5003' → EMCS ต้องเป็น '9กฆ5003' (verify จริง 2026-06-18)"""
-    return "".join((s or "").split())
+    """ทะเบียนแบบที่ EMCS รับ — ลบช่องว่าง ('9กฆ 5003' → '9กฆ5003' verify จริง 2026-06-18) และตั้งแต่ 20/09/69 (v1.1.12)
+    ลบ "-"/เครื่องหมายทุกตัว + ตัดคำพ่วง/ป้ายที่สอง: EMCS ไม่รับขีดในทะเบียน (เคลม 2026013076932 คู่กรณี "83-2668"
+    บันทึกบล็อกคู่กรณีไม่ผ่าน user พบ) และ ISURVEY ปล่อยให้พิมพ์ "6-7815 สภ.ศรีราชา(ป้ายแดง)" / "743100(หัว),716951" / "ก-0816/ปด"
+    กติกา: ตัดตั้งแต่ ( / , เป็นต้นไป · ก้อนแรกที่มีตัวเลข = ทะเบียน ก้อนถัดไปที่ไม่มีตัวเลข = คำพ่วง ทิ้ง · เหลือเฉพาะตัวอักษร/ตัวเลข
+    ⛔ สูตรซ้ำ 3 ที่ต้องตรงกัน: backend xmlExport.emcsPlate · web caseOptions.emcsPlate · ที่นี่ (เทสล็อกทั้งสองฝั่ง)"""
+    head = re.split(r"[(/,]", str(s or "").strip(), 1)[0]
+    toks = [x for x in head.split() if x]
+    if len(toks) > 1 and any(ch.isdigit() for ch in toks[0]):
+        toks = [toks[0]] + [x for x in toks[1:] if any(ch.isdigit() for ch in x)]
+    return re.sub(r"[^0-9A-Za-z\u0e01-\u0e59]", "", "".join(toks))
 
 
 def resolve_loss_type(data, requested: str) -> str:
