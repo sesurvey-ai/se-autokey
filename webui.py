@@ -2890,7 +2890,7 @@ function renderRun(r){
   // (ไม่รีบปิดทันที เผื่ออ่าน 3 บรรทัดสุดท้าย; ข้อมูลอยู่ใน 📚 สมุดงาน ถาวรอยู่แล้ว)
   if (r.sent && !active && !c.autoClose){
     c.autoClose = true;
-    let left = 8;
+    let left = 5;   // user ขอ 20/09/69: เดิม 8 วิ → 5 วิ
     c.stEl.textContent = "ส่งแล้ว ✓ · ปิดใน " + left + " วิ";
     const tick = setInterval(async () => {
       left -= 1;
