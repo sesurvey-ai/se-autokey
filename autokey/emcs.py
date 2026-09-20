@@ -1001,6 +1001,46 @@ def _pick_car_regno_dialog(driver, want: str = "", who: str = "") -> bool:
         return False
 
 
+def _person_type_text(inj) -> str:
+    """ข้อความประเภทผู้บาดเจ็บตามที่เก็บ (ป้ายไทยจากเว็บ/แอป หรือรหัส XML) ตัดช่องว่างซ้ำ"""
+    return " ".join(str(inj.get("person_type", "") or "").split())
+
+
+def _label_person_type(inj) -> str:
+    """ป้ายไทยประเภทผู้บาดเจ็บ (ที่หัวหน้าเลือกบนเว็บ/แอป se-survey) → value ของ ddlPerson_Type
+    รหัส XML (DV/PV/PR/ON) หรือว่าง → '' (ไม่ใช่ป้ายที่คนเลือก)"""
+    return PERSON_TYPE_LABEL.get(_person_type_text(inj), "")
+
+
+def _default_person_type(inj, opo_drivers) -> str:
+    """value ddlPerson_Type ที่บอทจะเลือกให้ผู้บาดเจ็บคนนี้ (เรียงตามความน่าเชื่อถือ):
+    1) ป้ายไทยจากเว็บ/แอป — หัวหน้าเลือกเองบนหน้าเคส (ช่องบังคับ) มาก่อนทุกอย่าง (20/09/69)
+    2) ชื่อตรงผู้ขับขี่คู่กรณี (fuzzy ≥85) → 02 'ผู้ขับขี่ - รถคู่กรณี'
+    3) รหัส XML ของ ISURVEY ตรง (DV/PV/PR/ON → 01/03/05 — แยกฝั่งคู่กรณีไม่ได้)"""
+    v = _label_person_type(inj)
+    if v:
+        return v
+    nm = (inj.get("name", "") or "").strip()
+    if nm and opo_drivers and max(
+            (fuzz.WRatio(nm, o) for o in opo_drivers), default=0) >= 85:
+        return "02"
+    return PERSON_TYPE_MAP.get(_person_type_text(inj).upper(), "")
+
+
+def _injury_types_known(injs, options) -> bool:
+    """True = ผู้บาดเจ็บทุกคนมีป้ายไทยที่แปลงเป็น value ได้ และค่านั้นมีในตัวเลือกจริงของหน้า
+    (options จาก _read_person_type_options; None = อ่านไม่ได้ → เชื่อป้าย) → บอทเลือกเองไม่ต้องถาม
+    (user สั่ง 20/09/69 เคลม 2026013172927: เส้นเว็บ se-survey มีประเภทผู้บาดเจ็บอยู่แล้ว)"""
+    if not injs:
+        return False
+    avail = {str(o.get("value", "")) for o in options} if options else None
+    for inj in injs:
+        v = _label_person_type(inj)
+        if not v or (avail is not None and v not in avail):
+            return False
+    return True
+
+
 def fill_injuries(driver, data: ClaimData):
     """กรอกผู้บาดเจ็บ (Tab 5) — กดเมนู imbInjure_Person → เลือกจำนวน ddlInj_Count
     → กรอกทีละบล็อก (dtlInj_ctl00_wuInj_*) → บันทึก btnSave_InjurePerson
@@ -1019,17 +1059,10 @@ def fill_injuries(driver, data: ClaimData):
     ]
     opo_drivers = [nm for nm in opo_drivers if nm]
 
-    # default ประเภทผู้บาดเจ็บต่อคน: ชื่อตรงผู้ขับขี่คู่กรณี (fuzzy ≥85) → 02
-    # 'ผู้ขับขี่-รถคู่กรณี', ไม่งั้น map จาก PERSON_TYPE (ISURVEY)
+    # default ประเภทผู้บาดเจ็บต่อคน — _default_person_type: ป้ายไทยจากเว็บ/แอป (หัวหน้าเลือกเอง)
+    # มาก่อน → ชื่อตรงผู้ขับขี่คู่กรณี (fuzzy ≥85) → 02 → รหัส XML (ISURVEY ตรง)
     def _default_type(inj):
-        nm = (inj.get("name", "") or "").strip()
-        if nm and opo_drivers and max(
-                (fuzz.WRatio(nm, o) for o in opo_drivers), default=0) >= 85:
-            return "02"
-        raw = (inj.get("person_type", "") or "").strip()
-        # ป้ายไทยจากแอป (แม่นกว่า — แยกฝั่งคู่กรณีได้) มาก่อนรหัส XML
-        return (PERSON_TYPE_LABEL.get(" ".join(raw.split()))
-                or PERSON_TYPE_MAP.get(raw.upper(), ""))
+        return _default_person_type(inj, opo_drivers)
 
     # ปลดล็อก + เลือกจำนวนก่อน เพื่อให้บล็อก render → อ่านตัวเลือก ddlPerson_Type จริง
     # (ต้องมีบล็อกก่อนถึงจะอ่านตัวเลือก dynamic ได้) — แล้วค่อยให้ผู้ใช้ยืนยันบน webui
@@ -1060,7 +1093,18 @@ def fill_injuries(driver, data: ClaimData):
              "person_type_value": _default_type(inj),
              "car_regno": ""}
             for inj in injs[:MAX_INJURIES]]
-    user_inputs = wait_for_injury_inputs(spec, options=options)  # None=console/EOF
+    # ประเภทรู้ครบทุกคนจากป้ายไทยของเว็บ se-survey (หัวหน้าเลือกบนหน้าเคสแล้ว — ช่องบังคับ) และ
+    # ค่ามีในตัวเลือกจริงของหน้า → เลือกเองเลย ไม่หยุดถาม (user สั่ง 20/09/69 เคลม 2026013172927)
+    # หยุดถามเฉพาะ: เส้น ISURVEY ตรง (รหัส XML DV/PR/ON แยกฝั่งคู่กรณีไม่ได้) · ประเภทว่าง ·
+    # ป้ายที่หน้าไม่มี (02/04 โผล่เฉพาะตอนเรื่องมีคู่กรณี) · เลขทะเบียน: EMCS เติมเองจากประเภท
+    # (05 บุคคลภายนอกรถ → 'บุคคลภายนอก' ด้านล่าง) จึงไม่ต้องให้คนกรอก
+    if _injury_types_known(injs[:MAX_INJURIES], options):
+        log("   ✓ ประเภทผู้บาดเจ็บครบทุกคนจากเว็บ se-survey — เลือกเอง ไม่หยุดถาม ("
+            + " · ".join(f"{(inj.get('name') or '?').strip()}: {_person_type_text(inj)}"
+                         for inj in injs[:MAX_INJURIES]) + ")")
+        user_inputs = None
+    else:
+        user_inputs = wait_for_injury_inputs(spec, options=options)  # None=console/EOF
 
     for n, inj in enumerate(injs[:MAX_INJURIES]):
         p = INJ_PREFIX.format(n=n)

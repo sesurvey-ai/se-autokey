@@ -4289,6 +4289,31 @@ check("ผู้บาดเจ็บ: _inj_text/_inj_num แปลง 'รอ�
       and 'set_text(driver, p + "txtInj_Age", _inj_num(inj.get("age", "")))' in _src_inj
       and 'set_text(driver, p + "txtInj_Cost", _inj_num(inj.get("cost", "")))' in _src_inj)
 
+# ---- ผู้บาดเจ็บ: ประเภทรู้แล้วจากเว็บ se-survey → บอทเลือกเอง ไม่หยุดถาม (user สั่ง 20/09/69 เคลม 2026013172927, v1.1.16) ----
+_opts_all = [{"value": v, "label": l} for v, l in (
+    ("01", "ผู้ขับขี่ - รถประกัน"), ("02", "ผู้ขับขี่ - รถคู่กรณี"), ("03", "ผู้โดยสาร - รถประกัน"),
+    ("04", "ผู้โดยสาร - รถคู่กรณี"), ("05", "บุคคลภายนอกรถ"))]
+_opts_no_opo = [o for o in _opts_all if o["value"] in ("01", "03", "05")]
+check("ผู้บาดเจ็บ: ป้ายไทยจากเว็บครบทุกคน + มีในตัวเลือกจริง → รู้ครบ (ไม่หยุดถาม) · อ่านตัวเลือกไม่ได้ก็เชื่อป้าย",
+      emcs._injury_types_known([{"person_type": "ผู้ขับขี่ - รถคู่กรณี"}, {"person_type": " บุคคลภายนอกรถ "}], _opts_all)
+      and emcs._injury_types_known([{"person_type": "ผู้ขับขี่รถประกัน"}], None))
+check("ผู้บาดเจ็บ: รหัส XML (DV) / ว่าง / ป้าย 02 ตอนหน้าไม่มีคู่กรณี / ไม่มีคน → ยังหยุดถามเหมือนเดิม",
+      not emcs._injury_types_known([{"person_type": "DV"}], _opts_all)
+      and not emcs._injury_types_known([{"person_type": "ผู้ขับขี่ - รถคู่กรณี"}, {"person_type": ""}], _opts_all)
+      and not emcs._injury_types_known([{"person_type": "ผู้ขับขี่ - รถคู่กรณี"}], _opts_no_opo)
+      and not emcs._injury_types_known([], _opts_all))
+check("ผู้บาดเจ็บ: ป้ายที่หัวหน้าเลือกบนเว็บมาก่อนการเดาจากชื่อ (บุคคลภายนอกรถ+ชื่อตรงผู้ขับขี่คู่กรณี → 05) · ไม่มีป้าย+ชื่อตรง → 02 · รหัส XML PR → 03 · ไม่รู้ → ''",
+      emcs._default_person_type({"person_type": "บุคคลภายนอกรถ", "name": "บุญสืบ เชิง"}, ["บุญสืบ เชิง"]) == "05"
+      and emcs._default_person_type({"person_type": "", "name": "บุญสืบ เชิง"}, ["บุญสืบ เชิง"]) == "02"
+      and emcs._default_person_type({"person_type": "PR", "name": "สมชาย ใจดี"}, ["บุญสืบ เชิง"]) == "03"
+      and emcs._default_person_type({"person_type": "", "name": "สมชาย ใจดี"}, []) == "")
+_src_inj2 = _inspect.getsource(emcs.fill_injuries)
+check("fill_injuries: หยุดถาม (wait_for_injury_inputs) เฉพาะเมื่อประเภทไม่รู้ครบ — รู้ครบ = user_inputs None แล้วเลือกจาก _default_type",
+      "if _injury_types_known(injs[:MAX_INJURIES], options):" in _src_inj2
+      and "wait_for_injury_inputs(spec, options=options)" in _src_inj2
+      and _src_inj2.index("if _injury_types_known(") < _src_inj2.index("wait_for_injury_inputs(spec, options=options)")
+      and "user_inputs = None" in _src_inj2 and "return _default_person_type(inj, opo_drivers)" in _src_inj2)
+
 # ---- คู่กรณี: ตัวแทนค่า (user เคาะ 20/09/69 หลังเคส #528, v1.1.14) ----
 check("with_title: ตัวแทนค่าไม่ต่อคำนำหน้า ('คุณ','-')='-' · ('คุณ','รอตรวจสอบ')='-' · ('นาย','ไม่ทราบชื่อ')='ไม่ทราบชื่อ' · ชื่อจริงยังต่อ",
       _wt("คุณ", "-") == "-" and _wt("คุณ", "รอตรวจสอบ") == "-" and _wt("นาย", "ไม่ทราบชื่อ") == "ไม่ทราบชื่อ" and _wt("", "รอตรวจสอบ") == "-"
