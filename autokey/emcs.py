@@ -108,6 +108,17 @@ def _drv_choice(v) -> str:
     return "" if s in ("0", "-- ระบุ --") else s
 
 
+def _ast_text(v) -> str:
+    """ช่องข้อความทรัพย์สิน: "รอตรวจสอบ"/"--" ที่คนพิมพ์ = ไม่ทราบ → "-" (user เคาะ 20/09/69 เหมือนผู้บาดเจ็บ)
+    — ช่องบังคับ (รายการ/รายละเอียด/สาเหตุ/เจ้าของ) ครอบด้วย _dash อีกชั้น: ว่าง → "-" ด้วย"""
+    return _inj_text(v)
+
+
+def _ast_num(v) -> str:
+    """ช่องตัวเลข/โทรของทรัพย์สิน (ค่าเสียหาย/โทรเจ้าของ): "รอตรวจสอบ"/"--" → ว่าง (ใส่ "-" ไม่ได้)"""
+    return _inj_num(v)
+
+
 def _driver_age_value(age, birthdate) -> str:
     """อายุผู้ขับขี่รถประกันที่จะกรอก: อายุ 0/ไม่ใช่ตัวเลข หรือวันเกิดตัวแทนค่า 01/01/2500 → คำนวณจากวันเกิด (สูตร XML)
     คำนวณไม่ได้ → '' = ปล่อยให้ EMCS คำนวณเอง · อายุจริง+วันเกิดจริง → ใช้ต้นทาง (อายุ ณ วันเกิดเหตุ)
@@ -1279,17 +1290,18 @@ def fill_assets(driver, data: ClaimData):
     for n, a in enumerate(assets[:MAX_ASSETS]):
         p = ASSET_PREFIX.format(n=n)
         log(f"   --- ชิ้นที่ {n + 1}: {a.get('name', '')} ---")
-        set_text(driver, p + "txtAsset_Desc", _dash(a.get("name", "")))
-        set_text(driver, p + "txtAsset_Damage", _dash(a.get("damage_detail", "")))
-        set_text(driver, p + "txtAsset_Damage_Cause", _dash(a.get("damage_cause", "")))
-        set_text(driver, p + "txtCost_Damage", a.get("damage_cost", ""))
+        # ตัวแทนค่า "รอตรวจสอบ"/"--" → "-" · ช่องบังคับว่าง → "-" · ตัวเลข → ว่าง (user เคาะ 20/09/69 เหมือนผู้บาดเจ็บ)
+        set_text(driver, p + "txtAsset_Desc", _dash(_ast_text(a.get("name", ""))))
+        set_text(driver, p + "txtAsset_Damage", _dash(_ast_text(a.get("damage_detail", ""))))
+        set_text(driver, p + "txtAsset_Damage_Cause", _dash(_ast_text(a.get("damage_cause", ""))))
+        set_text(driver, p + "txtCost_Damage", _ast_num(a.get("damage_cost", "")))
 
         # เจ้าของ — EMCS มีฟอร์ม 2 เวอร์ชันที่ server สลับให้ตามบริษัทประกัน:
         #   ปกติ  = แถว divSTD: ช่องเดียว txtOwner
         #   AXA   = แถว divAXA: คำนำหน้า (ddlAsset_Title_ID) + ชื่อ + นามสกุล แยกช่อง
         # เดิมเช็คแค่ "dropdown มี options ไหม" ซึ่งเป็นจริงแม้แถว AXA ถูกซ่อน → เคส AXA
         # ที่มีทรัพย์สินเสียหาย กดบันทึกแล้ว EMCS ฟ้อง 'กรุณาใส่ชื่อเจ้าของทรัพย์สิน' ค้าง
-        owner = a.get("owner_name", "")
+        owner = _ast_text(a.get("owner_name", ""))
         title, first, last = split_thai_name(owner)
         set_text(driver, p + "txtOwner", _dash(owner))
         if _is_displayed(driver, p + "divAXA"):
@@ -1300,8 +1312,8 @@ def fill_assets(driver, data: ClaimData):
             set_text(driver, p + "txtAsset_Name_AXA", _dash(first or owner))
             set_text(driver, p + "txtAsset_LastName_AXA", last)   # ไม่ใช่ช่องบังคับ — ว่างได้
             log(f"   ✓ ฟอร์มทรัพย์สินเวอร์ชัน AXA — กรอกชื่อ/นามสกุลแยกช่อง (ชิ้นที่ {n + 1})")
-        set_text(driver, p + "txtAddress", a.get("owner_address", ""))
-        set_text(driver, p + "txtTel_No", a.get("owner_phone", ""))
+        set_text(driver, p + "txtAddress", _ast_text(a.get("owner_address", "")))
+        set_text(driver, p + "txtTel_No", _ast_num(a.get("owner_phone", "")))
 
     _save_section(driver, "btnSave_Asset", "ทรัพย์สิน")
 

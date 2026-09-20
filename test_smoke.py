@@ -4360,6 +4360,19 @@ check("ผู้ขับขี่รถประกัน: '0'/'-- ระบุ
       and "data.driver_title = _choice(gv('driver_title'))" in _inspect.getsource(_main)
       and "data.driver_license_type = _choice(gv('driver_license_type'))" in _inspect.getsource(_main))
 
+# ---- ทรัพย์สิน (user สั่ง 20/09/69 เหมือนผู้บาดเจ็บ, v1.1.21): ช่องบังคับว่าง/"รอตรวจสอบ" → "-" · โทร/ค่าเสียหาย → ว่าง ----
+_src_fa = _inspect.getsource(emcs.fill_assets)
+check("ทรัพย์สิน: _ast_text/_ast_num แปลง 'รอตรวจสอบ'/'--' · fill_assets ครอบทุกช่อง (ชื่อ/รายละเอียด/สาเหตุ/เจ้าของ/ที่อยู่ → _ast_text · ค่าเสียหาย/โทร → _ast_num)",
+      emcs._ast_text("รอตรวจสอบ") == "-" and emcs._ast_text("--") == "-" and emcs._ast_text(" เสาไฟฟ้า ") == "เสาไฟฟ้า" and emcs._dash(emcs._ast_text("")) == "-"
+      and emcs._ast_num("รอตรวจสอบ") == "" and emcs._ast_num("1500") == "1500"
+      and 'set_text(driver, p + "txtAsset_Desc", _dash(_ast_text(a.get("name", ""))))' in _src_fa
+      and 'set_text(driver, p + "txtAsset_Damage", _dash(_ast_text(a.get("damage_detail", ""))))' in _src_fa
+      and 'set_text(driver, p + "txtAsset_Damage_Cause", _dash(_ast_text(a.get("damage_cause", ""))))' in _src_fa
+      and 'set_text(driver, p + "txtCost_Damage", _ast_num(a.get("damage_cost", "")))' in _src_fa
+      and 'owner = _ast_text(a.get("owner_name", ""))' in _src_fa
+      and 'set_text(driver, p + "txtAddress", _ast_text(a.get("owner_address", "")))' in _src_fa
+      and 'set_text(driver, p + "txtTel_No", _ast_num(a.get("owner_phone", "")))' in _src_fa)
+
 # ---- คู่กรณี: ตัวแทนค่า (user เคาะ 20/09/69 หลังเคส #528, v1.1.14) ----
 check("with_title: ตัวแทนค่าไม่ต่อคำนำหน้า ('คุณ','-')='-' · ('คุณ','รอตรวจสอบ')='-' · ('นาย','ไม่ทราบชื่อ')='ไม่ทราบชื่อ' · ชื่อจริงยังต่อ",
       _wt("คุณ", "-") == "-" and _wt("คุณ", "รอตรวจสอบ") == "-" and _wt("นาย", "ไม่ทราบชื่อ") == "ไม่ทราบชื่อ" and _wt("", "รอตรวจสอบ") == "-"
