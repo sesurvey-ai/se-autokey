@@ -4398,12 +4398,9 @@ check("fill_injuries: ทะเบียนผู้บาดเจ็บไม�
 _src_conv = _inspect.getsource(_conv._injuries) + _inspect.getsource(_conv._assets)
 check("ตัวดึง ISURVEY: ผู้บาดเจ็บแยก title/ที่อยู่ 5 ช่อง/id_type · ทรัพย์สินแยก owner_title",
       '"title": ititle,' in _src_conv and '"home_province": api._prov(' in _src_conv and '"subdistrict": api._tumbon(' in _src_conv
-      and '"id_type": _id_type(icid, _s(r.get("person_name"))),' in _src_conv and '"owner_title": otitle,' in _src_conv
-      and '"driver_id_type": _id_type(_s(drv.get("IDcard_no")), _s(drv.get("drv_name"))),' in _inspect.getsource(_conv)
-      # ชนิดบัตร (21/09/69): อักษรอังกฤษ → ต่างชาติ · 13 หลัก → ไทย · เลขล้วนไม่ครบ 13: ชื่อไทย → ไทย (เคส #504 พิมพ์เกิน) / ชื่ออังกฤษ-จีน → ต่างชาติ (MR.YEWEIXI 0083953)
-      and _conv._id_type("0083953", "MR.YEWEIXI") == "foreign" and _conv._id_type("120101096696", "ปิยวรรณ ภิรมย์พลัด") == "thai"
-      and _conv._id_type("11310200041822", "บุญนำ มารี") == "thai" and _conv._id_type("1310200041822", "MR.X") == "thai"
-      and _conv._id_type("AB123456", "สมชาย") == "foreign" and _conv._id_type("", "สมชาย") == "thai"
+      and '"id_type": "thai",' in _src_conv and '"owner_title": otitle,' in _src_conv
+      # ชนิดบัตรให้คนเลือกบนเว็บ ไม่คำนวณจากเลข (user เคาะ 21/09/69) — ตัวดึงตั้ง "thai" เสมอ ไม่มี _id_type อีก
+      and '"driver_id_type": "thai",' in _inspect.getsource(_conv) and not hasattr(_conv, "_id_type")
       and _conv.split_name("นายสมศักดิ์ มั่นคง") == ("นาย", "สมศักดิ์", "มั่นคง") and _conv.split_name("บริษัท เอบีซี จำกัด")[0] == "")
 
 # ---- ไม่ทราบชื่อ + วันเกิดปีปัจจุบัน (user เคาะ 21/09/69 เคส #433, v1.1.23) ----
