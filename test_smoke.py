@@ -4332,6 +4332,25 @@ check("fill_injuries: หยุดถาม (wait_for_injury_inputs) เฉพ�
       and _src_inj2.index("if _injury_types_known(") < _src_inj2.index("wait_for_injury_inputs(spec, options=options)")
       and "user_inputs = None" in _src_inj2 and "return _default_person_type(inj, opo_drivers)" in _src_inj2)
 
+# ---- ผู้ขับขี่รถประกัน (user สั่ง 20/09/69 เคส #460, v1.1.19): "รอตรวจสอบ" → "-" · อายุ 0/วันเกิด 01/01/2500 → คำนวณเอง ----
+_exp69 = str(__import__("datetime").date.today().year + 543 - 2500)
+check("ผู้ขับขี่รถประกัน: _drv_text แปลง 'รอตรวจสอบ'/'--' → '-' · ค่าจริงคงเดิม · _dash ครอบช่องบังคับว่าง",
+      emcs._drv_text("รอตรวจสอบ") == "-" and emcs._drv_text("--") == "-" and emcs._drv_text(" 1234567890123 ") == "1234567890123"
+      and emcs._dash(emcs._drv_text("")) == "-")
+check("ผู้ขับขี่รถประกัน: อายุ 0 + วันเกิด 01/01/2500 → คำนวณ · วันเกิด 01/01/2500 → คำนวณเสมอ · อายุจริง+วันเกิดจริง → ใช้ต้นทาง · คำนวณไม่ได้ → ''",
+      emcs._driver_age_value("0", "01/01/2500") == _exp69 and emcs._driver_age_value("45", "01/01/2500") == _exp69
+      and emcs._driver_age_value("53", "15/05/2515") == "53" and emcs._driver_age_value("0", "") == ""
+      and emcs._driver_age_value("รอตรวจสอบ", "") == "" and emcs._driver_age_value("", "00/00/2569") == "")
+_src_all_drv = _inspect.getsource(emcs)
+check("หน้าหลัก: เลขบัตร/ใบขับขี่/โทร/ที่อยู่/ที่ออกใบขับขี่ ผ่าน _drv_text · อายุผ่าน _driver_age_value ก่อน _fill_age_after_birthdate",
+      'set_text(driver, "txtDri_CardID", _dash(_drv_text(data.driver_idcard)))' in _src_all_drv
+      and 'set_text(driver, "txtDri_DrvID", _dash(_drv_text(data.driver_license_no)))' in _src_all_drv
+      and 'set_text(driver, "txtDri_TelNo", _dash(_drv_text(data.driver_phone)))' in _src_all_drv
+      and 'set_text(driver, "txtDri_Address", _drv_text(data.driver_address))' in _src_all_drv
+      and 'set_text(driver, "txtDri_DrvPlace", _drv_text(data.driver_license_place))' in _src_all_drv
+      and '_drv_age = _driver_age_value(data.driver_age, data.driver_birthdate)' in _src_all_drv
+      and _src_all_drv.index('_drv_age = _driver_age_value(') < _src_all_drv.index('"txtDri_Age",\n                              _drv_age)'))
+
 # ---- คู่กรณี: ตัวแทนค่า (user เคาะ 20/09/69 หลังเคส #528, v1.1.14) ----
 check("with_title: ตัวแทนค่าไม่ต่อคำนำหน้า ('คุณ','-')='-' · ('คุณ','รอตรวจสอบ')='-' · ('นาย','ไม่ทราบชื่อ')='ไม่ทราบชื่อ' · ชื่อจริงยังต่อ",
       _wt("คุณ", "-") == "-" and _wt("คุณ", "รอตรวจสอบ") == "-" and _wt("นาย", "ไม่ทราบชื่อ") == "ไม่ทราบชื่อ" and _wt("", "รอตรวจสอบ") == "-"

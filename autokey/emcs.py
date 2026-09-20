@@ -96,6 +96,24 @@ def _inj_text(v) -> str:
     return "-" if (s == "รอตรวจสอบ" or (len(s) >= 2 and set(s) == {"-"})) else s
 
 
+def _drv_text(v) -> str:
+    """ช่องข้อความผู้ขับขี่รถประกัน: "รอตรวจสอบ"/"--" ที่คนพิมพ์ = ไม่ทราบ → "-" (user เคาะ 20/09/69 เคส #460
+    เหมือนคู่กรณี/ผู้บาดเจ็บ) — ช่องบังคับครอบด้วย _dash อีกชั้น"""
+    return _inj_text(v)
+
+
+def _driver_age_value(age, birthdate) -> str:
+    """อายุผู้ขับขี่รถประกันที่จะกรอก: อายุ 0/ไม่ใช่ตัวเลข หรือวันเกิดตัวแทนค่า 01/01/2500 → คำนวณจากวันเกิด (สูตร XML)
+    คำนวณไม่ได้ → '' = ปล่อยให้ EMCS คำนวณเอง · อายุจริง+วันเกิดจริง → ใช้ต้นทาง (อายุ ณ วันเกิดเหตุ)
+    (user สั่ง 20/09/69 เคส #460: วันเกิด 01/01/2569 + อายุ 0 หลุดอนุมัติมา)"""
+    a = str(age or "").strip()
+    bd = str(birthdate or "").strip().split("|")[0].strip()
+    placeholder = bd in ("01/01/2500", "1/1/2500")
+    if a.isdigit() and int(a) > 0 and not placeholder:
+        return a
+    return age_from_date(bd)
+
+
 def _inj_num(v) -> str:
     """ช่องตัวเลข/โทร/วันที่ของผู้บาดเจ็บ: "รอตรวจสอบ" → ว่าง (ใส่ "-" ไม่ได้ EMCS ปัดตก) · ค่าอื่นคงเดิม"""
     s = "" if v is None else str(v).strip()
@@ -2352,20 +2370,26 @@ def fill_driver(driver, data: ClaimData):
     fuzzy_select(driver, "ddlDri_Relation_ID", data.driver_relation,
                  presleep=1, label="ความสัมพันธ์")
     set_text(driver, "wuCale_Dri_BirthDay_txtCalendar", to_buddhist_date(data.driver_birthdate))
+    # อายุ 0/ไม่ใช่ตัวเลข หรือวันเกิดตัวแทนค่า 01/01/2500 → คำนวณจากวันเกิดเอง (เคส #460, 20/09/69)
+    _drv_age = _driver_age_value(data.driver_age, data.driver_birthdate)
+    if _drv_age != str(data.driver_age or "").strip():
+        log(f"   ℹ️ อายุผู้ขับขี่: ต้นทางให้ {str(data.driver_age or '').strip() or 'ว่าง'} → ใช้ "
+            f"{_drv_age or 'ให้ EMCS คำนวณ'} (จากวันเกิด {data.driver_birthdate or '-'})")
     _fill_age_after_birthdate(driver, "wuCale_Dri_BirthDay_txtCalendar", "txtDri_Age",
-                              data.driver_age)
-    set_text(driver, "txtDri_Address", data.driver_address)
+                              _drv_age)
+    set_text(driver, "txtDri_Address", _drv_text(data.driver_address))
     # dropdown มี postback — ต้องเว้นจังหวะกันค่าโดน postback ก่อนหน้าทับ
     fuzzy_select(driver, "ddlDri_ProvinceID", data.driver_province,
                  presleep=1, label="จังหวัดผู้ขับขี่")
     fuzzy_select(driver, "ddlDri_DistrictID", data.driver_amphur,
                  presleep=1, label="อำเภอผู้ขับขี่")
-    set_text(driver, "txtDri_TelNo", _dash(data.driver_phone))
-    set_text(driver, "txtDri_CardID", _dash(data.driver_idcard))
-    set_text(driver, "txtDri_DrvID", _dash(data.driver_license_no))
+    # ตัวแทนค่า "รอตรวจสอบ"/"--" → "-" (เคส #460, 20/09/69)
+    set_text(driver, "txtDri_TelNo", _dash(_drv_text(data.driver_phone)))
+    set_text(driver, "txtDri_CardID", _dash(_drv_text(data.driver_idcard)))
+    set_text(driver, "txtDri_DrvID", _dash(_drv_text(data.driver_license_no)))
     fuzzy_select(driver, "ddlEmcs_License_Type", data.driver_license_type,
                  presleep=1, label="ประเภทใบขับขี่")
-    set_text(driver, "txtDri_DrvPlace", data.driver_license_place)
+    set_text(driver, "txtDri_DrvPlace", _drv_text(data.driver_license_place))
     set_text(driver, "wuCale_Dri_DrvDate_Start_txtCalendar", to_buddhist_date(data.license_issue_date))
     set_text(driver, "wuCale_Dri_DrvDate_End_txtCalendar", to_buddhist_date(data.license_expiry_date))
     set_text(driver, "txtCost_Damage", data.damage_estimate)
