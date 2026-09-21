@@ -218,6 +218,20 @@ def test_tab2_remark_goes_to_source_remark_only():
     assert "800" not in r["acc_detail"]
 
 
+def test_visit_rules_round2_staff_comment_to_survey_result():
+    """ครั้งที่ 2+ (user เคาะ 22/09/69): 'ความคิดเห็นพนักงาน' แท็บ 2 → ผลการดำเนินงาน · 'บันทึกความเห็นหัวหน้างาน' ไม่ดึง
+    · รายละเอียดการเกิดเหตุว่าง (ข้อมูลหลักของเคลมมาจากครั้งที่ 1) · ครั้งที่ 1/ไม่รู้ครั้ง = กติกาเดิม · source_comments ถูกตัดออกเสมอ"""
+    p1 = conv.apply_visit_rules(_build(), 1)
+    assert p1["report"]["survey_result"] == "ความเห็นหัวหน้า" and p1["report"]["acc_detail"] == "ความเห็นช่าง"
+    assert "source_comments" not in p1
+    p2 = conv.apply_visit_rules(_build(), 2)
+    assert p2["report"]["survey_result"] == "ความเห็นช่าง" and p2["report"]["acc_detail"] == ""
+    assert "source_comments" not in p2 and p2["report"]["review_comment"] == "" and p2["report"]["surveyor_comment"] == ""
+    p0 = conv.apply_visit_rules(_build(), None)
+    assert p0["report"]["survey_result"] == "ความเห็นหัวหน้า" and "source_comments" not in p0
+    assert "source_comments" in _build()      # build_case แนบต้นทางมาให้ apply_visit_rules
+
+
 def test_oss_job_uses_oss_surveyor_name_phone_and_keeps_damage_memo():
     """งานจ้างบริษัทนอก (useOSS=Y): ชื่อช่าง/เบอร์อยู่ที่ OSS_* ไม่ใช่ surveyor_name (เคลม 2026013169747, 08/09/69)"""
     fake = FakeAPI()

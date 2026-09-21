@@ -4245,6 +4245,14 @@ check("คู่กรณี: กรุงเทพ = แขวง/เขต/ก
       and _oal("28/1 หมู่ 12 บางด้วน เขตภาษีเจริญ กรุงเทพฯ", "", "บางด้วน", "เขตภาษีเจริญ", "กรุงเทพมหานคร") == "28/1 ม.12 แขวงบางด้วน เขตภาษีเจริญ กรุงเทพฯ"
       and _oal("60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี", "", "", "อำเภอท่าใหม่", "จันทบุรี") == "60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จ.จันทบุรี"
       and _oal("60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี", "", "", "", "") == "60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี")   # ไม่มีช่องแยก = คงที่พิมพ์
+# ---- ตัวดึงงาน: กติกาช่องความเห็นตามครั้งที่ (user เคาะ 22/09/69, v1.1.33) ----
+_pc = __import__("autokey.pull_core", fromlist=["pull_case"])
+_src_pc = _inspect.getsource(_pc)
+check("pull_core เรียก apply_visit_rules ทั้งเคสอ้างอิง (หลังรู้ round) และใบหลัก (หลัง pull_references) ก่อน POST",
+      _src_pc.count("apply_visit_rules(payload, ") == 2
+      and _src_pc.index('apply_visit_rules(payload, it["round"])') < _src_pc.index('payload["reference"] = {')
+      and _src_pc.index("apply_visit_rules(payload, visit_no)") < _src_pc.rindex('"/api/integrations/cases/import", payload=payload)'))
+
 # ---- แจ้ง ISURVEY / กวาดสถานะ สำหรับงานต่อเนื่องที่คนกดส่งเอง (user 22/09/69 เคลม 2025013053652, v1.1.31) ----
 _src_rri = _inspect.getsource(_main.run_report_isurvey)
 check("--report-isurvey: เลขครั้งถัดไปไม่อยู่ในแถว → เคลมมีเรื่องเดียวใช้เรื่องนั้น + แจ้งด้วยเลขที่ระบุ (invoice) · หลายเรื่องยังไม่เดา",

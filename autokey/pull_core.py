@@ -25,7 +25,7 @@ from pathlib import Path
 
 from .config import Config
 from .isurvey_api import ISurveyAPI
-from .isurvey_to_sesurvey import build_case
+from .isurvey_to_sesurvey import apply_visit_rules, build_case
 from . import survey_order
 
 ISURVEY_STATUS_PENDING = "รอตรวจข้อมูล"
@@ -258,6 +258,7 @@ def pull_references(api: ISurveyAPI, claim: str, survey_no: str, insurer: str, s
             if created_by:
                 payload["created_by"] = int(created_by)
             payload["visit_no"] = int(it["round"])
+            apply_visit_rules(payload, it["round"])     # ครั้งที่ 2+: ความคิดเห็นพนักงาน → ผลการดำเนินงาน (22/09/69)
             payload["reference"] = {"closed_at": _iso_bkk_dt(it.get("close_datetime")), "round": int(it["round"]),
                                     "status": str(it.get("status_name") or "")}
             data, err = sesurvey_post(sesurvey_url, token, "/api/integrations/cases/import", payload=payload)
@@ -317,6 +318,7 @@ def pull_case(api: ISurveyAPI, claim: str, survey_no: str, sesurvey_url: str, to
         refs = [{"survey_no": "", "round": 0, "caseId": None, "skipped": f"หาลำดับครั้งของเคลมไม่ได้: {type(e).__name__}"}]
     if visit_no:
         payload["visit_no"] = int(visit_no)
+    apply_visit_rules(payload, visit_no)     # ครั้งที่ 2+: ความคิดเห็นพนักงาน → ผลการดำเนินงาน · ไม่รู้ครั้ง = ครั้งที่ 1 (22/09/69)
 
     data, err = sesurvey_post(sesurvey_url, token, "/api/integrations/cases/import", payload=payload)
     if err:

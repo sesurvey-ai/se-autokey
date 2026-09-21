@@ -639,6 +639,8 @@ def build_case(api, case_id: str, listrow: dict | None = None) -> dict:
             "submitted_at": _iso_bkk(disp.get("sendReportDate"), disp.get("sendReportTime")),
         },
         "report": report,
+        # ต้นทางของ 2 ช่องความเห็น — ให้ apply_visit_rules เลือกตามครั้งที่ (pull_core ตัดออกก่อนส่งเว็บเสมอ)
+        "source_comments": {"supervisor_note": _s(t1.get("accident_summary")), "staff_comment": _s(acc.get("surveyor_comment"))},
         "expenses": _bill(bill),
         "surveyorCode": sv_code,
         "warnings": warnings,
@@ -746,6 +748,26 @@ def _flat(rec: dict) -> dict:
         if not isinstance(v, (dict, list)):
             out[k] = v
     return out
+
+
+def apply_visit_rules(payload: dict, visit_no) -> dict:
+    """กติกาช่องความเห็นตาม "ครั้งที่" (user เคาะ 22/09/69) — เรียกหลังรู้ครั้งที่แล้ว (pull_core) ทั้งใบหลักและเคสอ้างอิง
+    ครั้งที่ 1 (กติกา 07/09/69 คงเดิม): 'บันทึกความเห็นหัวหน้างาน' แท็บ 1 → ผลการดำเนินงาน · 'ความคิดเห็นพนักงาน' แท็บ 2 → รายละเอียดการเกิดเหตุ
+    ครั้งที่ 2+: 'ความคิดเห็นพนักงาน' → **ผลการดำเนินงาน** (ของครั้งนั้น → EMCS txtAcc_result หน้าค่าใช้จ่ายของครั้งนั้น)
+      · 'บันทึกความเห็นหัวหน้างาน' ไม่ดึง · รายละเอียดการเกิดเหตุว่าง (เป็นข้อมูลหลักของเคลม เว็บ/EMCS ใช้ของครั้งที่ 1 อยู่แล้ว)
+      · หัวหน้าเติมเรท/ตรวจรูป/แก้ผลการดำเนินงานเอง (ความเห็นผู้ตรวจสอบ/เซอร์เวย์ว่างให้พิมพ์เพิ่มได้)
+    ไม่รู้ครั้งที่ (None/0) = ครั้งที่ 1 · ตัด source_comments ออกจาก payload เสมอ"""
+    src = payload.pop("source_comments", None) or {}
+    try:
+        n = int(visit_no or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n >= 2:
+        rep = payload.get("report") or {}
+        rep["survey_result"] = _s(src.get("staff_comment"))
+        rep["acc_detail"] = ""
+        payload["report"] = rep
+    return payload
 
 
 def _injuries(api, case_id, warnings: list) -> list:
