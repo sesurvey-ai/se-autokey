@@ -3814,7 +3814,7 @@ check("รูป: ลบเฉพาะ 'ครั้งที่' ล่าส�
       'targets = [r for r in rows if _num(r["round"]) == cur]' in _emcs_src)
 # ⛔ งานต่อเนื่องอัปเข้าครั้งใหม่ (ยังไม่มีในตาราง) → max(ครั้งที่) จะเป็นของครั้งก่อน ลบผิดครั้ง
 check("รูป: งานต่อเนื่องต้องไม่แทนที่ (ใช้ dedupe=False เหมือนเดิม)",
-      "single_type=_EMCS_DEFAULT_IMAGE_TYPE, dedupe=False)" in _emcs_src
+      "single_type=_EMCS_DEFAULT_IMAGE_TYPE, dedupe=False, ask=select_images)" in _emcs_src   # 22/09/69 + ask=select_images (v1.1.30)
       and "dedupe=False, replace_round=True" not in _emcs_src)
 # ⛔ ลบไม่สำเร็จ/ยังเหลือ = ต้องกลับไปกันชื่อซ้ำ ห้ามอัปทับซ้อน
 check("รูป: ลบไม่สำเร็จ → กลับไปโหมดกันชื่อซ้ำ ไม่อัปซ้ำซ้อน",
@@ -4245,6 +4245,14 @@ check("คู่กรณี: กรุงเทพ = แขวง/เขต/ก
       and _oal("28/1 หมู่ 12 บางด้วน เขตภาษีเจริญ กรุงเทพฯ", "", "บางด้วน", "เขตภาษีเจริญ", "กรุงเทพมหานคร") == "28/1 ม.12 แขวงบางด้วน เขตภาษีเจริญ กรุงเทพฯ"
       and _oal("60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี", "", "", "อำเภอท่าใหม่", "จันทบุรี") == "60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จ.จันทบุรี"
       and _oal("60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี", "", "", "", "") == "60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี")   # ไม่มีช่องแยก = คงที่พิมพ์
+# ---- งานต่อเนื่องเส้นเว็บ: ไม่ถามเลือกรูป (user เจอ 22/09/69 เคลม 2025013053652, v1.1.30) ----
+_src_fc = _inspect.getsource(emcs.fill_continuation)
+_src_ri = _inspect.getsource(emcs.run_import)
+check("งานต่อเนื่อง: fill_continuation รับ select_images → upload_images(ask=select_images) · run_import ส่งต่อให้ (เส้นเว็บ select_images=False = อัปทุกรูปทันทีเหมือนครั้งที่ 1)",
+      "select_images: bool = True" in _src_fc and "dedupe=False, ask=select_images)" in _src_fc
+      and "select_images=select_images)   # เส้นเว็บ = ไม่ถามเลือกรูป (22/09/69)" in _inspect.getsource(emcs)
+      and "select_images=False," in _inspect.getsource(_main.run_sesurvey_import))
+
 # ---- ต./อ./จ. ที่พิมพ์ปนในบ้านเลขที่ (user เคาะ 21/09/69 ค่ำ เคลม 2026013173082 / 2026013077062, v1.1.28) ----
 _sap = claim_data.strip_admin_parts
 check("strip_admin_parts: ตัดเฉพาะระดับที่มีช่องแยก · ชื่อจังหวัดเปล่า ๆ ตัดด้วย · แขวง/เขต เฉพาะกรุงเทพ · ไม่มีช่องแยก = ไม่แตะ",

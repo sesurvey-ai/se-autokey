@@ -5377,7 +5377,8 @@ def start_continuation(driver, claim: str, esurvey: str, invoice: str = "", expe
 
 def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
                       full_billing: bool = True, images_folder=None,
-                      image_type: str = "รูปรถประกัน", expected_round: int = 0) -> str:
+                      image_type: str = "รูปรถประกัน", expected_round: int = 0,
+                      select_images: bool = True) -> str:
     """งานต่อเนื่อง (ครั้งถัดไปของเคลมเดิม): เปิดเรื่องเดิม → 'งานต่อเนื่อง' →
     **อัปรูปของครั้งนี้** → กรอกหน้าค่าใช้จ่าย (invoice ใหม่ + ตารางราคา)
     ไม่แตะหน้าหลัก/คู่กรณี (ข้อมูลพวกนั้นอยู่ครั้งที่ 1 แล้ว)
@@ -5392,6 +5393,8 @@ def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
 
     full_billing=False: ไม่กด 'บันทึกราคา'. ปุ่มส่งจริงคือ 'ส่งผลงานต่อเนื่อง'
     (wuFlow1_cmdSendFollow) — สคริปต์ไม่กดให้เด็ดขาด (เหมือนปุ่ม 'ส่งงานใหม่')
+    select_images=False (เส้นเว็บ se-survey — user เคาะ 09/09/69 "ไม่ต้องกดเลือกรูปบนบอท"): อัปทุกรูปทันทีเหมือนครั้งที่ 1
+    (เดิมเส้นงานต่อเนื่องไม่ได้รับค่านี้ → ถามเลือกรูปทุกครั้ง user เจอ 22/09/69 เคลม 2025013053652) · เส้น ISURVEY ยังถามเหมือนเดิม
     คืนเลข e-Survey เดิม (งานต่อเนื่องใช้เรื่อง/เลขเดิม ไม่สร้างใหม่)"""
     start_continuation(driver, data.claim_value, esurvey,
                        invoice=data.invoice_value, expected_round=expected_round)
@@ -5404,7 +5407,7 @@ def fill_continuation(driver, cfg, data: ClaimData, esurvey: str,
                       n_opponents=len(data.third_parties or []),
                       n_injuries=len(data.injuries or []),
                       n_assets=len(data.assets or []),
-                      single_type=_EMCS_DEFAULT_IMAGE_TYPE, dedupe=False)
+                      single_type=_EMCS_DEFAULT_IMAGE_TYPE, dedupe=False, ask=select_images)
     fill_billing(driver, data, full_billing=full_billing, navigate=moved,
                  leave=False)   # ค้างในเรื่องไว้ ปุ่มส่งงานอยู่หน้านี้
     return esurvey
@@ -5800,7 +5803,8 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
             log(f"EMCS: เคลมนี้มีเรื่องเดิม + invoice ใหม่ → โหมดงานต่อเนื่อง (ต่อจาก {cont})")
             return fill_continuation(driver, cfg, data, cont, full_billing=full_billing,
                                      images_folder=images_folder, image_type=image_type,
-                                     expected_round=expected_round)
+                                     expected_round=expected_round,
+                                     select_images=select_images)   # เส้นเว็บ = ไม่ถามเลือกรูป (22/09/69)
         _guard_first_round(existing, searched, data, expected_round)
         guard_duplicate_report(driver, data, force_new, existing=existing)
     else:
