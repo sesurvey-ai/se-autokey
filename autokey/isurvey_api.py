@@ -274,12 +274,12 @@ class ISurveyAPI:
         "wounded_type": ("injury_type", "woundtype"),
         "work_place": ("work_place", None), "income": ("salary", None),
     }
-    # ⚠️ ที่อยู่เจ้าของทรัพย์สิน "ไม่ต่อ" ตำบล/อำเภอ/จังหวัด — ยืนยันจาก XML จริง
-    # (ของผู้บาดเจ็บต่อ แต่ของทรัพย์สินเป็นบ้านเลขที่ล้วน '613 ม.1')
+    # ที่อยู่เจ้าของทรัพย์สิน: XML ที่ ISURVEY สร้างเองใส่แค่บ้านเลขที่ ('613 ม.1') แต่ ISURVEY มี owner_tumbonID/amphurID/provinceID
+    # จริง → 21/09/69 (user เคาะ เคลม 2026013077062) ต่อ ต./อ./จ. ให้เหมือนผู้บาดเจ็บ ('@address_asset' รูปแบบเดียวกับเส้นเว็บ)
     _MAP_ASSET = {
         "name": ("prop_name", None), "damage_detail": ("prop_damage_detail", None),
         "damage_cost": ("damage_cost", None), "owner_name": ("owner_name", None),
-        "owner_address": ("owner_address", None), "owner_phone": ("owner_phone", None),
+        "owner_address": ("@address_asset", None), "owner_phone": ("owner_phone", None),
     }
 
     def _apply_map(self, rec: dict, spec: dict) -> dict:
@@ -329,12 +329,22 @@ class ISurveyAPI:
                     self._amphur(flat.get("drv_amphurID") or flat.get("amphurID")),
                     self._prov(flat.get("drv_provinceID") or flat.get("provinceID")))
                 continue
+            # '@address' (ผู้บาดเจ็บ) / '@address_asset' (เจ้าของทรัพย์สิน): 21/09/69 ประกอบรูปแบบเดียวกับเส้นเว็บ
+            # "2/1609 ม.9 ต.ท่าช้าง อ.เมืองจันทบุรี จ.จันทบุรี" — ต./อ./จ. ที่ช่างพิมพ์ปนในบ้านเลขที่ถูกตัด (เคลม 2026013173082 เคยได้ซ้ำ)
+            # (เดิมต่อด้วยจุลภาค "บ้านเลขที่,ตำบล,อำเภอ,จังหวัด" แบบ XML ของ ISURVEY)
             if col == "@address":
-                parts = [str(flat.get("address", "") or "").strip(),
-                         self._tumbon(flat.get("drv_tumbonID") or flat.get("tumbonID")),
-                         self._amphur(flat.get("drv_amphurID") or flat.get("amphurID")),
-                         self._prov(flat.get("drv_provinceID") or flat.get("provinceID"))]
-                out[key] = ",".join(p for p in parts if p)
+                out[key] = opponent_address_line(
+                    flat.get("address", ""), "",
+                    self._tumbon(flat.get("drv_tumbonID") or flat.get("tumbonID")),
+                    self._amphur(flat.get("drv_amphurID") or flat.get("amphurID")),
+                    self._prov(flat.get("drv_provinceID") or flat.get("provinceID")))
+                continue
+            if col == "@address_asset":
+                out[key] = opponent_address_line(
+                    flat.get("owner_address", ""), "",
+                    self._tumbon(flat.get("owner_tumbonID")),
+                    self._amphur(flat.get("owner_amphurID")),
+                    self._prov(flat.get("owner_provinceID")))
                 continue
             raw = flat.get(col, "")
             if kind and str(raw).strip():
@@ -556,7 +566,8 @@ class ISurveyAPI:
         d.driver_relation = drv.get("relation", "")
         d.driver_age = str(drv.get("age", "") or "")
         # ที่อยู่ + ต.<ตำบล> (16/09/69 รูปแบบเดียวกับเส้นเว็บ) — จังหวัด/อำเภอไป dropdown ของ EMCS อยู่แล้ว ไม่ใส่ในข้อความ
-        d.driver_address = driver_address_line(drv.get("address", ""), "", self._tumbon(drv.get("drv_tumbonID")))
+        d.driver_address = driver_address_line(drv.get("address", ""), "", self._tumbon(drv.get("drv_tumbonID")),
+                                               self._amphur(drv.get("drv_amphurID")), self._prov(drv.get("drv_provinceID")))   # อ./จ. ส่งไปตัดที่พิมพ์ปน (21/09/69)
         d.driver_province = self._prov(drv.get("drv_provinceID"))
         d.driver_amphur = self._amphur(drv.get("drv_amphurID"))
         d.driver_phone = drv.get("drv_phone", "")

@@ -4230,8 +4230,9 @@ check("ที่อยู่ผู้ขับขี่: split_moo", claim_data.
 _src_ses_addr = _inspect.getsource(_main._populate_claim_from_report)
 check("เส้นเว็บ: ใช้ driver_address_emcs ที่ backend ประกอบ ไม่มีค่อยประกอบเองจาก 3 ช่อง",
       "gv('driver_address_emcs') or driver_address_line(" in _src_ses_addr and "gv('driver_moo'), gv('driver_subdistrict')" in _src_ses_addr)
-check("เส้น ISURVEY ตรง: ที่อยู่ + ต.<ตำบล> จาก drv_tumbonID",
-      'driver_address_line(drv.get("address", ""), "", self._tumbon(drv.get("drv_tumbonID")))' in _inspect.getsource(type(_api).read_claim))
+check("เส้น ISURVEY ตรง: ที่อยู่ + ต.<ตำบล> จาก drv_tumbonID (+ อ./จ. ส่งไปตัดที่พิมพ์ปน 21/09/69)",
+      'driver_address_line(drv.get("address", ""), "", self._tumbon(drv.get("drv_tumbonID")),' in _inspect.getsource(type(_api).read_claim)
+      and 'self._amphur(drv.get("drv_amphurID")), self._prov(drv.get("drv_provinceID")))' in _inspect.getsource(type(_api).read_claim))
 
 # ---- คู่กรณี (user สั่ง 16/09/69, v1.1.5): เจ้าของรถ "นาย บุญเลี้ยง ชงสุวรรณ" · ที่อยู่ผู้ขับขี่คู่กรณี 5 ส่วน — สูตรเดียวกับ backend driverAddress.ts ----
 _oal = claim_data.opponent_address_line
@@ -4239,10 +4240,32 @@ check("คู่กรณี: บ้านเลขที่ + ม. + ต. + อ
       and _oal("49/51 หมู่ที่ 3", "", "", "อำเภอเมือง", "ชลบุรี") == "49/51 ม.3 อ.เมือง จ.ชลบุรี"
       and _oal("12 ซ.5 ถ.สุขุมวิท", "4", "บางพลี", "อ.บางพลี", "จ.สมุทรปราการ") == "12 ม.4 ซ.5 ถ.สุขุมวิท ต.บางพลี อ.บางพลี จ.สมุทรปราการ"
       and _oal("99/1", "", "", "", "ชลบุรี") == "99/1 จ.ชลบุรี" and _oal("", "", "", "", "") == "" and _oal(None, None, None, None, None) == "")
-check("คู่กรณี: กรุงเทพ = แขวง/เขต/กรุงเทพฯ · ที่อยู่เต็มแบบเก่าไม่ต่อซ้ำ + ม. แทรกหลังบ้านเลขที่",
+check("คู่กรณี: กรุงเทพ = แขวง/เขต/กรุงเทพฯ · ที่พิมพ์ปนถูกตัดแล้วประกอบใหม่จากช่องแยก (21/09/69) + ม. แทรกหลังบ้านเลขที่",
       _oal("28/1 หมู่ 12", "", "บางด้วน", "เขตภาษีเจริญ", "กรุงเทพ ฯ") == "28/1 ม.12 แขวงบางด้วน เขตภาษีเจริญ กรุงเทพฯ"
-      and _oal("28/1 หมู่ 12 บางด้วน เขตภาษีเจริญ กรุงเทพฯ", "", "บางด้วน", "เขตภาษีเจริญ", "กรุงเทพมหานคร") == "28/1 ม.12 บางด้วน เขตภาษีเจริญ กรุงเทพฯ"
-      and _oal("60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี", "", "", "อำเภอท่าใหม่", "จันทบุรี") == "60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี")
+      and _oal("28/1 หมู่ 12 บางด้วน เขตภาษีเจริญ กรุงเทพฯ", "", "บางด้วน", "เขตภาษีเจริญ", "กรุงเทพมหานคร") == "28/1 ม.12 แขวงบางด้วน เขตภาษีเจริญ กรุงเทพฯ"
+      and _oal("60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี", "", "", "อำเภอท่าใหม่", "จันทบุรี") == "60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จ.จันทบุรี"
+      and _oal("60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี", "", "", "", "") == "60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี")   # ไม่มีช่องแยก = คงที่พิมพ์
+# ---- ต./อ./จ. ที่พิมพ์ปนในบ้านเลขที่ (user เคาะ 21/09/69 ค่ำ เคลม 2026013173082 / 2026013077062, v1.1.28) ----
+_sap = claim_data.strip_admin_parts
+check("strip_admin_parts: ตัดเฉพาะระดับที่มีช่องแยก · ชื่อจังหวัดเปล่า ๆ ตัดด้วย · แขวง/เขต เฉพาะกรุงเทพ · ไม่มีช่องแยก = ไม่แตะ",
+      _sap("2/1609 ต.ท่าช้าง อ.เมือง จันทบุรี", "ท่าช้าง", "เมืองจันทบุรี", "จันทบุรี") == "2/1609"
+      and _sap("2/1609 ต.ท่าช้าง อ.เมือง จันทบุรี", "", "", "จันทบุรี") == "2/1609 ต.ท่าช้าง อ.เมือง"
+      and _sap("2/1609 ต.ท่าช้าง อ.เมือง จันทบุรี", "", "", "") == "2/1609 ต.ท่าช้าง อ.เมือง จันทบุรี"
+      and _sap("99 แขวงบางด้วน เขตภาษีเจริญ กทม.", "บางด้วน", "ภาษีเจริญ", "กรุงเทพมหานคร") == "99"
+      and _sap("99 เขตอุตสาหกรรม 3", "", "บ้านบึง", "ชลบุรี") == "99 เขตอุตสาหกรรม 3"
+      and _sap("หมู่บ้านท้ายบ้านวิลล่า 5/1", "ท้ายบ้าน", "", "") == "หมู่บ้านท้ายบ้านวิลล่า 5/1")
+check("ประกอบผู้บาดเจ็บเคลม 2026013173082: ไม่ซ้ำอีก (เดิม '…อ.เมือง จันทบุรี อ.เมืองจันทบุรี')",
+      _oal("2/1609 ม.9 ต.ท่าช้าง อ.เมือง จันทบุรี", "", "ท่าช้าง", "เมืองจันทบุรี", "จันทบุรี") == "2/1609 ม.9 ต.ท่าช้าง อ.เมืองจันทบุรี จ.จันทบุรี"
+      and _oal("7/41 ม.1 ต.มะขาม อ.มะขาม จันทบุรี", "", "มะขาม", "มะขาม", "จันทบุรี") == "7/41 ม.1 ต.มะขาม อ.มะขาม จ.จันทบุรี"
+      and _dal("46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ", "", "ท้ายบ้าน", "อำเภอเมือง", "สมุทรปราการ") == "46/23 ม.7 ต.ท้ายบ้าน"
+      and _dal("99 แขวงบางด้วน", "", "บางด้วน", "เขตภาษีเจริญ", "กรุงเทพมหานคร") == "99 แขวงบางด้วน"
+      and _dal("46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ", "", "ท้ายบ้าน") == "46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ"   # มีแต่ช่องตำบล: อ./จ. ที่พิมพ์คงที่เดิม ลำดับไม่เพี้ยน
+      and _oal("2/1609 ต.ท่าช้าง ถ.สุขุมวิท อ.เมือง จันทบุรี", "9", "ท่าช้าง", "เมืองจันทบุรี", "จันทบุรี") == "2/1609 ม.9 ถ.สุขุมวิท ต.ท่าช้าง อ.เมืองจันทบุรี จ.จันทบุรี"   # ก้อนอื่นที่แทรกในหางคืนหัว
+      and _oal("2/1609 ต. ท่าช้าง อ. เมือง จันทบุรี", "", "", "", "จันทบุรี") == "2/1609 ต.ท่าช้าง อ.เมือง จ.จันทบุรี")   # เว้นวรรคหลังคำนำหน้า + มีแต่ช่องจังหวัด
+_src_am = _inspect.getsource(type(_api)._apply_map)
+check("เส้น ISURVEY ตรง: @address (ผู้บาดเจ็บ) / @address_asset (เจ้าของทรัพย์สิน) ประกอบผ่าน opponent_address_line ไม่ต่อจุลภาคแล้ว",
+      'if col == "@address":' in _src_am and 'if col == "@address_asset":' in _src_am and '",".join(p for p in parts if p)' not in _src_am
+      and 'self._tumbon(flat.get("owner_tumbonID"))' in _src_am and '"owner_address": ("@address_asset", None)' in _inspect.getsource(type(_api)))
 _wt = claim_data.with_title
 check("คู่กรณี: with_title คำนำหน้า + ชื่อ เว้นวรรค · ไม่ซ้ำคำนำหน้าที่ติดในชื่อ · นายิกา ไม่ตัด · ไม่มีชื่อ = ว่าง",
       _wt("นาย", "บุญเลี้ยง ชงสุวรรณ") == "นาย บุญเลี้ยง ชงสุวรรณ" and _wt("นาย", "นายบุญเลี้ยง ชงสุวรรณ") == "นาย บุญเลี้ยง ชงสุวรรณ"
@@ -4396,8 +4419,11 @@ _src_inj3 = _inspect.getsource(emcs.fill_injuries)
 check("fill_injuries: ทะเบียนผู้บาดเจ็บไม่มี (บุคคลภายนอกรถ/ไม่ auto-fill) → '00' แทนคำว่า 'บุคคลภายนอก' (กติกาเดียวกับคู่กรณี 21/09/69)",
       'set_text(driver, p + "txtCar_RegNo", "00")' in _src_inj3 and '"บุคคลภายนอก")' not in _src_inj3)
 _src_conv = _inspect.getsource(_conv._injuries) + _inspect.getsource(_conv._assets)
-check("ตัวดึง ISURVEY: ผู้บาดเจ็บแยก title/ที่อยู่ 5 ช่อง/id_type · ทรัพย์สินแยก owner_title",
-      '"title": ititle,' in _src_conv and '"home_province": api._prov(' in _src_conv and '"subdistrict": api._tumbon(' in _src_conv
+check("ตัวดึง ISURVEY: ผู้บาดเจ็บแยก title/ที่อยู่ 5 ช่อง/id_type · ทรัพย์สินแยก owner_title + ที่อยู่เจ้าของ 5 ช่อง (owner_*ID) · ตัด ต./อ./จ. ที่พิมพ์ปนตอนดึง",
+      '"title": ititle,' in _src_conv and '"home_province": iprov,' in _src_conv and '"subdistrict": isub,' in _src_conv
+      and 'iaddr = strip_admin_parts(iaddr, isub, idist, iprov)' in _src_conv and 'oaddr = strip_admin_parts(oaddr, osub, odist, oprov)' in _src_conv
+      and '"owner_province": oprov,' in _src_conv and '"owner_subdistrict": osub,' in _src_conv and '"owner_moo": omoo,' in _src_conv
+      and 'district_name(api, oamph_id, oprov_id)' in _src_conv and 'api._tumbon(_s(r.get("owner_tumbonID")))' in _src_conv
       and '"id_type": "thai",' in _src_conv and '"owner_title": otitle,' in _src_conv
       # ชนิดบัตรให้คนเลือกบนเว็บ ไม่คำนวณจากเลข (user เคาะ 21/09/69) — ตัวดึงตั้ง "thai" เสมอ ไม่มี _id_type อีก
       and '"driver_id_type": "thai",' in _inspect.getsource(_conv) and not hasattr(_conv, "_id_type")

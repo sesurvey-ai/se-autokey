@@ -65,7 +65,8 @@ class FakeAPI:
             5: [("k5", {"patient": {"person_name": "น.ส. อุมาพร ทดสอบ", "injury_type": "I", "related_accidentID": "2",
                                     "gender": "F", "age": "30"}})],
             6: [("k6", {"property": {"prop_name": "กำแพง", "prop_damage_detail": "กำแพงปูน 2 แผ่น", "damage_cost": "20000",
-                                     "owner_name": "น.ส. มติกา (เจ้าของ)", "owner_phone": "0629979153", "owner_address": "613 ม.1"}})],
+                                     "owner_name": "น.ส. มติกา (เจ้าของ)", "owner_phone": "0629979153", "owner_address": "613 ม.1 ต.บ่อวิน",
+                                     "owner_tumbonID": "200708", "owner_amphurID": "2009", "owner_provinceID": "20"}})],
         }
         self.masters = {
             "masterClaimVerdict": {"01": "รอคำตัดสิน", "02": "รถประกันเป็นฝ่ายถูก", "03": "รถประกันเป็นฝ่ายผิด",
@@ -249,6 +250,13 @@ def test_insured_estimated_cost_sums_labour_and_parts():
 def test_property_record_is_unwrapped():
     a = _build()["report"]["damaged_property"][0]
     assert a["item"] == "กำแพง" and a["detail"] == "กำแพงปูน 2 แผ่น" and a["estimated_cost"] == "20000"
+
+
+def test_property_owner_address_parts():
+    # 21/09/69 (เคลม 2026013077062): ISURVEY มี owner_tumbonID/amphurID/provinceID → 5 ช่อง · หมู่แยก · "ต.บ่อวิน" ที่พิมพ์ปนถูกตัด
+    a = _build()["report"]["damaged_property"][0]
+    assert (a["owner_address"], a["owner_moo"], a["owner_subdistrict"]) == ("613", "1", "บ่อวิน")
+    assert a["owner_province"] == "ชลบุรี" and a["owner_district"]           # province_name/district_name ผ่านรหัส EMCS (ชลบุรี=20 · 2009=ศรีราชา)
 
 
 def test_injured_mapping():

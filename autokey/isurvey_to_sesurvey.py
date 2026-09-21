@@ -23,7 +23,7 @@
  6. ISURVEY คืน `None` เมื่อค่าว่าง (ไม่ใช่ '') → ต้อง coerce ทุกช่อง
 """
 import re
-from .claim_data import name_or_unknown, split_moo
+from .claim_data import name_or_unknown, split_moo, strip_admin_parts
 
 from . import isurvey_emcs_map as emcs_map
 from .emcs_names import DISTRICT_NAME, PROVINCE_NAME
@@ -767,7 +767,15 @@ def _injuries(api, case_id, warnings: list) -> list:
         # 21/09/69 (user สั่ง): คำนำหน้าแยกช่อง (ISURVEY เก็บรวมในชื่อ) · ที่อยู่แยก บ้านเลขที่/หมู่/ตำบล/อำเภอ/จังหวัด
         # (เว็บมีช่องแยกแล้ว — เดิมรวมเป็นข้อความเดียว _full_address) · ชนิดบัตร: ไม่ใช่ 13 หลัก = ต่างชาติ
         ititle, ifirst, ilast = split_name(r.get("person_name"))
+        # ที่อยู่ (21/09/69 ค่ำ): ชื่อจังหวัด/อำเภอแบบที่เว็บใช้ (province_name/district_name เหมือนคู่กรณี · แปลงไม่ได้ค่อยใช้ชื่อ ISURVEY)
+        # · ต./อ./จ. ที่ช่างพิมพ์ปนในบ้านเลขที่ ("2/1609 ม.9 ต.ท่าช้าง อ.เมือง จันทบุรี" — เคลม 2026013173082) ตัดทิ้ง ช่องแยกเป็นผู้กำหนด
+        iprov_id = _s(r.get("provinceID")) or _s(r.get("drv_provinceID"))
+        iamph_id = _s(r.get("amphurID")) or _s(r.get("drv_amphurID"))
+        isub = api._tumbon(_s(r.get("tumbonID")) or _s(r.get("drv_tumbonID")))
+        idist = district_name(api, iamph_id, iprov_id) or api._amphur(iamph_id)
+        iprov = province_name(iprov_id) or api._prov(iprov_id)
         iaddr, imoo = split_moo(_s(r.get("address")))
+        iaddr = strip_admin_parts(iaddr, isub, idist, iprov)
         icid = _s(r.get("IDcard_no"))
         out.append({
             "person_type": ptype,
@@ -780,9 +788,9 @@ def _injuries(api, case_id, warnings: list) -> list:
             "occupation": _s(r.get("occupation")),
             "address": iaddr,
             "moo": imoo,
-            "subdistrict": api._tumbon(_s(r.get("tumbonID")) or _s(r.get("drv_tumbonID"))),
-            "district": api._amphur(_s(r.get("amphurID")) or _s(r.get("drv_amphurID"))),
-            "home_province": api._prov(_s(r.get("provinceID")) or _s(r.get("drv_provinceID"))),
+            "subdistrict": isub,
+            "district": idist,
+            "home_province": iprov,
             "phone": _s(r.get("person_phone")),
             "work_place": _s(r.get("work_place")),
             "income": _s(r.get("salary")),
@@ -812,16 +820,28 @@ def _assets(api, case_id) -> list:
         if not ikey:
             continue
         r = _flat(api.get_record(case_id, 6, ikey))   # ห่อใต้ 'property' เหมือน tab-5 ห่อใต้ 'patient'
-        # 21/09/69: คำนำหน้าเจ้าของแยกช่อง (เฉพาะที่ขึ้นต้นด้วยคำนำหน้าคน — บริษัทไม่มี) · ที่อยู่ ISURVEY เป็นข้อความเดียว
-        # เก็บในช่องบ้านเลขที่ (ตัวประกอบไม่ต่อซ้ำ) หัวหน้าแยกจังหวัด/อำเภอ/ตำบลบนเว็บได้ถ้าต้องการ
+        # 21/09/69: คำนำหน้าเจ้าของแยกช่อง (เฉพาะที่ขึ้นต้นด้วยคำนำหน้าคน — บริษัทไม่มี)
+        # ที่อยู่เจ้าของ (21/09/69 ค่ำ — เคลม 2026013077062): ISURVEY มี owner_provinceID/owner_amphurID/owner_tumbonID จริง
+        # (ที่เคยเข้าใจว่าเป็นข้อความเดียว ผิด) → แยก 5 ช่องเหมือนผู้บาดเจ็บ ตัวประกอบต่อ ต./อ./จ. ให้ EMCS · ที่ตั้งทรัพย์สิน/ผู้รับผิดชอบ/
+        # เลขบัตรเจ้าของ ที่ ISURVEY มี EMCS ไม่มีช่องรับ ไม่ดึง
         otitle, ofirst, olast = split_name(r.get("owner_name"))
+        oprov_id, oamph_id = _s(r.get("owner_provinceID")), _s(r.get("owner_amphurID"))
+        osub = api._tumbon(_s(r.get("owner_tumbonID")))
+        odist = district_name(api, oamph_id, oprov_id) or api._amphur(oamph_id)
+        oprov = province_name(oprov_id) or api._prov(oprov_id)
+        oaddr, omoo = split_moo(_s(r.get("owner_address")))
+        oaddr = strip_admin_parts(oaddr, osub, odist, oprov)
         out.append({
             "item": _s(r.get("prop_name")),
             "detail": _s(r.get("prop_damage_detail")),
             "estimated_cost": _s(r.get("damage_cost")),
             "owner_title": otitle,
             "owner_name": name_or_unknown(_name(" ".join(x for x in (ofirst, olast) if x)) if otitle else _name(r.get("owner_name"))),   # ไม่ทราบ → "ไม่ทราบชื่อ" (21/09/69)
-            "owner_address": _s(r.get("owner_address")),
+            "owner_address": oaddr,
+            "owner_moo": omoo,
+            "owner_subdistrict": osub,
+            "owner_district": odist,
+            "owner_province": oprov,
             "owner_phone": _s(r.get("owner_phone")),
         })
     return out

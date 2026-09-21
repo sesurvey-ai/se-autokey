@@ -918,7 +918,7 @@ def _populate_claim_from_report(data, rep):
     data.driver_age = gv('driver_age')
     # ที่อยู่ปัจจุบัน: backend ประกอบ "46/23 ม.7 ต.ท้ายบ้าน" มาให้ (driver_address_emcs, 16/09/69) · backend รุ่นเก่าไม่มี → ประกอบเองจาก 3 ช่อง
     data.driver_address = gv('driver_address_emcs') or driver_address_line(
-        gv('driver_address'), gv('driver_moo'), gv('driver_subdistrict'))
+        gv('driver_address'), gv('driver_moo'), gv('driver_subdistrict'), gv('driver_district'), gv('driver_province'))
     data.driver_province = gv('driver_province')
     data.driver_amphur = gv('driver_district')
     data.driver_phone = gv('driver_phone')

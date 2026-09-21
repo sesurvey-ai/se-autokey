@@ -104,11 +104,84 @@ _PROVINCE_PREFIX = re.compile(r"^(จังหวัด|จ\.)\s*")
 _THAI_FOLLOW = re.compile("[\u0e30-\u0e3a\u0e45\u0e47-\u0e4e]")
 
 
-def _canon_tagged(addr: str, prefixes: str, name: str, canon: str) -> str:
-    """"ตำบลท้ายบ้าน"/"ต. ท้ายบ้าน" (หรือ อ./จ. ตาม prefixes) ที่พิมพ์ปนมา → เขียนเป็นรูปแบบเดียว (canon) **อยู่ที่เดิม**
-    ไม่ย้าย — ลำดับที่อยู่เต็มแบบเก่า ("60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี") จึงไม่เพี้ยน"""
-    return _tidy(re.sub(r"(?:^|(?<=[\s,]))(?:" + prefixes + r")\s*" + re.escape(name) + r"(?=$|[\s,])",
-                        lambda _m: canon, addr))
+# ── ตัด ต./อ./จ. ที่พิมพ์ปนในบ้านเลขที่ เมื่อมีช่องแยกระดับนั้น (user เคาะ 21/09/69 หลังเคลม 2026013173082) ──
+# ช่องแยก (dropdown ISURVEY / ตัวเลือกในแอป-เว็บ) เป็นผู้กำหนด ต./อ./จ. เสมอ:
+#   "2/1609 ต.ท่าช้าง อ.เมือง จันทบุรี" + ช่องแยก ท่าช้าง/เมืองจันทบุรี/จันทบุรี → "2/1609 ม.9 ต.ท่าช้าง อ.เมืองจันทบุรี จ.จันทบุรี"
+#   (เดิมกันซ้ำเฉพาะชื่อตรงเป๊ะ → "อ.เมือง" ค้างแล้วต่อ "อ.เมืองจันทบุรี" ซ้ำ)
+# ระดับที่ไม่มีช่องแยกคงข้อความที่พิมพ์ไว้ · แขวง/เขต ตัดเฉพาะกรุงเทพ (นอกกรุงเทพ "เขต…" อาจเป็นชื่อสถานที่)
+# ชื่อเปล่า ๆ ที่ตรงกับช่องแยก (พิมพ์ "จันทบุรี" ไม่มี จ.) ตัดด้วย · กรุงเทพฯ/กทม./กรุงเทพมหานคร นับเป็นกรุงเทพทุกแบบ
+# ⚠️ สูตรเดียวกับ backend se-survey services/driverAddress.ts (stripAdminParts) — แก้ที่หนึ่งต้องแก้อีกที่
+_BKK_BARE = re.compile(r"^(กรุงเทพ\S*|กทม\.?)$")
+_LEVELS = ("sub", "dist", "prov")
+# คำนำหน้าของแต่ละระดับ (แขวง/เขต เฉพาะกรุงเทพ)
+_TAG_RE = {"sub": (r"ตำบล|ต\.", r"แขวง"), "dist": (r"อำเภอ|อ\.", r"เขต"), "prov": (r"จังหวัด|จ\.", None)}
+
+
+def _is_bkk(province: str) -> bool:
+    return province.startswith("กรุงเทพ") or province.startswith("กทม")
+
+
+def _admin_names(subdistrict, district, province) -> dict:
+    return {"sub": _TUMBON_PREFIX.sub("", str(subdistrict or "").strip()).strip(),
+            "dist": _AMPHUR_PREFIX.sub("", str(district or "").strip()).strip(),
+            "prov": _PROVINCE_PREFIX.sub("", str(province or "").strip()).strip()}
+
+
+def split_admin_tail(address, subdistrict="", district="", province=""):
+    """แยกบ้านเลขที่/ถนน ออกจาก "หาง" ตำบล/อำเภอ/จังหวัด ที่พิมพ์ปน → (หัว, {"sub"/"dist"/"prov": ข้อความที่พิมพ์ไว้ตามเดิม})
+    รู้จักหางจาก: ก้อนที่ขึ้นต้นด้วยคำนำหน้า (ต./ตำบล · อ./อำเภอ · จ./จังหวัด · แขวง/เขต เฉพาะกรุงเทพ — นอกกรุงเทพ "เขต…" เป็นชื่อสถานที่ได้)
+    และก้อนเปล่าที่เท่ากับช่องแยก (พิมพ์ "จันทบุรี" ไม่มี จ.) หรือชื่อกรุงเทพทุกแบบ · ก้อนอื่นที่แทรกอยู่ในหาง (ถ.สุขุมวิท) คืนกลับหัว
+    "ต. ท่าช้าง" (เว้นวรรคหลังคำนำหน้า) = ก้อนถัดไปคือชื่อ · ไม่มีช่องแยกเลย = ไม่แยก (คืนข้อความเดิม, {}) ที่อยู่เต็มแบบเก่าจึงไม่เพี้ยน"""
+    addr = re.sub(r"\s+", " ", str(address or "").strip())
+    names = _admin_names(subdistrict, district, province)
+    if not any(names.values()):
+        return addr, {}
+    toks = [(m.start(), m.group(0)) for m in re.finditer(r"[^\s,]+", addr)]
+    bkk = _is_bkk(names["prov"]) or any(_BKK_BARE.match(tok) for _, tok in toks)
+
+    def level_of(tok):
+        """(ระดับ, ชื่อหลังคำนำหน้า) ถ้าเป็นก้อนคำนำหน้า · (ระดับ, None) ถ้าเป็นชื่อเปล่าที่ตรงช่องแยก/กรุงเทพ · None = ไม่ใช่หาง"""
+        for lv in _LEVELS:
+            pre, bkk_pre = _TAG_RE[lv]
+            m = re.match(r"^(?:" + pre + ((r"|" + bkk_pre) if (bkk and bkk_pre) else "") + r")(.*)$", tok)
+            if m:
+                return lv, m.group(1)
+        for lv in _LEVELS:
+            if names[lv] and tok == names[lv]:
+                return lv, None
+        if bkk and _BKK_BARE.match(tok):
+            return "prov", None
+        return None
+
+    typed, extra, start, i = {}, [], None, 0
+    while i < len(toks):
+        s0, tok = toks[i]
+        lv = level_of(tok)
+        if lv is None:
+            if start is not None:
+                extra.append(tok)
+            i += 1
+            continue
+        if start is None:
+            start = s0
+        text = tok
+        if lv[1] == "" and i + 1 < len(toks) and level_of(toks[i + 1][1]) is None:
+            text = tok + toks[i + 1][1]
+            i += 1
+        typed.setdefault(lv[0], text)
+        i += 1
+    if start is None:
+        return addr, {}
+    return _tidy(addr[:start] + " " + " ".join(extra)), typed
+
+
+def strip_admin_parts(address, subdistrict="", district="", province="") -> str:
+    """บ้านเลขที่ที่ไม่มี ต./อ./จ. ของระดับที่มีช่องแยกแล้ว — ระดับที่ไม่มีช่องแยกคงข้อความที่พิมพ์ไว้ (ตามลำดับ ต. อ. จ.)
+    ใช้ตอนดึงงาน ISURVEY / ตอนบันทึก (backend normalize) ให้ข้อมูลในระบบสะอาด"""
+    head, typed = split_admin_tail(address, subdistrict, district, province)
+    names = _admin_names(subdistrict, district, province)
+    keep = [typed[lv] for lv in _LEVELS if not names[lv] and typed.get(lv)]
+    return _tidy(" ".join(([head] if head else []) + keep))
 
 
 def _insert_moo(addr: str, m: str) -> str:
@@ -132,50 +205,51 @@ def is_placeholder(v) -> bool:
     return s in _PLACEHOLDERS or (s != "" and set(s) == {"-"})   # "--" ที่ ISURVEY ส่งมาแทนไม่ทราบ ก็นับ (20/09/69)
 
 
-def driver_address_line(address, moo="", subdistrict="") -> str:
+def driver_address_line(address, moo="", subdistrict="", district="", province="") -> str:
     """ที่อยู่ปัจจุบันผู้ขับขี่รถประกัน → ข้อความช่องเดียวสำหรับ EMCS: "46/23 ม.7 ต.ท้ายบ้าน" (user เคาะ 16/09/69)
     EMCS มีช่องที่อยู่ข้อความเดียว + dropdown จังหวัด/อำเภอ (ไม่มีช่องหมู่/ตำบล) → จังหวัด/อำเภอไม่ใส่ในข้อความ
-    หมู่ที่ปนในบ้านเลขที่แยกออกมาเป็น "ม.<เลข>" เสมอ แทรกถัดจากบ้านเลขที่ (ช่องหมู่ที่ให้มาชนะ) · "ต.ตำบล" ที่พิมพ์ปนมาย้ายไปท้าย ·
-    ชื่อตำบลเปล่า ๆ ที่มีอยู่แล้วไม่ต่อซ้ำ · ส่วนไหนว่างข้าม
+    หมู่ที่ปนในบ้านเลขที่แยกออกมาเป็น "ม.<เลข>" เสมอ แทรกถัดจากบ้านเลขที่ (ช่องหมู่ที่ให้มาชนะ) · ส่วนไหนว่างข้าม
+    21/09/69: ต./อ./จ. ที่พิมพ์ปนในบ้านเลขที่ถูกตัดเมื่อมีช่องแยกระดับนั้น (strip_admin_parts) แล้วต่อ "ต.<ตำบล>" ท้ายเสมอ
+    (อำเภอ/จังหวัดส่งมาเพื่อตัดที่พิมพ์ปนเท่านั้น ไม่ต่อในข้อความ · กรุงเทพ → "แขวง")
     ⚠️ สูตรเดียวกับ backend se-survey services/driverAddress.ts (driverAddressLine) — แก้ที่หนึ่งต้องแก้อีกที่"""
     addr, moo_in_text = split_moo("" if is_placeholder(address) else address)   # บ้านเลขที่ "-"/"รอตรวจสอบ" = ไม่ทราบ (20/09/69)
     m = _MOO_PREFIX.sub("", str(moo or "").strip()).strip() or moo_in_text
-    t = _TUMBON_PREFIX.sub("", str(subdistrict or "").strip()).strip()
+    names = _admin_names(subdistrict, district, province)
+    head, typed = split_admin_tail(addr, subdistrict, district, province)
+    bkk = _is_bkk(names["prov"]) or _is_bkk(typed.get("prov", ""))
+    parts = [_insert_moo(head, m)] if (head or m) else []
+    t = names["sub"]
     if t:
-        addr = _canon_tagged(addr, r"ตำบล|แขวง|ต\.", t, f"ต.{t}")
-    addr = _insert_moo(addr, m)
-    parts = [addr] if addr else []
-    if t and t not in addr:
-        parts.append(f"ต.{t}")
+        parts.append(f"แขวง{t}" if bkk else f"ต.{t}")
+    elif typed.get("sub"):
+        parts.append(typed["sub"])
+    for lv in ("dist", "prov"):                 # อ./จ. ที่พิมพ์ไว้คงเดิมเฉพาะเมื่อไม่มีช่องแยก (มีช่องแยก = ไป dropdown ไม่ใส่ในข้อความ)
+        if not names[lv] and typed.get(lv):
+            parts.append(typed[lv])
     return " ".join(parts)
 
 
 def opponent_address_line(address, moo="", subdistrict="", district="", province="") -> str:
     """ที่อยู่ปัจจุบันผู้ขับขี่รถคู่กรณี → "46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ" (user เคาะ 16/09/69)
     บล็อกคู่กรณีของ EMCS มีช่องข้อความเดียว (dropdown จังหวัด/อำเภอซ่อน) → ต่อ อ./จ. ด้วย · กรุงเทพ = "แขวงบางด้วน เขตภาษีเจริญ กรุงเทพฯ"
-    ชื่อที่มีอยู่แล้วในข้อความ (ที่อยู่เต็มแบบเก่า "60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี") ไม่ต่อซ้ำ
+    21/09/69: ต./อ./จ. ที่พิมพ์ปนในบ้านเลขที่ ("2/1609 ต.ท่าช้าง อ.เมือง จันทบุรี") ถูกตัดเมื่อมีช่องแยกระดับนั้น (strip_admin_parts)
+    แล้วต่อจากช่องแยกท้ายเสมอ → ไม่ซ้ำ "อ.เมือง … อ.เมืองจันทบุรี" (เคลม 2026013173082) · ระดับที่ไม่มีช่องแยกคงที่พิมพ์ไว้
     ⚠️ สูตรเดียวกับ backend driverAddress.ts (opponentAddressLine)"""
     addr, moo_in_text = split_moo("" if is_placeholder(address) else address)   # บ้านเลขที่ "-"/"รอตรวจสอบ" = ไม่ทราบ (20/09/69)
     m = _MOO_PREFIX.sub("", str(moo or "").strip()).strip() or moo_in_text
-    t = _TUMBON_PREFIX.sub("", str(subdistrict or "").strip()).strip()
-    d = _AMPHUR_PREFIX.sub("", str(district or "").strip()).strip()
-    p_raw = _PROVINCE_PREFIX.sub("", str(province or "").strip()).strip()
-    bkk = p_raw.startswith("กรุงเทพ")
-    p = "กรุงเทพฯ" if bkk else p_raw
-    if t:
-        addr = _canon_tagged(addr, r"ตำบล|แขวง|ต\.", t, f"แขวง{t}" if bkk else f"ต.{t}")
-    if d:
-        addr = _canon_tagged(addr, r"อำเภอ|เขต|อ\.", d, f"เขต{d}" if bkk else f"อ.{d}")
-    if p_raw:
-        addr = _canon_tagged(addr, r"จังหวัด|จ\.", p_raw, p if bkk else f"จ.{p}")
-    addr = _insert_moo(addr, m)
-    parts = [addr] if addr else []
-    if t and t not in addr:
-        parts.append(f"แขวง{t}" if bkk else f"ต.{t}")
-    if d and d not in addr:
-        parts.append(f"เขต{d}" if bkk else f"อ.{d}")
-    if p and not (("กรุงเทพ" in addr) if bkk else (p in addr)):
-        parts.append(p if bkk else f"จ.{p}")
+    names = _admin_names(subdistrict, district, province)
+    head, typed = split_admin_tail(addr, subdistrict, district, province)
+    t, d, p_raw = names["sub"], names["dist"], names["prov"]
+    bkk = _is_bkk(p_raw) or _is_bkk(typed.get("prov", ""))
+    canon = {"sub": (f"แขวง{t}" if bkk else f"ต.{t}") if t else "",
+             "dist": (f"เขต{d}" if bkk else f"อ.{d}") if d else "",
+             "prov": ("กรุงเทพฯ" if bkk else f"จ.{p_raw}") if p_raw else ""}
+    parts = [_insert_moo(head, m)] if (head or m) else []
+    for lv in _LEVELS:                          # ช่องแยกชนะ · ไม่มีช่องแยกคงที่พิมพ์ไว้ (ตามลำดับ ต. อ. จ. เสมอ)
+        if canon[lv]:
+            parts.append(canon[lv])
+        elif typed.get(lv):
+            parts.append(typed[lv])
     return " ".join(parts)
 
 
