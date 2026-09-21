@@ -14,6 +14,7 @@ POST (JSON) — ทุกอันต้องมี X-Service-Token:
   /login-test  {username, password}                          → {ok, name}
   /pending     {username, password, date_from?, date_to?, status?}  → {ok, cases: [...]}   (status "" = ทุกสถานะ · ไม่ส่ง = รอตรวจข้อมูล)
   /pull        {username, password, claim, survey_no, created_by?, with_photos?} → {ok, result}
+  /rounds      {username, password, claims: [...]} → {ok, rounds: {claim: [{survey_no, round, status_name}]}}  (ครั้งที่ของทุกใบในเคลม)
   /close       {username, password, claim, survey_no, comment?, rates?, checklist?, dry_run?} → {ok, result}
                = กด "ยืนยันการตรวจสอบ" (ปิดงาน → จบงาน) แทนหัวหน้า หลังอนุมัติบนเว็บ (08/09/69) · dry_run ไม่ส่ง = True
 GET /healthz → {ok: true}
@@ -86,6 +87,11 @@ class Handler(BaseHTTPRequestHandler):
                 rows = pull_core.list_pending(api, str(body.get("date_from") or ""), str(body.get("date_to") or ""),
                                               status=str(status or ""))
                 return self._send(200, {"ok": True, "cases": rows})
+            if path == "/rounds":
+                # "ครั้งที่" ของงานบนหน้างานรอตรวจ (22/09/69) — อ่าน ISURVEY อย่างเดียว 1 คำขอ/เคลม สูงสุด 200 เคลม/ครั้ง
+                claims = body.get("claims") if isinstance(body.get("claims"), list) else []
+                api = pull_core.make_client(username, password)
+                return self._send(200, {"ok": True, "rounds": pull_core.claim_rounds(api, [str(c) for c in claims[:200]])})
             if path == "/pull":
                 if not SESURVEY_TOKEN:
                     return self._send(503, {"ok": False, "error": "service ยังไม่ได้ตั้ง SESURVEY_API_TOKEN"})

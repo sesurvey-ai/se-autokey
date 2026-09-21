@@ -20,6 +20,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -109,6 +110,32 @@ def list_pending(api: ISurveyAPI, date_from: str = "", date_to: str = "",
     # เรียงตามเวลาส่งรายงานล่าสุด (งานที่ยังไม่ส่งรายงานใช้เวลาสำรวจเสร็จแทน)
     rows.sort(key=lambda r: str(r.get("send_report_dt") or r.get("finish_dt") or ""), reverse=True)
     return rows
+
+
+def claim_rounds(api: ISurveyAPI, claims: list[str]) -> dict:
+    """ทุกใบของแต่ละเคลมเรียงเป็น "ครั้งที่" (survey_order — กติกาเดียวกับตอนดึงงาน) ไว้โชว์บนหน้างานรอตรวจ (user ขอ 22/09/69)
+    คืน {claim: [{survey_no, round, status_name}]} · เคลมที่ถามไม่ได้ = {"error": ...} (ไม่ล้มทั้งชุด)
+    ⚠️ 1 คำขอ ISURVEY ต่อเคลม → เรียกแยกจาก list_pending เฉพาะแถวที่หน้าเว็บมองเห็น ไม่ใช่ทั้ง 14 วัน
+    · ยิงขนานทีละ 4 (requests.Session ใช้ข้ามเธรดได้สำหรับ GET ธรรมดา) · อุ่นตาราง masterStatus ก่อน กันเธรดแย่งโหลด"""
+    uniq = []
+    for c in claims or []:
+        c = str(c or "").strip()
+        if c and c not in uniq:
+            uniq.append(c)
+    if not uniq:
+        return {}
+    api.master("masterStatus", "sttcase_ID", "stt_desc")
+
+    def one(claim: str):
+        try:
+            ordered = survey_order.order_claim_jobs(api.list_claim_jobs(claim))
+            return claim, [{"survey_no": str(it.get("survey_no") or ""), "round": int(it["round"]),
+                            "status_name": str(it.get("status_name") or "")} for it in ordered]
+        except Exception as e:  # noqa: BLE001
+            return claim, {"error": f"{type(e).__name__}: {e}"}
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        return dict(ex.map(one, uniq))
 
 
 def sesurvey_post(base: str, token: str, path: str, payload=None, body: bytes | None = None,
