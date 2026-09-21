@@ -130,7 +130,8 @@ def _admin_names(subdistrict, district, province) -> dict:
 def split_admin_tail(address, subdistrict="", district="", province=""):
     """แยกบ้านเลขที่/ถนน ออกจาก "หาง" ตำบล/อำเภอ/จังหวัด ที่พิมพ์ปน → (หัว, {"sub"/"dist"/"prov": ข้อความที่พิมพ์ไว้ตามเดิม})
     รู้จักหางจาก: ก้อนที่ขึ้นต้นด้วยคำนำหน้า (ต./ตำบล · อ./อำเภอ · จ./จังหวัด · แขวง/เขต เฉพาะกรุงเทพ — นอกกรุงเทพ "เขต…" เป็นชื่อสถานที่ได้)
-    และก้อนเปล่าที่เท่ากับช่องแยก (พิมพ์ "จันทบุรี" ไม่มี จ.) หรือชื่อกรุงเทพทุกแบบ · ก้อนอื่นที่แทรกอยู่ในหาง (ถ.สุขุมวิท) คืนกลับหัว
+    และก้อนเปล่าที่เท่ากับช่องแยก (พิมพ์ "จันทบุรี" ไม่มี จ.) หรือชื่อกรุงเทพทุกแบบ · ก้อนอื่นที่แทรกอยู่ "กลาง" หาง (ถ.สุขุมวิท) คืนกลับหัว
+    · ก้อนที่ไม่รู้จัก "ท้าย" หาง (หลังก้อนที่รู้จักตัวสุดท้าย เช่น "ศรีสะเกษ" ตอนไม่มีช่องจังหวัด) ติดไปกับระดับสุดท้ายที่พบ ("อ.อุทุมพรพิสัย ศรีสะเกษ")
     "ต. ท่าช้าง" (เว้นวรรคหลังคำนำหน้า) = ก้อนถัดไปคือชื่อ · ไม่มีช่องแยกเลย = ไม่แยก (คืนข้อความเดิม, {}) ที่อยู่เต็มแบบเก่าจึงไม่เพี้ยน"""
     addr = re.sub(r"\s+", " ", str(address or "").strip())
     names = _admin_names(subdistrict, district, province)
@@ -153,26 +154,33 @@ def split_admin_tail(address, subdistrict="", district="", province=""):
             return "prov", None
         return None
 
-    typed, extra, start, i = {}, [], None, 0
+    typed, mid, pending, start, last_lv, i = {}, [], [], None, None, 0
     while i < len(toks):
         s0, tok = toks[i]
         lv = level_of(tok)
         if lv is None:
             if start is not None:
-                extra.append(tok)
+                pending.append(tok)                # ยังไม่รู้ว่าอยู่กลางหางหรือท้ายหาง
             i += 1
             continue
         if start is None:
             start = s0
+        mid.extend(pending)                        # มีก้อนที่รู้จักตามมา = ก้อนพวกนี้อยู่กลางหาง → คืนหัว
+        pending = []
         text = tok
         if lv[1] == "" and i + 1 < len(toks) and level_of(toks[i + 1][1]) is None:
             text = tok + toks[i + 1][1]
             i += 1
-        typed.setdefault(lv[0], text)
+        if lv[0] not in typed:
+            typed[lv[0]] = text
+            last_lv = lv[0]
         i += 1
     if start is None:
         return addr, {}
-    return _tidy(addr[:start] + " " + " ".join(extra)), typed
+    if pending and last_lv:                        # ก้อนท้ายหาง → ติดกับระดับสุดท้ายที่พบ (verbatim)
+        typed[last_lv] += " " + " ".join(pending)
+        pending = []
+    return _tidy(addr[:start] + " " + " ".join(mid + pending)), typed
 
 
 def strip_admin_parts(address, subdistrict="", district="", province="") -> str:
