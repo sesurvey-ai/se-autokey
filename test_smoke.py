@@ -4253,6 +4253,8 @@ check("--report-isurvey: เลขครั้งถัดไปไม่อย�
 _src_irs = _inspect.getsource(emcs.is_report_submitted)
 check("is_report_submitted: งานต่อเนื่องเรื่องเดียว → 'ประกันตรวจสอบงานต่อเนื่อง' = ส่งแล้ว · สถานะอื่น = None + ข้อความบอกสถานะเรื่อง",
       "ประกันตรวจสอบงานต่อเนื่อง" in emcs.SUBMITTED_STATUSES and "ประกันตรวจสอบรายงาน" in emcs.SUBMITTED_STATUSES
+      and emcs.COMPLETED_STATUS == "ตรวจสอบแล้ว" and emcs.COMPLETED_STATUS in emcs.SUBMITTED_STATUSES   # user ยืนยัน 22/09/69: ตรวจสอบแล้ว = ประกันตรวจ+อนุมัติเงินแล้ว
+      and "if st == COMPLETED_STATUS:" in _src_irs and "if st1 == COMPLETED_STATUS:" in _src_irs
       and 'if st1 == "ประกันตรวจสอบงานต่อเนื่อง":' in _src_irs
       and "if not info and survey_no:" in _src_irs and "one = report_status(driver, claim)" in _src_irs
       and "ครั้งนี้ยืนยันจากหน้ารายการไม่ได้" in _src_irs and _src_irs.index("if not info and survey_no:") < _src_irs.index('return None, "ไม่พบเรื่องของเคลมนี้ใน EMCS'))
