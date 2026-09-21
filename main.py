@@ -1816,6 +1816,15 @@ def run_report_isurvey(cfg, args):
             else:
                 # ส่งเลขใบแจ้งหนี้ไปด้วย = ตัวแยกเรื่อง (1 เคลมมีได้หลายเรื่อง/หลายครั้งที่)
                 info = emcs.report_status(driver, claim, survey_no=invoice)
+                if not info and invoice:
+                    # งานต่อเนื่อง (ครั้งที่ 2+ — user กด 'ส่งผลงานต่อเนื่อง' เอง 22/09/69 เคลม 2025013053652): EMCS มีเรื่องเดียวต่อเคลม
+                    # แถวในหน้ารายการโชว์เลขเซอร์เวย์ครั้งแรก เลขของครั้งถัดไปหาไม่เจอในแถว → เคลมมีเรื่องเดียว = ใช้เรื่องนั้น
+                    # (หลายเรื่อง = ยังไม่เดาเหมือนเดิม) และแจ้ง ISURVEY ด้วยเลขครั้งนี้ที่ผู้ใช้ระบุ ไม่ใช่เลขครั้งแรกจากแถว
+                    info = emcs.report_status(driver, claim)
+                    if info:
+                        log(f"   ℹ️ งานต่อเนื่อง: เลข {invoice} ไม่อยู่ในแถว (แถวโชว์ {info.get('survey_no') or '-'}) "
+                            f"— เคลมมีเรื่องเดียว ({info.get('esurvey') or '-'}) ใช้เรื่องนั้น")
+                        info = dict(info, survey_no=invoice)
                 st = (info or {}).get("status", "").strip()
                 if not info:
                     log("⏭️ ข้าม — ไม่พบเรื่องของเคลมนี้ใน EMCS (หรือแยกเรื่องไม่ออก)")

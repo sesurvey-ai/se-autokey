@@ -4245,6 +4245,18 @@ check("คู่กรณี: กรุงเทพ = แขวง/เขต/ก
       and _oal("28/1 หมู่ 12 บางด้วน เขตภาษีเจริญ กรุงเทพฯ", "", "บางด้วน", "เขตภาษีเจริญ", "กรุงเทพมหานคร") == "28/1 ม.12 แขวงบางด้วน เขตภาษีเจริญ กรุงเทพฯ"
       and _oal("60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี", "", "", "อำเภอท่าใหม่", "จันทบุรี") == "60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จ.จันทบุรี"
       and _oal("60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี", "", "", "", "") == "60 ม.3 ต.สองพี่น้อง อ.ท่าใหม่ จันทบุรี")   # ไม่มีช่องแยก = คงที่พิมพ์
+# ---- แจ้ง ISURVEY / กวาดสถานะ สำหรับงานต่อเนื่องที่คนกดส่งเอง (user 22/09/69 เคลม 2025013053652, v1.1.31) ----
+_src_rri = _inspect.getsource(_main.run_report_isurvey)
+check("--report-isurvey: เลขครั้งถัดไปไม่อยู่ในแถว → เคลมมีเรื่องเดียวใช้เรื่องนั้น + แจ้งด้วยเลขที่ระบุ (invoice) · หลายเรื่องยังไม่เดา",
+      "if not info and invoice:" in _src_rri and "info = emcs.report_status(driver, claim)" in _src_rri
+      and "info = dict(info, survey_no=invoice)" in _src_rri)
+_src_irs = _inspect.getsource(emcs.is_report_submitted)
+check("is_report_submitted: งานต่อเนื่องเรื่องเดียว → 'ประกันตรวจสอบงานต่อเนื่อง' = ส่งแล้ว · สถานะอื่น = None + ข้อความบอกสถานะเรื่อง",
+      "ประกันตรวจสอบงานต่อเนื่อง" in emcs.SUBMITTED_STATUSES and "ประกันตรวจสอบรายงาน" in emcs.SUBMITTED_STATUSES
+      and 'if st1 == "ประกันตรวจสอบงานต่อเนื่อง":' in _src_irs
+      and "if not info and survey_no:" in _src_irs and "one = report_status(driver, claim)" in _src_irs
+      and "ครั้งนี้ยืนยันจากหน้ารายการไม่ได้" in _src_irs and _src_irs.index("if not info and survey_no:") < _src_irs.index('return None, "ไม่พบเรื่องของเคลมนี้ใน EMCS'))
+
 # ---- งานต่อเนื่องเส้นเว็บ: ไม่ถามเลือกรูป (user เจอ 22/09/69 เคลม 2025013053652, v1.1.30) ----
 _src_fc = _inspect.getsource(emcs.fill_continuation)
 _src_ri = _inspect.getsource(emcs.run_import)
