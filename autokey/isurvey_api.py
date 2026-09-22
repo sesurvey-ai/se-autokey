@@ -11,6 +11,7 @@ claim_type เป็น code ("2"=เคลมแห้ง), จังหวั�
 """
 import dataclasses
 import json
+import os
 import re
 from urllib.parse import urlparse
 
@@ -429,48 +430,64 @@ class ISurveyAPI:
             return url.split("PICTURES/")[1].split("/")[0].upper()
         return "OTHERS"
 
+    @staticmethod
+    def _img_group(url: str) -> str:
+        """โฟลเดอร์กลุ่มย่อยของรูปบุคคลที่สาม (คัน/คน/ชิ้น) จาก path เช่น
+        .../PICTURES/TP_VEH//tp_car20260921180135/_1_.jpg → 'tp_car20260921180135' · ไม่มี = ''"""
+        if "PICTURES/" not in url:
+            return ""
+        parts = [p for p in url.split("PICTURES/")[1].split("?")[0].split("/") if p]
+        return parts[1] if len(parts) > 2 else ""
+
     def download_images(self, case_id, dest_dir, ts=(1, 2, 3, 4, 5, 6)) -> dict:
-        """โหลดรูปทุกหมวดของเคลมลง dest_dir (จัดวางแบบเดียวกับวิธี zip:
-        INS/REPORTS/OTHERS แบนในโฟลเดอร์, หมวด TP_* ลง tp_<xxx>/ —
-        tp_veh/tp_person/tp_prop)
+        """โหลดรูปทุกหมวดของเคลมลง dest_dir **แยกโฟลเดอร์ตามหมวด** (ins/ acc_map/ reports/ others/ tp_veh/ tp_person/ tp_prop/)
+        → zip_photos ของ pull_core อ่านหมวดจากชื่อโฟลเดอร์ (โครงเดียวกับ zip ของ ISURVEY ที่โหมดบอทใช้)
+
+        22/09/69: เดิมวางแบนแล้วกันชื่อซ้ำ "ทั้งงาน" → บริษัท OSS ที่ตั้งชื่อรูปซ้ำทุกหมวด (_1_.jpg ทั้งในแผนที่/รถประกัน/รถคู่กรณี)
+        โดนทิ้งเหลือแค่หมวดแรก (เคลม 2026013173663 หาย 13/26 ใบ — รถคู่กรณีหายทั้งหมด)
+        ตอนนี้กันซ้ำด้วย **path จริงของไฟล์** (ไฟล์เดียวกันที่โผล่ 2 แท็บ = โหลดครั้งเดียว) · ชื่อชนในหมวดเดียวกัน
+        (เช่น คู่กรณี 2 คัน ต่างคนต่างชื่อ _1_.jpg) → ใส่ชื่อกลุ่มย่อยนำหน้า และถ้ายังชนต่อท้าย _2, _3 ไม่ทับ ไม่ทิ้ง
         คืน dict นับจำนวนต่อหมวด เช่น {'INS': 22, 'REPORTS': 4, 'OTHERS': 1}"""
         from pathlib import Path
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         counts, seen, failed = {}, set(), 0
-        cat_map = {}   # {ชื่อไฟล์: หมวด} เฉพาะรูปที่ลงโฟลเดอร์หลัก (ไม่รวม tp_*)
         for t in ts:
             for im in self.get_images_list(case_id, t):
                 name, url = im.get("name"), im.get("url")
-                if not name or not url or name in seen:
+                if not name or not url:
                     continue
-                seen.add(name)
+                path_key = str(url).split("?")[0].lstrip("/")
+                if path_key in seen:          # ไฟล์เดียวกันโผล่ซ้ำอีกแท็บ
+                    continue
+                seen.add(path_key)
                 cat = self._img_category(url)
-                target = (dest_dir / cat.lower() / name) if cat.startswith("TP_") \
-                    else (dest_dir / name)
+                grp = self._img_group(url) if cat.startswith("TP_") else ""
+                target = dest_dir / cat.lower() / (f"{grp}_{name}" if grp else name)
                 target.parent.mkdir(parents=True, exist_ok=True)
+                stem, ext = os.path.splitext(target.name)
+                k = 2
+                while target.exists():        # ชื่อชนกับรูปอื่นในหมวดเดียวกัน — ขยับชื่อ
+                    target = target.parent / f"{stem}_{k}{ext}"
+                    k += 1
                 try:
                     r = self.s.get(f"{self._host}/{url.lstrip('/')}", timeout=60)
                     if r.status_code == 200 and r.content:
                         target.write_bytes(r.content)
                         counts[cat] = counts.get(cat, 0) + 1
-                        if not cat.startswith("TP_"):
-                            cat_map[name] = cat
                     else:
                         failed += 1
                         log(f"   ⚠️ รูป {name}: HTTP {r.status_code}")
                 except Exception as e:
                     failed += 1
                     log(f"   ⚠️ โหลดรูป {name} ไม่ได้: {type(e).__name__}")
-        # บันทึกหมวดของแต่ละรูป (ให้แกลเลอรีหน้าเว็บจัดกลุ่มได้) + เคลียร์ map ชื่อเก่า
-        try:
-            (dest_dir / "_categories.json").write_text(
-                json.dumps(cat_map, ensure_ascii=False), encoding="utf-8")
-            stale = dest_dir / "_rename_map.json"
-            if stale.exists():
-                stale.unlink()
-        except Exception:
-            pass
+        # ไฟล์ช่วยของรูปแบบเก่า (รูปแบนในโฟลเดอร์หลัก) ไม่ใช้แล้ว — ลบทิ้งกัน zip_photos อ่านค่าค้าง
+        for stale in ("_categories.json", "_rename_map.json"):
+            try:
+                if (dest_dir / stale).exists():
+                    (dest_dir / stale).unlink()
+            except Exception:
+                pass
         log(f"ISURVEY-API: โหลดรูป {counts} (รวม {sum(counts.values())}"
             + (f", พลาด {failed}" if failed else "") + ")")
         return counts

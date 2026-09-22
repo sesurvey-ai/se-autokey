@@ -350,14 +350,16 @@ def extract_zip_images(zip_path: Path, folder: Path) -> dict:
                 target = folder / name
 
             data = zf.read(info)
-            # แตก zip ซ้ำ (dry-run หลายรอบแล้วค่อย live) ต้อง idempotent — ไฟล์เดิม ขนาดเท่ากัน
-            # = ใบเดียวกัน ใช้ตัวเดิม. ถ้าไล่ตั้ง _2/_3 จะได้รูปซ้ำอัปเข้า EMCS รอบละชุด
-            if not (target.exists() and target.stat().st_size == len(data)):
-                stem, ext = os.path.splitext(target.name)
-                k = 2
-                while target.exists():
-                    target = target.parent / f"{stem}_{k}{ext}"
-                    k += 1
+            # แตก zip ซ้ำ (dry-run หลายรอบแล้วค่อย live) ต้อง idempotent — ไฟล์เดิม **เนื้อเดียวกัน** = ใบเดียวกัน ใช้ตัวเดิม
+            # ถ้าไล่ตั้ง _2/_3 ให้ไฟล์เดิม จะได้รูปซ้ำอัปเข้า EMCS รอบละชุด
+            # 22/09/69: เดิมเทียบแค่ "ขนาดเท่ากัน" → รูปคนละหมวดที่ชื่อซ้ำและขนาดเท่ากันพอดี (OSS ตั้งชื่อ _1_.jpg ทุกหมวด)
+            #           ถูกนับเป็นใบเดียว หายไป 1 ใบ + หมวดเพี้ยน → เทียบเนื้อไฟล์แทน
+            stem, ext = os.path.splitext(target.name)
+            k = 2
+            while target.exists() and target.read_bytes() != data:   # ชื่อชนกับรูปอื่น (เนื้อไม่เท่ากัน) → ขยับชื่อ
+                target = target.parent / f"{stem}_{k}{ext}"
+                k += 1
+            if not target.exists():        # มีอยู่แล้วเนื้อเดียวกัน = แตกซ้ำ ใช้ตัวเดิม
                 target.write_bytes(data)
             # รูป flat (INS/REPORTS/OTHERS) → จำประเภทรูป EMCS ไว้ให้ _group_flat_by_category
             # แยกกลุ่ม (INS→รูปรถประกัน, OTHERS→รูปประกอบ) + ตั้งชื่อไทยตามหมวด แทนกองประเภทเดียว
