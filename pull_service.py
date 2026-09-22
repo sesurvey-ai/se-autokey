@@ -109,6 +109,20 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(502, {"ok": False, "error": err})
                 _log(f"[pull] {username}: เคลม {claim} → เคส #{(result or {}).get('caseId')}")
                 return self._send(200, {"ok": True, "result": result})
+            if path == "/photos":
+                # "ดึงรูปเพิ่มจาก ISURVEY" ให้เคสเดิม (22/09/69) — บัญชีของคนกด · backend เป็นคนตัดสินว่าเคสยังรับรูปได้ไหม (ยังไม่เข้า EMCS)
+                if not SESURVEY_TOKEN:
+                    return self._send(503, {"ok": False, "error": "service ยังไม่ได้ตั้ง SESURVEY_API_TOKEN"})
+                claim = str(body.get("claim") or "").strip()
+                case_id = body.get("case_id")
+                if not claim or not case_id:
+                    return self._send(400, {"ok": False, "error": "ต้องมีเลขเคลมและเลขเคส"})
+                api = pull_core.make_client(username, password)
+                result = pull_core.refetch_photos(api, claim, str(body.get("survey_no") or "").strip(), int(case_id), SESURVEY_URL, SESURVEY_TOKEN)
+                if result.get("error"):
+                    return self._send(502, {"ok": False, "error": str(result["error"])})
+                _log(f"[photos] {username}: เคลม {claim} → เคส #{case_id} +{result.get('added')} ข้าม {result.get('skipped')} (ISURVEY มี {result.get('isurvey_photo_listed')})")
+                return self._send(200, {"ok": True, "result": result})
             if path == "/close":
                 # เขียนกลับ ISURVEY: ความเห็นหัวหน้า + ตารางค่าสำรวจ + "ปิดการตรวจสอบ" — ด้วยบัญชีของหัวหน้าที่อนุมัติ
                 # dry_run เป็นค่าเริ่มต้น (ไม่ส่ง = ไม่ยิง) — ฝั่ง backend เป็นคนตัดสินว่าเปิดยิงจริงหรือยัง

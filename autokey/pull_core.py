@@ -212,27 +212,43 @@ def _iso_bkk_dt(s) -> str | None:
     return f"{m.group(1)}T{int(m.group(2)):02d}:{m.group(3)}:00+07:00" if m else None
 
 
-def _push_photos(api: ISurveyAPI, isurvey_case_id: str, case_id, sesurvey_url: str, token: str) -> dict:
+def _push_photos(api: ISurveyAPI, isurvey_case_id: str, case_id, sesurvey_url: str, token: str,
+                 topup: bool = False, exclude_docs: bool = False) -> dict:
     """โหลดรูปของงานจาก ISURVEY แล้วอัปเข้าเคสบนเว็บ (zip → /photos-zip) — คืนผลสรุป ไม่ raise
-    (รูปพลาดไม่ควรล้มงาน — เคสสร้างแล้ว ดึงรูปซ้ำทีหลังได้) · ใช้ทั้งใบหลักและเคสอ้างอิง (15/09/69)"""
+    (รูปพลาดไม่ควรล้มงาน — เคสสร้างแล้ว ดึงรูปซ้ำทีหลังได้) · ใช้ทั้งใบหลักและเคสอ้างอิง (15/09/69)
+    22/09/69: คืน isurvey_photo_listed = ไฟล์จริงที่ ISURVEY มี (ไม่นับซ้ำ) ให้หน้าเว็บเทียบกับที่ได้ (added+skipped) แล้วเตือนถ้าไม่ครบ ·
+    topup=True → ?topup=1 (backend ยอมเติมรูปเคสที่อนุมัติแล้วถ้ายังไม่เข้า EMCS) · exclude_docs=True → ไม่เอาเอกสาร DOC_* ของ ISURVEY"""
     try:
         with tempfile.TemporaryDirectory() as tmp:
-            counts = api.download_images(isurvey_case_id, tmp)
+            counts = api.download_images(isurvey_case_id, tmp, exclude_docs=exclude_docs)
+            stats = getattr(api, "last_image_stats", None) or {}
+            extra = {"isurvey_photo_counts": counts, "isurvey_photo_listed": stats.get("listed", sum(counts.values())),
+                     "isurvey_photo_failed": stats.get("failed", 0)}
             blob = zip_photos(tmp)
             if not blob:
-                return {"added": 0, "note": "ต้นทางยังไม่มีรูป", "isurvey_photo_counts": counts}
+                return {"added": 0, "skipped": 0, "note": "ต้นทางยังไม่มีรูป", **extra}
             boundary = "----sepull"
             body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"zip\"; "
                     f"filename=\"photos.zip\"\r\nContent-Type: application/zip\r\n\r\n"
                     ).encode("utf-8") + blob + f"\r\n--{boundary}--\r\n".encode("utf-8")
             pdata, perr = sesurvey_post(
-                sesurvey_url, token, f"/api/integrations/cases/{case_id}/photos-zip", body=body,
+                sesurvey_url, token, f"/api/integrations/cases/{case_id}/photos-zip" + ("?topup=1" if topup else ""), body=body,
                 content_type=f"multipart/form-data; boundary={boundary}", timeout=300)
             out = dict(((pdata or {}).get("data") or {}) if not perr else {"error": perr})
-            out["isurvey_photo_counts"] = counts
+            out.update(extra)
             return out
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
+
+
+def refetch_photos(api: ISurveyAPI, claim: str, survey_no: str, case_id, sesurvey_url: str, token: str) -> dict:
+    """ปุ่ม "ดึงรูปเพิ่มจาก ISURVEY" บนหน้าเคส (user สั่ง 22/09/69): เอาเฉพาะรูปที่ยังไม่มี (backend เทียบเนื้อไฟล์) ให้เคสที่มีอยู่แล้ว
+    ใช้ได้จนกว่าเคสจะเข้า EMCS (backend กัน 423) · ไม่เอาเอกสาร DOC_* ที่ ISURVEY สร้างตอนปิดงาน · ไม่ raise (คืน {"error"})"""
+    try:
+        case = api.find_case(str(claim), str(survey_no or ""))
+    except Exception as e:
+        return {"error": f"หางานบน ISURVEY ไม่พบ: {type(e).__name__}: {e}"}
+    return _push_photos(api, case["caseID"], case_id, sesurvey_url, token, topup=True, exclude_docs=True)
 
 
 def pull_references(api: ISurveyAPI, claim: str, survey_no: str, insurer: str, sesurvey_url: str, token: str,

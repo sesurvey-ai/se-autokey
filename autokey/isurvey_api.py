@@ -439,7 +439,7 @@ class ISurveyAPI:
         parts = [p for p in url.split("PICTURES/")[1].split("?")[0].split("/") if p]
         return parts[1] if len(parts) > 2 else ""
 
-    def download_images(self, case_id, dest_dir, ts=(1, 2, 3, 4, 5, 6)) -> dict:
+    def download_images(self, case_id, dest_dir, ts=(1, 2, 3, 4, 5, 6), exclude_docs: bool = False) -> dict:
         """โหลดรูปทุกหมวดของเคลมลง dest_dir **แยกโฟลเดอร์ตามหมวด** (ins/ acc_map/ reports/ others/ tp_veh/ tp_person/ tp_prop/)
         → zip_photos ของ pull_core อ่านหมวดจากชื่อโฟลเดอร์ (โครงเดียวกับ zip ของ ISURVEY ที่โหมดบอทใช้)
 
@@ -447,6 +447,8 @@ class ISurveyAPI:
         โดนทิ้งเหลือแค่หมวดแรก (เคลม 2026013173663 หาย 13/26 ใบ — รถคู่กรณีหายทั้งหมด)
         ตอนนี้กันซ้ำด้วย **path จริงของไฟล์** (ไฟล์เดียวกันที่โผล่ 2 แท็บ = โหลดครั้งเดียว) · ชื่อชนในหมวดเดียวกัน
         (เช่น คู่กรณี 2 คัน ต่างคนต่างชื่อ _1_.jpg) → ใส่ชื่อกลุ่มย่อยนำหน้า และถ้ายังชนต่อท้าย _2, _3 ไม่ทับ ไม่ทิ้ง
+        exclude_docs=True: ข้ามเอกสารที่ ISURVEY สร้างเองตอนปิดงาน (ชื่อขึ้นต้น DOC_ เช่น DOC_supv_comment) — ใช้ตอน "ดึงรูปเพิ่ม"
+        หลังโหลด self.last_image_stats = {listed, downloaded, failed} (listed = ไฟล์จริงที่ ISURVEY มี ไม่นับซ้ำ) ให้ตัวเรียกเทียบว่าได้ครบไหม
         คืน dict นับจำนวนต่อหมวด เช่น {'INS': 22, 'REPORTS': 4, 'OTHERS': 1}"""
         from pathlib import Path
         dest_dir = Path(dest_dir)
@@ -456,6 +458,8 @@ class ISurveyAPI:
             for im in self.get_images_list(case_id, t):
                 name, url = im.get("name"), im.get("url")
                 if not name or not url:
+                    continue
+                if exclude_docs and str(name).startswith("DOC_"):
                     continue
                 path_key = str(url).split("?")[0].lstrip("/")
                 if path_key in seen:          # ไฟล์เดียวกันโผล่ซ้ำอีกแท็บ
@@ -488,7 +492,8 @@ class ISurveyAPI:
                     (dest_dir / stale).unlink()
             except Exception:
                 pass
-        log(f"ISURVEY-API: โหลดรูป {counts} (รวม {sum(counts.values())}"
+        self.last_image_stats = {"listed": len(seen), "downloaded": sum(counts.values()), "failed": failed}
+        log(f"ISURVEY-API: โหลดรูป {counts} (รวม {sum(counts.values())} จาก {len(seen)}"
             + (f", พลาด {failed}" if failed else "") + ")")
         return counts
 
