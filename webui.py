@@ -1005,8 +1005,8 @@ def _build_cmd(params: dict):
     if drivertitle:
         cmd += ["--driver-title", drivertitle]
 
-    # โหมดนำเข้า XML: ให้ EMCS import ฟอร์มหลักจาก SURV_REPORT XML แทนกรอกเอง
-    # (run_import_xml อ่านเคลมด้วย scrape เองเพื่อโหลด XML + คู่กรณีครบ) — ทำได้ทีละเคลม
+    # แท็บ "นำเข้า XML(จบงาน)": ให้ EMCS สร้างเรื่องจากไฟล์ XML ของ ISURVEY แทนกด 'สร้างงานใหม่'
+    # (อ่าน API + ด่านทุกด่านเหมือนแท็บ "นำเข้า ISURVEY" · หลายเคลมได้ — main._prepare_xml_import)
     if params.get("importxml"):
         cmd += ["--import-xml"]
 
@@ -1043,7 +1043,7 @@ def start_run(params: dict):
     cmd, err = _build_cmd(params)
     if err:
         return None, err
-    title = _title_from(params)
+    title = _title_from(params) + (" (นำเข้า XML)" if params.get("importxml") else "")
     kind = "report" if params.get("mode") == "report" else "fill"
     claims = _parse_claims(params.get("claims", ""))
     return _spawn(cmd, title, kind, claims)
@@ -2070,7 +2070,12 @@ PAGE = r"""<!doctype html>
 
   <div class="tabs">
     <button class="tab active" data-pane="isurvey">🖊 นำเข้า ISURVEY</button>
-    <button class="tab" data-pane="pending">📤 ดึงงานรอตรวจ</button>
+    <!-- แท็บ XML ใช้แผงเดียวกับ "นำเข้า ISURVEY" (งานจบงานชุดเดียวกัน) ต่างแค่ให้ EMCS สร้างเรื่องจากไฟล์ XML
+         → ความเสียหายพิมพ์ได้ 20 บรรทัด (แบบกด 'สร้างงานใหม่' มี 8) — user สั่ง 24/09/69 -->
+    <button class="tab" data-pane="isurvey" data-mode="xml">📄 นำเข้า XML(จบงาน)</button>
+    <!-- 📤 ดึงงานรอตรวจ ซ่อนไว้ (user 24/09/69 — หัวหน้าดึงงานรอตรวจจากหน้าเว็บ se-survey แล้ว)
+         เอา hidden ออกเพื่อเปิดคืน (แผง + handler ยังอยู่ครบ) -->
+    <button class="tab" data-pane="pending" hidden>📤 ดึงงานรอตรวจ</button>
     <button class="tab" data-pane="sesurvey">📥 นำเข้า SE Survey</button>
     <button class="tab" data-pane="jobs">📚 สมุดงาน</button>
     <button class="tab" data-pane="settings">⚙ ตั้งค่า</button>
@@ -2189,8 +2194,13 @@ PAGE = r"""<!doctype html>
 
     <div class="tabpane" id="pane-isurvey">
      <div class="card">
+      <!-- โผล่เฉพาะแท็บ "นำเข้า XML(จบงาน)" — บอกว่าต่างจากแท็บ "นำเข้า ISURVEY" ตรงไหน -->
+      <div id="isvxmlnote" class="note" hidden style="margin:0 0 12px">
+        <b>นำเข้าด้วย XML</b> — บอทโหลดไฟล์ XML ของงานจาก ISURVEY ให้ EMCS สร้างเรื่องจากไฟล์
+        แล้วกรอกส่วนที่เหลือต่อ · ความเสียหายพิมพ์ชื่อชิ้นส่วนได้ <b>20 บรรทัด</b> (แท็บ นำเข้า ISURVEY ได้ 8)
+      </div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
-        <h2 style="font-size:16px;margin:0">✅ งานจบแล้ว (ISURVEY)</h2>
+        <h2 id="isvtitle" style="font-size:16px;margin:0">✅ งานจบแล้ว (ISURVEY)</h2>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin-left:auto">
           <input type="checkbox" id="isvhidesent" checked> ซ่อนที่นำเข้าแล้ว
         </label>
@@ -2242,7 +2252,7 @@ PAGE = r"""<!doctype html>
         <b>“✓ นำเข้าแล้ว”</b> อ่านจาก ISURVEY เอง
       </div>
 
-      <h2 style="font-size:16px;margin:0 0 12px">🖊 กรอกเคลมอัตโนมัติ (ISURVEY) สร้าง draft</h2>
+      <h2 id="runtitle" style="font-size:16px;margin:0 0 12px">🖊 กรอกเคลมอัตโนมัติ (ISURVEY) สร้าง draft</h2>
       <label class="fld" for="claims">เลขเคลม <span style="color:var(--muted);font-weight:400">(หลายเคลมได้ — บรรทัดละเลข คั่นด้วย comma หรือ เว้นวรรค)</span></label>
       <textarea id="claims"></textarea>
 
@@ -2280,7 +2290,6 @@ PAGE = r"""<!doctype html>
           <label><input type="checkbox" id="readonly"> อ่านอย่างเดียว (ไม่กรอก EMCS)</label>
           <label><input type="checkbox" id="skipimages"> ไม่ยุ่งกับรูปภาพ</label>
           <label><input type="checkbox" id="nosaveprice"> ไม่บันทึกราคา (กรอกถึงหน้าค่าใช้จ่ายแต่ไม่กดเซฟราคา)</label>
-          <label><input type="checkbox" id="importxml"> นำเข้าด้วย XML — ให้ EMCS เติมฟอร์มหลักจากไฟล์ (ความเสียหายลงได้ 20 ช่อง เหมาะกับ >8 ชิ้น) · ทำทีละเคลม</label>
           <label><input type="checkbox" id="checklicense"> ตรวจใบขับขี่ผู้เอาประกัน (OCR ในเครื่อง) · ช้าลงเล็กน้อย</label>
           <label class="warn"><input type="checkbox" id="forcenew"> ⚠️ สร้างเรื่องใหม่แม้มีเรื่องเดิม — draft ลบไม่ได้ ยกเลิกได้อย่างเดียว</label>
         </div>
@@ -3064,6 +3073,15 @@ async function poll(){
     capBadge.className = "badge " + (data.active > 0 ? "running" : "idle");
   }catch(e){ /* เซิร์ฟเวอร์อาจกำลังปิด — เงียบไว้ */ }
 }
+// แท็บ "นำเข้า XML(จบงาน)" ใช้แผงเดียวกับ "นำเข้า ISURVEY" — ธงนี้บอกว่ารันแบบไหน (ตั้งตอนสลับแท็บ)
+let isvXml = false;
+function setIsvMode(xml){
+  isvXml = !!xml;
+  $("#isvxmlnote").hidden = !isvXml;
+  $("#isvtitle").textContent = isvXml ? "📄 งานจบแล้ว (ISURVEY) · XML" : "✅ งานจบแล้ว (ISURVEY)";
+  $("#runtitle").textContent = isvXml ? "📄 นำเข้าด้วย XML (ISURVEY) สร้าง draft"
+                                      : "🖊 กรอกเคลมอัตโนมัติ (ISURVEY) สร้าง draft";
+}
 runBtn.addEventListener("click", async () => {
   const claims = $("#claims").value.trim();
   if (!claims){ $("#claims").focus(); return; }
@@ -3081,7 +3099,7 @@ runBtn.addEventListener("click", async () => {
     skipimages: $("#skipimages").checked,
     nosaveprice: $("#nosaveprice").checked,
     forcenew: $("#forcenew").checked,
-    importxml: $("#importxml").checked,
+    importxml: isvXml,
     checklicense: $("#checklicense").checked,
     fillexisting: $("#fillexisting").checked,
     imagesonly: $("#imagesonly").checked,
@@ -3663,14 +3681,16 @@ $("#isvrunall").addEventListener("click", async () => {
   }
 
   $("#isvrunall").disabled = true; $("#isvchkall").disabled = true;
+  // จำวิธีนำเข้าไว้ตั้งแต่เริ่มคิว — สลับแท็บกลางคิวต้องไม่ทำให้เรื่องที่เหลือเปลี่ยนวิธี
+  const xml = isvXml;
   let done = 0;
   for (const j of jobs){
-    qBox.innerHTML = 'กำลังนำเข้า ' + escHtml(j.claim) + ' (' + (done + 1) + '/' + jobs.length + ')…'
+    qBox.innerHTML = 'กำลังนำเข้า' + (xml ? 'ด้วย XML ' : ' ') + escHtml(j.claim) + ' (' + (done + 1) + '/' + jobs.length + ')…'
       + '<div style="color:var(--muted);margin-top:4px">รันทีละเรื่อง — EMCS ล็อกเรื่องรายตัว</div>';
     const body = {claims: j.claim, invoice: j.inv, severity: $("#severity").value,
                   readonly: $("#readonly").checked,
                   skipimages: $("#skipimages").checked, nosaveprice: $("#nosaveprice").checked,
-                  forcenew: $("#forcenew").checked, importxml: $("#importxml").checked,
+                  forcenew: $("#forcenew").checked, importxml: xml,
                   checklicense: $("#checklicense").checked, ...j.pick};
     let runId = null;
     try{
@@ -4329,8 +4349,9 @@ $("#savekeyers").addEventListener("click", async () => {
 
 // ป้ายบนหัวกล่อง "ตัวเลือกขั้นสูง" — กล่องพับอยู่แล้วมองไม่เห็นว่าติ๊กอะไรค้างไว้
 // (เช่นลืม 'ไม่ยุ่งกับรูปภาพ' ไว้จากงานก่อน แล้วงานถัดไปรูปไม่ขึ้น หาสาเหตุไม่เจอ)
+// (importxml ย้ายไปเป็นแท็บ "นำเข้า XML(จบงาน)" แล้ว 24/09/69 — ไม่ใช่ช่องติ๊กในกล่องนี้อีก)
 const ADV_BOXES = ["fillexisting", "imagesonly", "includemain", "readonly", "skipimages",
-                   "nosaveprice", "importxml", "checklicense", "forcenew"];
+                   "nosaveprice", "checklicense", "forcenew"];
 function updateAdvCount(){
   const n = ADV_BOXES.filter(id => $("#" + id).checked).length
           + ($("#esurvey").value.trim() ? 1 : 0);
@@ -4349,6 +4370,8 @@ document.querySelectorAll(".tab").forEach(t => {
     document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
     const p = t.dataset.pane;
     PANES.forEach(n => { $("#pane-" + n).hidden = (n !== p); });
+    // 2 แท็บใช้แผง isurvey ร่วมกัน — data-mode="xml" = นำเข้าด้วยไฟล์ XML
+    if (p === "isurvey") setIsvMode(t.dataset.mode === "xml");
     if (p === "jobs") loadJobs();
     if (p === "settings") loadKeyers();
     // โหลดรายการเคส SE Survey ตอนเปิดแท็บครั้งแรก (เดิมโหลดตอนเปิดหน้าทุกครั้ง

@@ -2722,7 +2722,7 @@ check("popup ความเสียหายคู่กรณี: ไม่�
       and _src_emcs.count("_close_stray_windows(driver, main_window)") >= 3)
 # ตัวเลือกที่ใช้นาน ๆ ที ต้องพับไว้ ไม่ให้รกหน้าหลัก (หน้าหลักเหลือ เลขเคลม + ปุ่มรัน)
 _adv = _page[_page.index('<details class="adv">'):_page.index("</details>")]
-for _id in ("readonly", "skipimages", "nosaveprice", "forcenew", "importxml",
+for _id in ("readonly", "skipimages", "nosaveprice", "forcenew",
             "checklicense", "fillexisting", "imagesonly", "includemain",
             "esurvey", "severity"):
     check(f"ขั้นสูง: {_id} อยู่ในกล่องที่พับไว้",
@@ -4509,6 +4509,91 @@ check("_opp_clean: ทะเบียน ว่าง/'--'/'รอตรวจ�
 check("วันเกิดตัวแทนค่า 01/01/2500 → อายุคำนวณเสมอ (เส้นเว็บ _opponent_birth_age + เส้น ISURVEY fill_third_parties)",
       _main._opponent_birth_age("01/01/2500", "1")["age"] == _afd("01/01/2500") and _main._opponent_birth_age("01/01/2500", "")["age"] == _afd("01/01/2500")
       and 'if _bd in ("01/01/2500", "1/1/2500"):' in _src_tp)
+
+# ---- แท็บ "นำเข้า XML(จบงาน)" + ซ่อนแท็บ "ดึงงานรอตรวจ" (user สั่ง 24/09/69, v1.1.38) ----
+_pg = _webui_mod.PAGE
+check("แท็บ XML: ปุ่ม 'นำเข้า XML(จบงาน)' ใช้แผง isurvey ร่วม (data-mode=xml) · แท็บ ISURVEY ยังเป็นแท็บหลัก",
+      '<button class="tab" data-pane="isurvey" data-mode="xml">📄 นำเข้า XML(จบงาน)</button>' in _pg
+      and '<button class="tab active" data-pane="isurvey">🖊 นำเข้า ISURVEY</button>' in _pg)
+check("แท็บ 'ดึงงานรอตรวจ' ซ่อนไว้ (แผงยังอยู่ เปิดคืนได้)",
+      '<button class="tab" data-pane="pending" hidden>' in _pg and 'id="pane-pending"' in _pg)
+check("แท็บ XML: สลับแท็บแล้วตั้งโหมด · ปุ่มรัน + คิวส่ง importxml จากโหมดแท็บ (คิวจำโหมดตั้งแต่เริ่ม)",
+      'if (p === "isurvey") setIsvMode(t.dataset.mode === "xml");' in _pg
+      and "importxml: isvXml," in _pg and "const xml = isvXml;" in _pg and "importxml: xml," in _pg)
+check("แท็บ XML: ช่องติ๊ก importxml เดิมถอดออก (ไม่มีทางเลือกซ้ำซ้อนในกล่องขั้นสูง)",
+      'id="importxml"' not in _pg and '$("#importxml")' not in _pg and '"importxml"' not in _pg.split("ADV_BOXES")[1][:300])
+check("แท็บ XML: มีป้ายอธิบาย 20 บรรทัด โผล่เฉพาะโหมด XML",
+      'id="isvxmlnote"' in _pg and '$("#isvxmlnote").hidden = !isvXml;' in _pg)
+_rid, _rerr = None, None
+_orig_spawn = _webui_mod._spawn
+try:
+    _webui_mod._spawn = lambda cmd, title, kind, claims: (title, cmd)
+    _t_xml, _c_xml = _webui_mod.start_run({"claims": "2026013012345", "importxml": True})
+    _t_norm, _c_norm = _webui_mod.start_run({"claims": "2026013012345"})
+finally:
+    _webui_mod._spawn = _orig_spawn
+check("การ์ดงาน: รันจากแท็บ XML หัวการ์ดบอก '(นำเข้า XML)' + มี --import-xml · แท็บเดิมไม่มี",
+      _t_xml == "2026013012345 (นำเข้า XML)" and "--import-xml" in _c_xml
+      and _t_norm == "2026013012345" and "--import-xml" not in _c_norm)
+_cmd_multi, _e_multi = _webui._build_cmd({"claims": "2026013012345\n2026013054321", "importxml": True})
+check("build_cmd importxml หลายเคลม: ไม่ error (เดิม --import-xml ทำได้ทีละเคลม)",
+      _e_multi is None and "--import-xml" in _cmd_multi and "--claims" in _cmd_multi)
+
+# main.py: --import-xml ไม่มีทางแยกแล้ว — วิ่งเส้นเดียวกับนำเข้า ISURVEY (อ่าน API · ด่านสถานะ/ลำดับครั้ง/กันซ้ำ)
+_src_main_all = pathlib.Path("main.py").read_text(encoding="utf-8")
+check("main: ถอด run_import_xml (เส้นเก่าอ่านแบบ scrape + ไม่ส่งรหัสบริษัท = ไอโออิทุกงาน)",
+      "def run_import_xml" not in _src_main_all and "run_import_xml(" not in _src_main_all)
+_src_main_fn = _inspect.getsource(_main.main)
+check("main (หลายเคลม): โหมด XML เรียก fill_imported พร้อม insurer_code + expected_round",
+      "emcs.fill_imported(" in _src_main_fn and "insurer_code=ins_code," in _src_main_fn
+      and _src_main_fn.count('expected_round=getattr(d, "round_expected", 0) or 0') == 2)
+check("main (เคลมเดียว): โหมด XML เรียก run_import พร้อม insurer_code + expected_round · โหมดซ่อมเรื่องเดิมชนะ",
+      "emcs.run_import(" in _src_main_fn and 'expected_round=getattr(data, "round_expected", 0) or 0' in _src_main_fn
+      and "xml_mode = args.import_xml and not args.fill_existing" in _src_main_fn)
+check("main: ด่านสถานะ 'จบงาน' อยู่ก่อนขั้นเตรียม XML (ใช้กับทั้ง 2 แท็บ)",
+      _src_main_fn.index('if _st and _st != "จบงาน":') < _src_main_fn.index("_prepare_xml_import(driver, cfg, d)"))
+
+# _prepare_xml_import: บริษัทจาก prefix เลขเซอร์เวย์ · โหลดไฟล์จากหน้าเคลมใบเดียวกัน · .xml → .txt
+_px_cfg = _types.SimpleNamespace(runs_dir=pathlib.Path(tempfile.mkdtemp()))
+_px_calls = []
+_orig_px = (_main.isurvey.ensure_logged_in, _main.isurvey.open_case_list,
+            _main.isurvey.find_and_open_claim, _main.isurvey.go_to_tab, _main.download_xml_export)
+try:
+    _main.isurvey.ensure_logged_in = lambda d, c: _px_calls.append("login")
+    _main.isurvey.open_case_list = lambda d: _px_calls.append("list")
+    _main.isurvey.find_and_open_claim = lambda d, cl, inv="": _px_calls.append(("open", cl, inv))
+    _main.isurvey.go_to_tab = lambda d, n: _px_calls.append(("tab", n))
+
+    def _px_dl(d, cl, dest):
+        dest.mkdir(parents=True, exist_ok=True)
+        f = dest / f"{cl}_SURV_REPORT_1.xml"
+        f.write_text("<INSERT_SURV_REPORT_XML/>", encoding="utf-8")
+        return f
+    _main.download_xml_export = _px_dl
+    _px_d = claim_data.ClaimData(claim_value="2026013012345", invoice_value="SETP-69090001")
+    _px_code, _px_why = _main._prepare_xml_import(None, _px_cfg, _px_d)
+    check("_prepare_xml_import: งานไทยไพบูลย์ (SETP) → รหัส 2429 ไม่ใช่ไอโออิ",
+          _px_code == "2429" and _px_why is None, f"{_px_code} {_px_why}")
+    check("_prepare_xml_import: เปิดหน้าเคลมด้วยเลขเซอร์เวย์ใบเดียวกับที่อ่าน แล้วกลับ Tab 1 ก่อนโหลด",
+          ("open", "2026013012345", "SETP-69090001") in _px_calls and ("tab", 1) in _px_calls)
+    check("_prepare_xml_import: ไฟล์ .xml เปลี่ยนเป็น .txt (EMCS รับเฉพาะ .txt) + ชี้ data.xml_file",
+          _px_d.xml_file.endswith(".txt") and pathlib.Path(_px_d.xml_file).exists())
+    _px_calls.clear()
+    _px_code2, _px_why2 = _main._prepare_xml_import(None, _px_cfg, _px_d)
+    check("_prepare_xml_import: มีไฟล์อยู่แล้ว (--data-json) → ไม่เปิด ISURVEY ซ้ำ",
+          _px_code2 == "2429" and _px_why2 is None and not _px_calls)
+    _px_code3, _px_why3 = _main._prepare_xml_import(
+        None, _px_cfg, claim_data.ClaimData(claim_value="1", invoice_value="ABC-1"))
+    check("_prepare_xml_import: prefix ไม่รู้จัก → หยุด ไม่เดาบริษัท (ไม่ fallback ไอโออิ)",
+          _px_code3 is None and "ไม่รู้ว่าเลขเซอร์เวย์" in (_px_why3 or ""))
+    _main.download_xml_export = lambda d, cl, dest: None
+    _px_code4, _px_why4 = _main._prepare_xml_import(
+        None, _px_cfg, claim_data.ClaimData(claim_value="2026013099999", invoice_value="SEABI-120260900001"))
+    check("_prepare_xml_import: โหลดไฟล์ไม่ได้ → หยุดก่อนแตะ EMCS + บอกให้ใช้แท็บนำเข้า ISURVEY",
+          _px_code4 is None and "นำเข้า ISURVEY" in (_px_why4 or ""))
+finally:
+    (_main.isurvey.ensure_logged_in, _main.isurvey.open_case_list,
+     _main.isurvey.find_and_open_claim, _main.isurvey.go_to_tab, _main.download_xml_export) = _orig_px
 
 print("\n" + ("ALL PASS ✅" if not failures else f"FAILED ❌: {failures}"))
 sys.exit(1 if failures else 0)

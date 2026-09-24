@@ -57,6 +57,7 @@ from autokey.claim_data import ClaimData
 from autokey.claim_data import (age_from_date, birth_placeholder_if_this_year, driver_address_line, name_or_unknown,
                                 opponent_address_line, with_title)
 from autokey.config import load_config
+from autokey.insurer_map import resolve_insurer_code_by_job_no
 from autokey.images import (
     archive_old_images,
     categories_from_export,
@@ -157,10 +158,10 @@ def parse_args():
                    help="ใช้กับ --images-only: อัปรูปรถประกัน (โฟลเดอร์หลัก) ด้วย "
                         "(ปกติอัปเฉพาะรูปรถคู่กรณี กันอัปซ้ำที่อัปไปแล้ว)")
     p.add_argument("--import-xml", action="store_true",
-                   help="โหมดนำเข้า XML: ให้ EMCS import ฟอร์มหลักจาก SURV_REPORT XML "
-                        "(ปุ่ม 'นำเข้าข้อมูลแบบ XML') แทนการกรอกเอง แล้วบอทอุดช่องว่าง/แก้ "
-                        "+ ความเสียหายลงช่อง free-text 20 ช่อง (รองรับ >8 ดีกว่า) — "
-                        "ต้องอ่านเคลมแบบมี XML (ไม่ใช้ --no-xml)")
+                   help="โหมดนำเข้า XML (แท็บ 'นำเข้า XML(จบงาน)'): อ่านเคลมผ่าน API ตามปกติ "
+                        "+ โหลดไฟล์ XML จากหน้าเคลม ISURVEY แล้วให้ EMCS สร้างเรื่องจากไฟล์ "
+                        "(ปุ่ม 'นำเข้าข้อมูลแบบ XML') แทนกด 'สร้างงานใหม่' จากนั้นบอทแก้/เติมที่เหลือ "
+                        "— ความเสียหายลงช่อง free-text ได้ 20 ช่อง (แบบเดิม 8) · ใช้กับหลายเคลมได้")
     p.add_argument("--report-isurvey", action="store_true",
                    help="แจ้ง ISURVEY ว่าเคลม 'ส่งงานแล้ว' — ตรวจ EMCS ว่ากดส่งงานใหม่จริง "
                         "ก่อน (gate) ถ้ายังไม่ส่งจะไม่ยิง (ไม่อ่าน/ไม่กรอกฝั่งหน้า)")
@@ -542,85 +543,60 @@ def run_images_only(cfg, args):
         raise
 
 
-def run_import_xml(cfg, args):
-    """โหมดนำเข้า XML: อ่านเคลม (ต้องมี SURV_REPORT XML) → ให้ EMCS import ฟอร์มหลัก →
-    บอทอุดช่องว่าง/แก้ + กรอกความเสียหาย/คู่กรณี/ฯลฯ → เสนอส่งงาน (เหมือน flow ปกติ)
+def _prepare_xml_import(driver, cfg, data):
+    """โหมดนำเข้า XML ของงาน ISURVEY (แท็บ "นำเข้า XML(จบงาน)" บนหน้าเว็บบอท — user สั่ง 24/09/69)
+    เตรียมของให้ครบก่อนแตะ EMCS → คืน (รหัสบริษัท, None) หรือ (None, เหตุผลที่ทำต่อไม่ได้)
 
-    ได้ data จาก --data-json (ใช้ XML ที่โหลดไว้) หรือ --claim (อ่านแบบ scrape เพื่อโหลด
-    XML + เติมคู่กรณีให้ครบ). import มีประโยชน์เด่นกับเคลมความเสียหายเยอะ (ฟอร์ม import
-    มีช่อง free-text 20 ช่อง vs cmdNewReport 8)"""
-    import copy
-    per_run_dl = cfg.download_dir / "_dl" / str(os.getpid())
-    driver = make_driver(detach=True, download_dir=per_run_dl)
-    data = None
-    try:
-        if args.data_json:
-            banner(f"โหลดข้อมูลจากไฟล์ {args.data_json}")
-            data = ClaimData.load(args.data_json)
-            if data.xml_file and Path(data.xml_file).exists():
-                enrich_claim_from_xml(data, data.xml_file)
-        else:
-            targets = build_targets(args)
-            if len(targets) != 1:
-                raise SystemExit("โหมด --import-xml ทำได้ทีละเคลม "
-                                 "(ระบุ --claim หรือ --data-json อันเดียว)")
-            claim, invoice = targets[0]
-            # import ต้องมี XML → อ่านแบบ scrape (ดาวน์โหลด XML + เติมคู่กรณีครบ)
-            read_args = copy.copy(args)
-            read_args.scrape = True
-            banner(f"อ่านเคลม {claim} (scrape — เพื่อโหลด XML + คู่กรณีครบ)")
-            data = read_one_claim(driver, cfg, claim, invoice, read_args)
-            driver.switch_to.new_window("tab")   # เปิด tab ใหม่สำหรับ EMCS
+    ข้อมูลเคลมอ่านผ่าน API ตามเส้นปกติ (ด่านสถานะ 'จบงาน' · ลำดับครั้ง · คู่กรณีครบทุกคัน)
+    ต่างจากแท็บ "นำเข้า ISURVEY" แค่วิธีสร้างเรื่องบน EMCS: ให้ EMCS นำเข้าไฟล์ XML แทนกด
+    'สร้างงานใหม่' → ความเสียหายมีช่องพิมพ์ชื่อชิ้นส่วน 20 บรรทัด (หน้า 'สร้างงานใหม่' มี 8)
 
-        # ต้องมีไฟล์ XML — ถ้า data ไม่ชี้ ลองหาในโฟลเดอร์ runs/xml/ ของเคลมนี้
-        if not (data.xml_file and Path(data.xml_file).exists()):
-            cands = sorted((cfg.runs_dir / "xml").glob(
-                f"{data.claim_value or ''}*SURV_REPORT*.txt"))
-            if cands:
-                data.xml_file = str(cands[-1])
-                enrich_claim_from_xml(data, data.xml_file)
-            else:
-                raise SystemExit(
-                    "โหมด --import-xml ต้องมีไฟล์ SURV_REPORT XML — "
-                    "อ่านเคลมใหม่โดยไม่ใช้ --no-xml (ฝั่งอ่านจะดาวน์โหลด XML ให้)")
+    - บริษัท: จาก prefix เลขเซอร์เวย์ เหมือนเส้นกรอกเอง (ISURVEY ไม่ส่งชื่อบริษัทมา)
+      ⛔ --import-xml เดิมไม่ส่งรหัสบริษัทเลย → หน้านำเข้าเลือกไอโออิ (1059) ทุกงาน
+         งานไทยไพบูลย์ (SETP) จะเข้าผิดบริษัท ซึ่งถอยไม่ได้
+    - ไฟล์ XML: API ไม่มีให้ → เปิดหน้าเคลมบน ISURVEY แล้วกด 'ดาวน์โหลด XML'
+      ค้นด้วยเลขเซอร์เวย์ที่ API อ่านมา (ใบเดียวกัน — กันหยิบผิดแถวในเคลมที่มีหลายครั้ง)
+      --data-json ที่ชี้ไฟล์ไว้แล้ว = ใช้ไฟล์นั้น
+    - ไม่เอาค่าในไฟล์มาทับ ClaimData — ไฟล์มีไว้ให้ EMCS สร้างเรื่อง ค่าที่บอทกรอก/แก้ยังมาจาก API
+      ชุดเดียวกับแท็บกรอกเอง (XML ของ ISURVEY ข้อมูลบางช่องหยาบกว่า เช่น ที่อยู่เจ้าของทรัพย์สิน)"""
+    code = resolve_insurer_code_by_job_no(data.invoice_value)
+    if not code:
+        prefix = str(data.invoice_value or "").split("-")[0].strip().upper()
+        return None, (f"ไม่รู้ว่าเลขเซอร์เวย์ {data.invoice_value!r} เป็นงานของบริษัทไหน — หยุดก่อน ไม่เดา "
+                      f"(เติม prefix {prefix!r} ใน autokey/insurer_map.py)")
+    if data.xml_file and Path(data.xml_file).exists():
+        return code, None
 
-        log_plain(data.summary())
-        log_plain("")
-        log_plain(data.validation_report())
-
-        # ด่านกันทำซ้ำ (se-key) เหมือน flow ปกติ
-        dup = _sekey_dup_skip(cfg, data)
-        if dup:
-            banner("หยุด: เลขเซอร์เวย์นี้ทำไปแล้ว — ไม่กรอก EMCS")
-            log_plain(f"  {dup}")
-            driver.quit()
-            return
-
-        if not args.yes:
-            input("\n>> ตรวจข้อมูลด้านบน แล้วกด Enter เพื่อนำเข้า XML + กรอก EMCS "
-                  "(Ctrl+C เพื่อยกเลิก) << ")
-
-        banner("นำเข้า XML → กรอก EMCS (draft)")
-        images_folder = (None if args.skip_images else
-                         resolve_images_dir(cfg, data.claim_value, for_read=False))
-        esurvey = emcs.run_import(
-            driver, cfg, data, images_folder=images_folder,
-            loss_type=args.loss_type, image_type=args.image_type,
-            severity=args.severity, force_new=args.force_new,
-            full_billing=not args.no_save_price)
-        save_debug_snapshot(driver, cfg.runs_dir / "logs",
-                            tag=f"done_import_{data.claim_value}")
-        banner("กรอกครบทุกหน้าแล้ว (draft, นำเข้า XML)"
-               + (f" | e-Survey {esurvey}" if esurvey else ""))
-        joblog.record("draft", data.claim_value, data.invoice_value, esurvey,
-                      note="นำเข้า XML")
-        _offer_submit(driver, cfg, data, esurvey=esurvey)
-    except Exception as e:
-        log(f"❌ นำเข้า XML: {type(e).__name__}: {e}")
-        save_debug_snapshot(
-            driver, cfg.runs_dir / "logs",
-            tag=f"error_import_{getattr(data, 'claim_value', '') or 'x'}")
-        raise
+    claim = data.claim_value
+    xml = None
+    for attempt in (1, 2):
+        try:
+            isurvey.ensure_logged_in(driver, cfg)
+            isurvey.open_case_list(driver)
+            isurvey.find_and_open_claim(driver, claim, data.invoice_value or "")
+            isurvey.go_to_tab(driver, 1)          # ปุ่มดาวน์โหลดอยู่แถบล่างของ Tab 1
+            xml = download_xml_export(driver, claim, cfg.runs_dir / "xml")
+            break
+        except UnexpectedAlertPresentException:
+            try:
+                driver.switch_to.alert.accept()
+            except Exception:
+                pass
+            log(f"   ⚠️ session ISURVEY หลุด (มี login ซ้อน) — login ใหม่แล้วลองอีกครั้ง ({attempt}/2)")
+        except Exception as e:
+            log(f"   ⚠️ เปิดหน้าเคลมบน ISURVEY เพื่อโหลด XML ไม่สำเร็จ: {type(e).__name__}: {e}")
+            break
+    if xml is None:
+        return None, ("โหลดไฟล์ XML ของงานนี้จาก ISURVEY ไม่ได้ — ไม่แตะ EMCS "
+                      "(ใช้แท็บ 'นำเข้า ISURVEY' ที่บอทกรอกเองแทนได้)")
+    xml = Path(xml)
+    if xml.suffix.lower() != ".txt":
+        # หน้านำเข้าของ EMCS รับเฉพาะ .txt (นามสกุลอื่นโดนล้างทิ้ง) — ไฟล์ของ ISURVEY ปกติเป็น .txt อยู่แล้ว
+        txt = xml.with_suffix(".txt")
+        xml.replace(txt)
+        xml = txt
+    data.xml_file = str(xml)
+    return code, None
 
 
 # ประเภทรถ code (se-survey) → ป้าย ddlCType ของ EMCS แบบ verbatim (fuzzy_select ใช้ชื่อไทย ไม่ใช่ code)
@@ -2081,10 +2057,8 @@ def main():
     if args.images_only:
         run_images_only(cfg, args)
         return
-    # --import-xml: ให้ EMCS import ฟอร์มหลักจาก XML แล้วบอทอุดช่องว่าง/กรอกที่เหลือ แล้วจบ
-    if args.import_xml:
-        run_import_xml(cfg, args)
-        return
+    # --import-xml ไม่มีทางแยกแล้ว (24/09/69) — วิ่งเส้นเดียวกับ "นำเข้า ISURVEY" ทุกขั้น
+    # (อ่าน API · ด่านสถานะ/ลำดับครั้ง/กันซ้ำ · หลายเคลม) ต่างแค่ขั้นสร้างเรื่องบน EMCS — ดู _prepare_xml_import
     # read-only (ไม่ใช่ --scrape): อ่านผ่าน API ล้วน ไม่เปิด browser เลย แล้วจบ
     if args.read_only and not args.scrape and not args.data_json:
         run_api_readonly(cfg, args)
@@ -2146,6 +2120,8 @@ def main():
         isurvey_handle = browser().current_window_handle if args.scrape else None
         emcs_handle = None
         emcs_mainpage = ""
+        # โหมดนำเข้า XML: tab ไว้เปิดหน้าเคลม ISURVEY เพื่อกดโหลดไฟล์ XML (แยกจาก tab EMCS)
+        xml_handle = None
 
         def _dismiss_alert():
             try:
@@ -2211,6 +2187,26 @@ def main():
                 continue
             # สร้าง/หยิบ Chrome ก่อนเข้า try — ให้ except ข้างล่างมี driver ใช้เก็บ snapshot แน่นอน
             driver = browser()
+            ins_code = None
+            if args.import_xml:
+                # รหัสบริษัท + ไฟล์ XML ต้องพร้อมก่อนแตะ EMCS — ไม่พร้อม = หยุดเคลมนี้ ไปเคลมถัดไป
+                try:
+                    if xml_handle is not None:
+                        try:
+                            driver.switch_to.window(xml_handle)
+                        except Exception:
+                            xml_handle = None
+                    if xml_handle is None:
+                        if emcs_handle is not None:
+                            driver.switch_to.new_window("tab")
+                        xml_handle = driver.current_window_handle
+                    ins_code, why = _prepare_xml_import(driver, cfg, d)
+                except Exception as e:
+                    why = f"เตรียมไฟล์ XML ไม่สำเร็จ ({type(e).__name__}: {e})"
+                if why:
+                    log(f"⛔ เคลม {claim}: {why}")
+                    results.append((claim, "⛔", f"หยุด: {why}"))
+                    continue
             try:
                 if emcs_handle is not None:
                     try:
@@ -2218,22 +2214,32 @@ def main():
                     except Exception:
                         emcs_handle = None
                 if emcs_handle is None:
-                    # เปิด tab ใหม่เฉพาะตอนมี tab ISURVEY ให้คงไว้เทียบ (--scrape)
+                    # เปิด tab ใหม่เฉพาะตอน tab แรกมีหน้า ISURVEY ค้างไว้ (--scrape / โหลด XML)
                     # เส้น API ใช้ tab แรกได้เลย ไม่งั้นเหลือ tab เปล่าค้างทุกงาน
-                    if isurvey_handle is not None:
+                    if isurvey_handle is not None or xml_handle is not None:
                         driver.switch_to.new_window("tab")
                     emcs_handle = driver.current_window_handle
 
                 emcs_mainpage = emcs.goto_mainpage(driver, cfg, emcs_mainpage)
-                esurvey = emcs.fill_one(
-                    driver, cfg, d,
-                    images_folder=(None if args.skip_images else
-                                   resolve_images_dir(cfg, d.claim_value,
-                                                      for_read=False)),
-                    loss_type=args.loss_type, image_type=args.image_type,
-                    severity=args.severity, force_new=args.force_new,
-                    expected_round=getattr(d, "round_expected", 0) or 0,
-                )
+                _imgs = (None if args.skip_images else
+                         resolve_images_dir(cfg, d.claim_value, for_read=False))
+                if args.import_xml:
+                    # ด่านเดียวกับ fill_one ครบ (งานต่อเนื่อง · ลำดับครั้ง · กันเปิดซ้ำ) แล้วค่อยนำเข้าไฟล์
+                    esurvey = emcs.fill_imported(
+                        driver, cfg, d, images_folder=_imgs,
+                        loss_type=args.loss_type, image_type=args.image_type,
+                        severity=args.severity, force_new=args.force_new,
+                        insurer_code=ins_code,
+                        expected_round=getattr(d, "round_expected", 0) or 0,
+                    )
+                else:
+                    esurvey = emcs.fill_one(
+                        driver, cfg, d,
+                        images_folder=_imgs,
+                        loss_type=args.loss_type, image_type=args.image_type,
+                        severity=args.severity, force_new=args.force_new,
+                        expected_round=getattr(d, "round_expected", 0) or 0,
+                    )
                 save_debug_snapshot(driver, cfg.runs_dir / "logs",
                                     tag=f"done_{d.claim_value}")
                 results.append((claim, "✅",
@@ -2318,9 +2324,20 @@ def main():
 
     banner("ส่วนที่ 2: กรอกข้อมูลลง EMCS")
     driver = browser()          # ถึงตรงนี้ค่อยต้องใช้เบราว์เซอร์จริง
-    # เปิด tab ใหม่เฉพาะตอนอ่านแบบ --scrape (มี tab ISURVEY ให้คงไว้ดูเทียบ)
+    # โหมดนำเข้า XML (ไม่ใช่โหมดซ่อมเรื่องเดิม): รหัสบริษัท + ไฟล์ XML ต้องพร้อมก่อนแตะ EMCS
+    xml_mode = args.import_xml and not args.fill_existing
+    ins_code, xml_from_isurvey = None, False
+    if xml_mode:
+        xml_from_isurvey = not (data.xml_file and Path(data.xml_file).exists())
+        ins_code, why = _prepare_xml_import(driver, cfg, data)
+        if why:
+            banner("หยุด: นำเข้า XML ไม่ได้ — ไม่แตะ EMCS")
+            log(f"⛔ เคลม {data.claim_value}: {why}")
+            close_browser()
+            raise SystemExit(1)
+    # เปิด tab ใหม่เฉพาะตอน tab แรกมีหน้า ISURVEY ค้างไว้ (อ่านแบบ --scrape / เพิ่งโหลดไฟล์ XML) ให้ดูเทียบได้
     # เส้น API ไม่ได้เปิดอะไรใน tab แรก — เปิด tab ที่สองจะเหลือหน้าว่างค้างเปล่า ๆ
-    if args.scrape and not args.data_json:
+    if (args.scrape and not args.data_json) or xml_from_isurvey:
         driver.switch_to.new_window("tab")
 
     images_folder = None
@@ -2340,6 +2357,19 @@ def main():
                 image_type=args.image_type,
                 severity=args.severity,
                 full_billing=not args.no_save_price,
+            )
+        elif xml_mode:
+            # ด่านเดียวกับ run_fill ครบ (งานต่อเนื่อง · ลำดับครั้ง · กันเปิดซ้ำ) แล้วค่อยนำเข้าไฟล์
+            esurvey = emcs.run_import(
+                driver, cfg, data,
+                images_folder=images_folder,
+                loss_type=args.loss_type,
+                image_type=args.image_type,
+                severity=args.severity,
+                force_new=args.force_new,
+                full_billing=not args.no_save_price,
+                insurer_code=ins_code,
+                expected_round=getattr(data, "round_expected", 0) or 0,
             )
         else:
             esurvey = emcs.run_fill(
@@ -2366,9 +2396,10 @@ def main():
     save_debug_snapshot(driver, cfg.runs_dir / "logs",
                         tag=f"done_{data.claim_value}")
 
-    banner("กรอกครบทุกหน้าแล้ว (draft)"
+    banner("กรอกครบทุกหน้าแล้ว (draft" + (", นำเข้า XML" if xml_mode else "") + ")"
            + (f" | e-Survey {esurvey}" if esurvey else ""))
-    joblog.record("draft", data.claim_value, data.invoice_value, esurvey)
+    joblog.record("draft", data.claim_value, data.invoice_value, esurvey,
+                  note="นำเข้า XML" if xml_mode else "")
     # A1: เสนอกด "ส่งงาน + แจ้ง ISURVEY" — ทั้งเคลมแห้งและเคลมสด (live session ปุ่มพร้อม)
     # เคลมสด: _offer_submit ใส่คำเตือนให้ตรวจคู่กรณี/ผู้บาดเจ็บ/ทรัพย์สินหนักกว่าก่อนส่ง
     # (ยังไม่กด 'ส่งงานใหม่' เองจนกว่าผู้ใช้กดปุ่มบน webui + confirm)
