@@ -99,6 +99,9 @@ def list_pending(api: ISurveyAPI, date_from: str = "", date_to: str = "",
             "survey_no": survey_no,
             "surveyor_name": x.get("empcode") or "",
             "acc_province": x.get("acc_province") or "",
+            # จังหวัด/อำเภอที่ออกตรวจสอบ (รายงาน enquiry มีแยกจากที่เกิดเหตุ — เช็คช่องจริง 25/09/69) · หน้ารอตรวจโชว์ต่อจากจังหวัดที่เกิดเหตุ
+            "survey_province": x.get("survey_province") or "",
+            "survey_amphur": x.get("survey_amphur") or "",
             "plate_no": x.get("plate_no") or "",
             # เวลา 3 จุดของงาน (user ขอ 07/09/69): จ่ายงาน → สำรวจเสร็จ → ส่งรายงาน — หน้าเว็บโชว์ จ่ายงาน + ส่งรายงาน
             "dispatch_dt": x.get("dispatch_dt") or "",
