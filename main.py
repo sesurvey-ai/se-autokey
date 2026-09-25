@@ -764,7 +764,11 @@ def _populate_third_parties_from_report(data, rep):
             # เจ้าของรถ (16/09/69): backend ประกอบ owner_name_emcs = คำนำหน้า + ชื่อ "นาย บุญเลี้ยง ชงสุวรรณ" · backend รุ่นเก่าไม่มี → ประกอบเอง
             "opo_name": str(o.get("owner_name_emcs") or "").strip() or with_title(o.get("owner_title"), o.get("owner_name")),
             # ที่อยู่ "เจ้าของรถ" — เดิมไม่ map ทำให้ตกไป fallback = ที่อยู่ผู้ขับขี่ (คนละคนได้)
-            "opo_address": str(o.get("owner_address") or "").strip(),
+            # 25/09/69: เว็บ/แอปแยก 5 ช่อง (owner_address · owner_moo · owner_subdistrict · owner_district · owner_province)
+            # → backend ประกอบ owner_address_emcs "46/23 ม.7 ต.ท้ายบ้าน อ.เมือง จ.สมุทรปราการ" · backend รุ่นเก่าไม่มี → ประกอบเอง · ว่าง = ข้อความเดิม
+            "opo_address": str(o.get("owner_address_emcs") or "").strip() or opponent_address_line(
+                o.get("owner_address"), o.get("owner_moo"), o.get("owner_subdistrict"), o.get("owner_district"), o.get("owner_province"))
+                or str(o.get("owner_address") or "").strip(),
             "gender": str(o.get("gender") or "").strip(),
             # วันเกิด/อายุ: "-" จากเว็บ → วันนี้/0 (ดู _opponent_birth_age — user เคาะ 10/09/69)
             **_opponent_birth_age(o.get("birthdate"), o.get("age")),

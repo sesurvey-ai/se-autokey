@@ -4240,6 +4240,10 @@ check("สถานที่เกิดเหตุ: ต่อ ต.<ตำบ�
 check("สถานที่เกิดเหตุ: มีชื่อตำบลในข้อความแล้วไม่ต่อซ้ำ · สถานที่ -/รอตรวจสอบ = เหลือแค่ตำบล",
       _apl("หน้าวัด ต.หนองปรือ", "หนองปรือ", "ชลบุรี") == "หน้าวัด ต.หนองปรือ" and _apl("-", "หนองปรือ", "ชลบุรี") == "ต.หนองปรือ"
       and _apl("รอตรวจสอบ", "หนองปรือ") == "ต.หนองปรือ" and _apl(None, None) == "")
+check("คู่กรณี: ที่อยู่เจ้าของรถ (txtOpo_Address) ใช้ owner_address_emcs ที่ backend ประกอบจาก 5 ช่อง · ไม่มีค่อยประกอบเอง · ว่าง = ข้อความเดิม (25/09/69)",
+      'str(o.get("owner_address_emcs") or "").strip() or opponent_address_line(' in _inspect.getsource(_main)
+      and 'o.get("owner_address"), o.get("owner_moo"), o.get("owner_subdistrict"), o.get("owner_district"), o.get("owner_province"))' in _inspect.getsource(_main)
+      and claim_data.opponent_address_line("12/3 ถ.สุขุมวิท", "5", "หนองปรือ", "อำเภอบางละมุง", "ชลบุรี") == "12/3 ม.5 ถ.สุขุมวิท ต.หนองปรือ อ.บางละมุง จ.ชลบุรี")
 check("เส้นเว็บ: ใช้ acc_place_emcs ที่ backend ประกอบ ไม่มีค่อยประกอบเองจากสถานที่+ตำบล (บอทกรอก txtAcc_Place ทับหลังนำเข้า XML)",
       "gv('acc_place_emcs') or acc_place_line(gv('acc_place'), gv('acc_subdistrict'), gv('acc_province'))" in _src_ses_addr)
 check("เส้น ISURVEY ตรง: ที่อยู่ + ต.<ตำบล> จาก drv_tumbonID (+ อ./จ. ส่งไปตัดที่พิมพ์ปน 21/09/69)",

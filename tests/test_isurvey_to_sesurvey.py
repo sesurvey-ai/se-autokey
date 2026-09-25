@@ -335,6 +335,17 @@ def test_opponent_owner_title_split_and_address_parts():
     assert (o["address"], o["moo"], o["subdistrict"]) == ("94/124", "3", "บ่อวิน")
 
 
+def test_opponent_owner_address_moo_split():
+    """25/09/69: ที่อยู่เจ้าของรถคู่กรณีแยก 5 ช่องบนเว็บ/แอป — ISURVEY มีข้อความเดียว → แยกหมู่ออก (แบบที่อยู่ผู้ขับขี่) · ไม่มีหมู่ = ข้อความเดิม"""
+    api = FakeAPI()
+    api.records[4][0][1]["owner_address"] = "12/3 หมู่ 5 ถ.สุขุมวิท"
+    o = conv.build_case(api, "case1", {})["report"]["opposing_parties"][0]
+    assert (o["owner_address"], o["owner_moo"]) == ("12/3 ถ.สุขุมวิท", "5")
+    api.records[4][0][1]["owner_address"] = "1/1 ถนนวิภาวดี กรุงเทพ ฯ"
+    o = conv.build_case(api, "case1", {})["report"]["opposing_parties"][0]
+    assert (o["owner_address"], o["owner_moo"]) == ("1/1 ถนนวิภาวดี กรุงเทพ ฯ", "")
+
+
 def test_split_name_abbrev_and_khun_and_vowel_follow():
     assert conv.split_name("น.ส.ชนกานต์ ประยงค์งาม") == ("นางสาว", "ชนกานต์", "ประยงค์งาม")
     assert conv.split_name("คุณากร ดี") == ("", "คุณากร", "ดี")

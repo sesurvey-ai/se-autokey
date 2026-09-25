@@ -690,7 +690,9 @@ def _third_parties(api, case_id) -> list:
             # เจ้าของรถ (16/09/69): "นางลัดดาวรรณ วิปัดทุม" → owner_title นาง + owner_name (บอทรวมกลับ "นาง ลัดดาวรรณ วิปัดทุม" บน EMCS)
             "owner_title": otitle,
             "owner_name": _name(" ".join(x for x in (ofirst, olast) if x)) if otitle else _name(r.get("owner_name")),
-            "owner_address": _s(r.get("owner_address")),
+            # ที่อยู่เจ้าของรถ (25/09/69 เว็บ/แอปแยก 5 ช่อง): ISURVEY มีเป็นข้อความเดียว → แยกหมู่ออกแบบที่อยู่ผู้ขับขี่ · จังหวัด/อำเภอ/ตำบล ว่าง (ไม่มีรหัสให้)
+            "owner_address": split_moo(_s(r.get("owner_address")))[0],
+            "owner_moo": split_moo(_s(r.get("owner_address")))[1],
             # แปลงชื่อบริษัทเป็นชื่อที่ EMCS มีจริง **ตั้งแต่ตอนนำเข้า** (ยังมีคนตรวจอยู่)
             # ไม่ใช่ปล่อยให้บอท fuzzy เดาตอนกรอกซึ่งไม่มีใครดู · แปลงไม่ได้ = ปล่อยชื่อเดิม
             # ไปให้หัวหน้าเลือกเองบนเว็บ (ช่องจะขึ้นเตือนว่าเลือกบน EMCS ไม่ได้)
