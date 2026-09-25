@@ -54,7 +54,7 @@ from autokey.browser import (
 )
 from autokey import isurvey_report, sekey_client
 from autokey.claim_data import ClaimData
-from autokey.claim_data import (age_from_date, birth_placeholder_if_this_year, driver_address_line, name_or_unknown,
+from autokey.claim_data import (acc_place_line, age_from_date, birth_placeholder_if_this_year, driver_address_line, name_or_unknown,
                                 opponent_address_line, with_title)
 from autokey.config import load_config
 from autokey.insurer_map import resolve_insurer_code_by_job_no
@@ -909,7 +909,8 @@ def _populate_claim_from_report(data, rep):
     data.acc_province = gv('acc_province')
     data.acc_amphur = gv('acc_district')
     data.acc_type_desc = gv('acc_cause')
-    data.acc_place = gv('acc_place')
+    # สถานที่เกิดเหตุ + "ต.<ตำบล>" (25/09/69): backend ประกอบมาให้ (acc_place_emcs) · backend รุ่นเก่าไม่มี → ประกอบเอง
+    data.acc_place = gv('acc_place_emcs') or acc_place_line(gv('acc_place'), gv('acc_subdistrict'), gv('acc_province'))
     data.acc_detail = gv('acc_detail') or gv('survey_result')
     data.acc_date = gv('acc_date')
     data.acc_time = gv('acc_time')

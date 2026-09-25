@@ -213,6 +213,22 @@ def is_placeholder(v) -> bool:
     return s in _PLACEHOLDERS or (s != "" and set(s) == {"-"})   # "--" ที่ ISURVEY ส่งมาแทนไม่ทราบ ก็นับ (20/09/69)
 
 
+def acc_place_line(place, subdistrict="", province="") -> str:
+    """สถานที่เกิดเหตุสำหรับ EMCS (user เคาะ 25/09/69) — EMCS มีช่องสถานที่ (ข้อความ) + dropdown จังหวัด/อำเภอ
+    ช่องตำบลที่เกิดเหตุมีในหน้าแต่ถูกซ่อน (ddlAcc_Sub_DistrictID) → ต่อ "ต.<ตำบล>" (กรุงเทพ "แขวง<ตำบล>") ท้ายข้อความ
+    ไม่มีตำบล = ข้อความเดิมทุกตัว · มีชื่อตำบลนั้นอยู่แล้ว = ไม่ต่อซ้ำ · สถานที่ "-"/"รอตรวจสอบ" = เหลือแค่ตำบล
+    ⚠️ สูตรเดียวกับ backend se-survey services/driverAddress.ts (accPlaceLine) — แก้ที่หนึ่งต้องแก้อีกที่"""
+    raw = str(place or "").strip()
+    sub = _TUMBON_PREFIX.sub("", str(subdistrict or "").strip()).strip()
+    if not sub:
+        return raw
+    text = "" if is_placeholder(raw) else re.sub(r"\s+", " ", raw)
+    if sub in text:
+        return text
+    label = f"แขวง{sub}" if _is_bkk(_PROVINCE_PREFIX.sub("", str(province or "").strip())) else f"ต.{sub}"
+    return f"{text} {label}" if text else label
+
+
 def driver_address_line(address, moo="", subdistrict="", district="", province="") -> str:
     """ที่อยู่ปัจจุบันผู้ขับขี่รถประกัน → ข้อความช่องเดียวสำหรับ EMCS: "46/23 ม.7 ต.ท้ายบ้าน" (user เคาะ 16/09/69)
     EMCS มีช่องที่อยู่ข้อความเดียว + dropdown จังหวัด/อำเภอ (ไม่มีช่องหมู่/ตำบล) → จังหวัด/อำเภอไม่ใส่ในข้อความ

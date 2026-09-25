@@ -4230,6 +4230,18 @@ check("ที่อยู่ผู้ขับขี่: split_moo", claim_data.
 _src_ses_addr = _inspect.getsource(_main._populate_claim_from_report)
 check("เส้นเว็บ: ใช้ driver_address_emcs ที่ backend ประกอบ ไม่มีค่อยประกอบเองจาก 3 ช่อง",
       "gv('driver_address_emcs') or driver_address_line(" in _src_ses_addr and "gv('driver_moo'), gv('driver_subdistrict')" in _src_ses_addr)
+# ---- สถานที่เกิดเหตุ + "ต.<ตำบล>" (user เคาะ 25/09/69, v1.1.39) — สูตรเดียวกับ backend driverAddress.ts accPlaceLine ----
+_apl = claim_data.acc_place_line
+check("สถานที่เกิดเหตุ: ต่อ ต.<ตำบล> ท้ายข้อความ · กรุงเทพ = แขวง · ไม่มีตำบล = ข้อความเดิมทุกตัว",
+      _apl("หน้าเซเว่น ถ.สุขุมวิท", "หนองปรือ", "ชลบุรี") == "หน้าเซเว่น ถ.สุขุมวิท ต.หนองปรือ"
+      and _apl("หน้าตลาด", "ตำบลนาเกลือ", "จังหวัดชลบุรี") == "หน้าตลาด ต.นาเกลือ"
+      and _apl("ปากซอย 5", "บางด้วน", "กรุงเทพ ฯ") == "ปากซอย 5 แขวงบางด้วน"
+      and _apl("  ว.4  สภ.ขลุง  ", "", "จันทบุรี") == "ว.4  สภ.ขลุง" and _apl("", "", "") == "")
+check("สถานที่เกิดเหตุ: มีชื่อตำบลในข้อความแล้วไม่ต่อซ้ำ · สถานที่ -/รอตรวจสอบ = เหลือแค่ตำบล",
+      _apl("หน้าวัด ต.หนองปรือ", "หนองปรือ", "ชลบุรี") == "หน้าวัด ต.หนองปรือ" and _apl("-", "หนองปรือ", "ชลบุรี") == "ต.หนองปรือ"
+      and _apl("รอตรวจสอบ", "หนองปรือ") == "ต.หนองปรือ" and _apl(None, None) == "")
+check("เส้นเว็บ: ใช้ acc_place_emcs ที่ backend ประกอบ ไม่มีค่อยประกอบเองจากสถานที่+ตำบล (บอทกรอก txtAcc_Place ทับหลังนำเข้า XML)",
+      "gv('acc_place_emcs') or acc_place_line(gv('acc_place'), gv('acc_subdistrict'), gv('acc_province'))" in _src_ses_addr)
 check("เส้น ISURVEY ตรง: ที่อยู่ + ต.<ตำบล> จาก drv_tumbonID (+ อ./จ. ส่งไปตัดที่พิมพ์ปน 21/09/69)",
       'driver_address_line(drv.get("address", ""), "", self._tumbon(drv.get("drv_tumbonID")),' in _inspect.getsource(type(_api).read_claim)
       and 'self._amphur(drv.get("drv_amphurID")), self._prov(drv.get("drv_provinceID")))' in _inspect.getsource(type(_api).read_claim))
