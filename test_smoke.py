@@ -4566,6 +4566,26 @@ check("main (หลายเคลม): โหมด XML เรียก fill_im
 check("main (เคลมเดียว): โหมด XML เรียก run_import พร้อม insurer_code + expected_round · โหมดซ่อมเรื่องเดิมชนะ",
       "emcs.run_import(" in _src_main_fn and 'expected_round=getattr(data, "round_expected", 0) or 0' in _src_main_fn
       and "xml_mode = args.import_xml and not args.fill_existing" in _src_main_fn)
+# แท็บ "นำเข้า ISURVEY" (หน้าเว็บบอทรัน 1 เคลม/โปรเซส → run_fill) ต้องได้ด่านลำดับครั้งเหมือนเส้นหลายเคลม/XML (27/09/69)
+_rf_src = _src_main_fn[_src_main_fn.index("esurvey = emcs.run_fill("):]
+check("main (เคลมเดียว — แท็บนำเข้า ISURVEY): run_fill ส่ง expected_round + จับ RoundOrderError หยุดสะอาดก่อน except ทั่วไป",
+      'expected_round=getattr(data, "round_expected", 0) or 0' in _rf_src[:_rf_src.index(")\n")]
+      and "except emcs.RoundOrderError as e:" in _rf_src[:_rf_src.index("except Exception as e:")])
+_rf_seen = {}
+_orig_rf = (emcs.login, emcs.fill_one)
+try:
+    emcs.login = lambda driver, cfg: None          # ไม่แตะ EMCS — แทนด้วยตัวจด
+
+    def _rf_fill_one(driver, cfg, data, **kw):
+        _rf_seen.update(kw)
+        return "E-TEST"
+    emcs.fill_one = _rf_fill_one
+    _rf_out = emcs.run_fill(None, None, claim_data.ClaimData(claim_value="1", invoice_value="SEABI-1"),
+                            expected_round=3)
+finally:
+    emcs.login, emcs.fill_one = _orig_rf
+check("run_fill ส่ง expected_round ต่อให้ fill_one (เดิมหล่นเป็น 0 = ตรวจแค่ซ้ำ ไม่ตรวจลำดับ)",
+      _rf_out == "E-TEST" and _rf_seen.get("expected_round") == 3, str(_rf_seen))
 check("main: ด่านสถานะ 'จบงาน' อยู่ก่อนขั้นเตรียม XML (ใช้กับทั้ง 2 แท็บ)",
       _src_main_fn.index('if _st and _st != "จบงาน":') < _src_main_fn.index("_prepare_xml_import(driver, cfg, d)"))
 

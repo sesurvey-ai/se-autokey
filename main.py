@@ -2377,6 +2377,7 @@ def main():
                 expected_round=getattr(data, "round_expected", 0) or 0,
             )
         else:
+            # expected_round: ด่านลำดับครั้งเหมือนเส้นหลายเคลม/XML (27/09/69 — เดิมไม่ส่ง แท็บนำเข้า ISURVEY ตรวจแค่ซ้ำ)
             esurvey = emcs.run_fill(
                 driver, cfg, data,
                 images_folder=images_folder,
@@ -2385,7 +2386,16 @@ def main():
                 severity=args.severity,
                 force_new=args.force_new,
                 full_billing=not args.no_save_price,
+                expected_round=getattr(data, "round_expected", 0) or 0,
             )
+    except emcs.RoundOrderError as e:
+        # ด่านงานต่อเนื่อง (13/09/69): ซ้ำ / draft ใบอื่นค้าง / ลำดับครั้งไม่ตรง / ยังไม่มีครั้งที่ 1 — หยุดสะอาด
+        # ไม่มีอะไรถูกเขียนใน EMCS (บอทออกจากเรื่องแล้ว) · ไม่ใช่บั๊ก → ไม่พ่น traceback/ภาพหน้าจอ · exit 1 = การ์ดขึ้น error
+        banner("หยุด: ลำดับครั้งของงานไม่ตรง — ไม่ได้เขียนอะไรใน EMCS")
+        log(f"⛔ {e}")
+        log("   → นำเข้าใบก่อนหน้าให้ครบ (หรือทำ draft ที่ค้างให้จบ) แล้วค่อยนำเข้าใบนี้ใหม่")
+        close_browser()
+        raise SystemExit(1)
     except Exception as e:
         # ⛔ ต้องเขียนสาเหตุลง log ก่อน raise — ของเดิมเก็บแค่ภาพหน้าจอแล้วโยนต่อ
         #    traceback ไปโผล่ที่หน้าต่างคำสั่งซึ่งปิดไปแล้ว → เปิด log ย้อนหลังเห็นแค่

@@ -5522,13 +5522,15 @@ def fill_one(driver, cfg, data: ClaimData, images_folder=None,
 def run_fill(driver, cfg, data: ClaimData, images_folder=None,
              loss_type: str = "auto", image_type: str = "รูปรถประกัน",
              severity: str = "เบา", force_new: bool = False,
-             full_billing: bool = True) -> str:
-    """login แล้วกรอกเคลมเดียว (flow เดิมสำหรับรันทีละเคลม)"""
+             full_billing: bool = True, expected_round: int = 0) -> str:
+    """login แล้วกรอกเคลมเดียว (flow เดิมสำหรับรันทีละเคลม — แท็บ "นำเข้า ISURVEY" ของหน้าเว็บบอทวิ่งเส้นนี้ 1 เคลม/โปรเซส)
+    expected_round = ครั้งที่ของใบนี้ตามเลขเซอร์เวย์ (main._attach_round_info) · 0 = ไม่รู้ ตรวจแค่ซ้ำ
+    (27/09/69: เดิมไม่รับค่านี้ → เส้นเคลมเดียวตรวจแค่ซ้ำ ไม่ตรวจลำดับครั้ง ต่างจากเส้นหลายเคลม/XML)"""
     login(driver, cfg)
     return fill_one(driver, cfg, data, images_folder=images_folder,
                     loss_type=loss_type, image_type=image_type,
                     severity=severity, force_new=force_new,
-                    full_billing=full_billing)
+                    full_billing=full_billing, expected_round=expected_round)
 
 
 def _recascade_province(driver, province_id: str, timeout: int = 10):
