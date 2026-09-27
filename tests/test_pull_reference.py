@@ -115,7 +115,7 @@ def test_references_get_their_own_photos(monkeypatch):
     downloaded = []
 
     class PhotoAPI(FakeAPI):
-        def download_images(self, case_id, out_dir):
+        def download_images(self, case_id, out_dir, exclude_docs=False):   # ตรงกับ ISurveyAPI.download_images (exclude_docs เพิ่ม 22/09/69)
             downloaded.append(case_id)
             return {"INS": 2}
 
@@ -130,6 +130,8 @@ def test_references_get_their_own_photos(monkeypatch):
     assert downloaded == ["c1", "c2", "c3"]            # โหลดรูปของแต่ละงานจาก ISURVEY ตามครั้ง
     refs = result["references"]
     assert [r["caseId"] for r in refs] == [101, 103] and all(r["photos"] is not None for r in refs)
+    # _push_photos กลืนทุก exception เป็น {"error"} — เช็คตรงนี้ให้เห็นสาเหตุ ไม่ใช่แค่ "ไม่มีรูปถูกส่ง" (27/09/69)
+    assert all("error" not in r["photos"] for r in refs) and "error" not in result["photos"], result
     assert refs[0]["photos"]["isurvey_photo_counts"] == {"INS": 2}
     assert result["isurvey_photo_counts"] == {"INS": 2} and "isurvey_photo_counts" not in result["photos"]
 
@@ -139,7 +141,7 @@ def test_reference_skipped_gets_no_photo_push(monkeypatch):
     monkeypatch.setattr(pull_core, "zip_photos", lambda tmp: b"PK-fake-zip")
 
     class PhotoAPI(FakeAPI):
-        def download_images(self, case_id, out_dir):
+        def download_images(self, case_id, out_dir, exclude_docs=False):   # ตรงกับ ISurveyAPI.download_images (exclude_docs เพิ่ม 22/09/69)
             return {}
 
     result, err = pull_core.pull_case(PhotoAPI(), "2026013020764", "SEABI-410260401463",
@@ -148,6 +150,7 @@ def test_reference_skipped_gets_no_photo_push(monkeypatch):
     photo_posts = [p for p, _ in posts if p.endswith("/photos-zip")]
     assert len(photo_posts) == 2                          # ครั้งที่ 2 + ใบหลัก (ครั้งที่ 1 มีในเว็บแล้ว ไม่ยิงรูป)
     assert result["references"][0]["photos"] is None and result["references"][1]["photos"] is not None
+    assert "error" not in result["references"][1]["photos"], result["references"][1]["photos"]
 
 
 def test_iso_bkk_dt():
