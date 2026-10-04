@@ -4246,6 +4246,8 @@ check("คู่กรณี: ที่อยู่เจ้าของรถ (
       and claim_data.opponent_address_line("12/3 ถ.สุขุมวิท", "5", "หนองปรือ", "อำเภอบางละมุง", "ชลบุรี") == "12/3 ม.5 ถ.สุขุมวิท ต.หนองปรือ อ.บางละมุง จ.ชลบุรี")
 check("เส้นเว็บ: ใช้ acc_place_emcs ที่ backend ประกอบ ไม่มีค่อยประกอบเองจากสถานที่+ตำบล (บอทกรอก txtAcc_Place ทับหลังนำเข้า XML)",
       "gv('acc_place_emcs') or acc_place_line(gv('acc_place'), gv('acc_subdistrict'), gv('acc_province'))" in _src_ses_addr)
+check("เส้นเว็บ v1.1.42: EMCS สถานที่เกิดเหตุ = ชุดที่ backend เลือก (emcs_acc_* = สถานที่ออกตรวจสอบ) ข้อความ+จังหวัด+อำเภอชุดเดียวกัน · backend เก่า = แบบเดิม (04/10/69)",
+      "if gv('emcs_acc_province'):\n        data.acc_province = gv('emcs_acc_province')\n        data.acc_amphur = gv('emcs_acc_district')\n        data.acc_place = gv('emcs_acc_place')" in _src_ses_addr)
 check("เส้น ISURVEY ตรง: ที่อยู่ + ต.<ตำบล> จาก drv_tumbonID (+ อ./จ. ส่งไปตัดที่พิมพ์ปน 21/09/69)",
       'driver_address_line(drv.get("address", ""), "", self._tumbon(drv.get("drv_tumbonID")),' in _inspect.getsource(type(_api).read_claim)
       and 'self._amphur(drv.get("drv_amphurID")), self._prov(drv.get("drv_provinceID")))' in _inspect.getsource(type(_api).read_claim))

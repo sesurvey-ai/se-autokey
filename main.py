@@ -915,6 +915,13 @@ def _populate_claim_from_report(data, rep):
     data.acc_type_desc = gv('acc_cause')
     # สถานที่เกิดเหตุ + "ต.<ตำบล>" (25/09/69): backend ประกอบมาให้ (acc_place_emcs) · backend รุ่นเก่าไม่มี → ประกอบเอง
     data.acc_place = gv('acc_place_emcs') or acc_place_line(gv('acc_place'), gv('acc_subdistrict'), gv('acc_province'))
+    # v1.1.42 (user สั่ง 04/10/69): EMCS ช่องสถานที่เกิดเหตุ = "สถานที่ออกตรวจสอบ" ให้ตรงกับพื้นที่ของเลขเซอร์เวย์ที่เบิกเงิน
+    #   backend เลือกชุดให้แล้ว (emcs_acc_* — ไม่มีชุดตรวจสอบ = สถานที่เกิดเหตุแบบเดิม) และเป็นข้อความเดียวกับ ACC_PLACE ใน XML
+    #   ⛔ ข้อความ + จังหวัด + อำเภอ ต้องมาจากชุดเดียวกันทั้ง 3 ค่า ห้ามผสม · backend เก่าไม่ส่ง = ใช้ค่าข้างบนตามเดิม
+    if gv('emcs_acc_province'):
+        data.acc_province = gv('emcs_acc_province')
+        data.acc_amphur = gv('emcs_acc_district')
+        data.acc_place = gv('emcs_acc_place')
     data.acc_detail = gv('acc_detail') or gv('survey_result')
     data.acc_date = gv('acc_date')
     data.acc_time = gv('acc_time')
