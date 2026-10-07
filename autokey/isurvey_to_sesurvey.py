@@ -663,6 +663,8 @@ def _third_parties(api, case_id) -> list:
         car_prov = _s(r.get("plate_provinceID"))
         home_prov = _s(d.get("drv_provinceID"))
         out.append({
+            # รหัสรายการ ISURVEY = ชื่อโฟลเดอร์รูปของคันนี้ (PICTURES/TP_VEH/<ikey>/) — เว็บจับรูปเข้าคันที่ถูกตรงตัว (07/10/69)
+            "isurvey_ikey": _s(ikey),
             "title": title,
             # ชื่อผู้ขับขี่ไม่ทราบ (ช่างพิมพ์ "รอตรวจสอบ"/"--"/ว่าง) → "ไม่ทราบชื่อ" ตั้งแต่ตอนดึง (user เคาะ 21/09/69 เคส #433)
             "first_name": name_or_unknown(_name(first)) if not _name(last) else _name(first),
@@ -802,6 +804,7 @@ def _injuries(api, case_id, warnings: list) -> list:
         iaddr = strip_admin_parts(iaddr, isub, idist, iprov)
         icid = _s(r.get("IDcard_no"))
         out.append({
+            "isurvey_ikey": _s(ikey),   # = โฟลเดอร์รูป PICTURES/TP_PERSON/<ikey>/ (07/10/69)
             "person_type": ptype,
             "title": ititle,
             "name": name_or_unknown(_name(" ".join(x for x in (ifirst, ilast) if x)) if ititle else _name(r.get("person_name"))),   # ไม่ทราบ → "ไม่ทราบชื่อ" (21/09/69)
@@ -856,6 +859,7 @@ def _assets(api, case_id) -> list:
         oaddr, omoo = split_moo(_s(r.get("owner_address")))
         oaddr = strip_admin_parts(oaddr, osub, odist, oprov)
         out.append({
+            "isurvey_ikey": _s(ikey),   # = โฟลเดอร์รูป PICTURES/TP_PROP/<ikey>/ (07/10/69)
             "item": _s(r.get("prop_name")),
             "detail": _s(r.get("prop_damage_detail")),
             "estimated_cost": _s(r.get("damage_cost")),

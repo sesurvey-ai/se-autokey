@@ -6,7 +6,7 @@ import re
 import shutil
 import time
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlparse
 
@@ -380,6 +380,36 @@ def extract_zip_images(zip_path: Path, folder: Path) -> dict:
     return counts
 
 
+# โฟลเดอร์ต่อรายการของ ISURVEY (= รหัสรายการ ikey) ที่ต่อไว้หน้าชื่อไฟล์ "<โฟลเดอร์>_<ชื่อเดิม>"
+# (extract_zip_images / isurvey_api.download_images) — ตรวจงานจริง 07/10/69 มี 2 แบบตามที่ที่กด "เพิ่มคู่กรณี":
+#   ตัวเลข = แอปมือถือ ISURVEY (เวลาเครื่อง Unix วินาที) · tp_car/tp_inj/in_inj + ปีเดือนวันเวลา = หน้าเว็บ ISURVEY
+# ⚠️ แบบเว็บมี "_" ในชื่อ — ตัดที่ "_" ตัวแรกได้ "tp" ทุกคัน (บั๊กเดิม: รูปคู่กรณีทุกคันลง "คันที่ 1")
+_TP_GROUP_RE = re.compile(r"^(\d{9,11}|(?:tp|in)_[a-z]+\d{14})_", re.I)
+
+
+def tp_group_key(name: str) -> str:
+    """รหัสรายการจากชื่อไฟล์ในโฟลเดอร์ tp_* — ไม่ใช่รูปแบบที่รู้จัก = ส่วนหน้าก่อน '_' ตัวแรก (พฤติกรรมเดิม)"""
+    m = _TP_GROUP_RE.match(str(name))
+    return m.group(1) if m else str(name).split("_", 1)[0]
+
+
+def tp_group_sort_key(key: str):
+    """เรียงรายการตามเวลาที่สร้าง (= ลำดับคันใน ISURVEY) — แบบตัวเลขกับแบบเว็บเทียบกันด้วยเวลาจริง ·
+    in_inj/tp_inj ปนกันเรียงตามตัวอักษรจะผิด · อ่านเวลาไม่ออก = ไปท้ายแถว เรียงตามชื่อ"""
+    k = str(key)
+    if re.fullmatch(r"\d{9,11}", k):
+        return (0, int(k), k)
+    m = re.search(r"(\d{14})$", k)
+    if m:
+        try:
+            t = datetime.strptime(m.group(1), "%Y%m%d%H%M%S").replace(
+                tzinfo=timezone(timedelta(hours=7))).timestamp()   # เวลาบนเว็บ ISURVEY = เวลาไทย
+            return (0, int(t), k)
+        except ValueError:
+            pass
+    return (1, 0, k)
+
+
 _TP_EXPORT_LABEL = {
     "TP_VEH": "รูปรถคู่กรณี คันที่{n}",
     # ป้าย option dynamic จริงของ EMCS (ยืนยันหน้าจริง 2026-06-18) — ฐานคนละคำกับหมวดในแอป
@@ -467,7 +497,7 @@ def categories_from_export(search_dir, claim: str) -> dict:
         cat = parts[0].upper()
         if cat.startswith("TP_") and len(parts) > 2:
             raw.setdefault(cat, set()).add(parts[1])
-    order = {c: {g: i + 1 for i, g in enumerate(sorted(gs))} for c, gs in raw.items()}
+    order = {c: {g: i + 1 for i, g in enumerate(sorted(gs, key=tp_group_sort_key))} for c, gs in raw.items()}
     out = {}
     for parts, name in entries:
         cat = parts[0].upper()

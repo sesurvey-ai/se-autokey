@@ -278,6 +278,14 @@ def test_injured_mapping():
     assert p["person_type"] == "ผู้ขับขี่ - รถประกัน" and p["wound_level"] == "บาดเจ็บ - ปานกลาง" and p["gender"] == "หญิง"
 
 
+def test_records_carry_isurvey_ikey_for_photo_folders():
+    # 07/10/69: รหัสรายการ = ชื่อโฟลเดอร์รูปของคัน/คน/ชิ้นนั้นบน ISURVEY → เว็บจับรูป "คันที่ N" ตรงตัว ไม่ต้องเดาจากลำดับ
+    r = _build()["report"]
+    assert r["opposing_parties"][0]["isurvey_ikey"] == "k4"
+    assert r["injured_persons"][0]["isurvey_ikey"] == "k5"
+    assert r["damaged_property"][0]["isurvey_ikey"] == "k6"
+
+
 def test_driver_id_type_and_titles():
     r = _build()["report"]
     assert r["driver_id_type"] == "thai" and r["driver_title"] == "คุณ"        # ไม่มีคำนำหน้า → คุณ

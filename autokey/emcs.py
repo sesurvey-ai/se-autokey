@@ -69,7 +69,7 @@ from .claim_data import (  # noqa: F401
     split_thai_name,
     title_from_gender_age,
 )
-from .images import ZIP_CAT_TO_EMCS, list_images
+from .images import ZIP_CAT_TO_EMCS, list_images, tp_group_key, tp_group_sort_key
 from .loss_type_map import loss_type_from_acc_type
 
 
@@ -3975,12 +3975,13 @@ def _tp_image_batches(folder, subdir: str, count: int, type_tmpl: str,
     if n == 1:
         groups = {1: files}
     else:
-        # หลายราย — แยกตามชื่อโฟลเดอร์ย่อย (ส่วนหน้าก่อน '_' แรก) เรียงคงที่
+        # หลายราย — แยกตามโฟลเดอร์ย่อยของ ISURVEY (รหัสรายการที่ต่อหน้าชื่อไฟล์) เรียงตามเวลาที่สร้างรายการ
+        # 07/10/69: เดิมตัดที่ '_' ตัวแรก → โฟลเดอร์แบบเว็บ "tp_car2026…" ได้ "tp" ทุกคัน = รูปทุกคันลงคันที่ 1
         raw = {}
         for p in files:
-            raw.setdefault(p.name.split("_", 1)[0], []).append(p)
+            raw.setdefault(tp_group_key(p.name), []).append(p)
         if len(raw) == n:
-            groups = {i: raw[k] for i, k in enumerate(sorted(raw), start=1)}
+            groups = {i: raw[k] for i, k in enumerate(sorted(raw, key=tp_group_sort_key), start=1)}
         else:
             log(f"   ⚠️ {subdir}: มี {n} รายการ แต่แยกรูปตามรายการไม่ชัด "
                 f"({len(raw)} กลุ่มจากชื่อไฟล์) → รวมเป็น 'ที่1' ทั้งหมด "
