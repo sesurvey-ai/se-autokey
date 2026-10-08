@@ -3119,6 +3119,10 @@ for (var i = 0; i < nodes.length; i++) {
   if (!t || t.length > 300 || !/[ก-๙]/.test(t)) continue;
   var st = window.getComputedStyle(el);
   if (st.display === 'none' || st.visibility === 'hidden') continue;
+  // ซ่อนเพราะกล่องแม่ซ่อน (display ของตัวเองยังเป็น inline) — เช่นป้าย "กรุณาระบุเหตุผลไม่น้อยกว่า 5 ตัวอักษร"
+  // ในหน้าต่าง "ยกเลิกรายงาน" ที่ไม่ได้เปิด เคยถูกรายงานเป็น error ของ EMCS (เคลม 2026013176757 · 08/10/69)
+  if (!el.getClientRects().length) continue;
+  if (/^\(?ใส่ได้มากกว่าหนึ่งชื่อ/.test(t)) continue;   // คำแนะนำประจำช่องสีแดง ไม่ใช่ข้อผิดพลาด
   var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(st.color || '');
   var red = m && Number(m[1]) >= 120 && Number(m[2]) <= 80 && Number(m[3]) <= 80;
   var cls = (el.className || '') + ' ' + (el.id || '');
@@ -3150,6 +3154,101 @@ def _silent_state(driver, button_id: str) -> str:
     return str(st)[:600]
 
 
+# ── alert ที่ "หายก่อนบอทเห็น" (08/10/69 เคลม 2026013176757 เคส #1578) ──
+# ChromeDriver ค่าเริ่มต้น unhandledPromptBehavior = "dismiss and notify": คำสั่งใดก็ตามที่ยิงตอน alert ค้าง
+# (find_element / execute_script) → ChromeDriver **ปิด alert ให้เลย** แล้วโยน UnexpectedAlertPresentException
+# พร้อมข้อความ · โค้ดเดิมไปรอ alert ใหม่ (accept_alert) ซึ่งไม่มีแล้ว → ข้อความสำเร็จหาย บอทนึกว่า "หน้าโหลดใหม่ไม่มี alert"/
+# "EMCS เงียบ" แล้วกด 'แก้ไข' ซ้ำ 9 รอบ ทั้งที่ EMCS ตอบ "บันทึกแก้ไขรายละเอียด เซอร์เวย์ เรียบร้อยแล้ว" ทุกรอบ
+# (คนเห็นป๊อปอัพทุกครั้งที่บอทกด · หน้าที่บอทเก็บไว้ 3 ใบมี <script>alert('บันทึกแก้ไข...เรียบร้อยแล้ว');</script> ครบ)
+# → ใช้ข้อความจาก exception · และอ่านสคริปต์ alert ที่เซิร์ฟเวอร์ฝังมากับหน้าใหม่เป็นหลักฐานสำรอง
+
+_JS_STARTUP_ALERTS = r"""
+var out = [], ss = document.getElementsByTagName('script');
+for (var i = 0; i < ss.length; i++) {
+  if (ss[i].src) continue;
+  var t = (ss[i].text || '').trim();
+  var m = /^alert\(\s*(['"])([\s\S]{1,500}?)\1\s*\)\s*;?$/.exec(t);
+  if (m) out.push(m[2]);
+}
+return out;
+"""
+
+
+def _exc_alert_text(e) -> str:
+    """ข้อความ alert ที่แนบมากับ UnexpectedAlertPresentException ('' ถ้าไม่มี)"""
+    t = getattr(e, "alert_text", None) or ""
+    if not t:
+        m = re.search(r"Alert text\s*:\s*(.+?)\}", str(getattr(e, "msg", "") or e), re.S)
+        t = m.group(1) if m else ""
+    return str(t).strip()
+
+
+def _note_alert(text: str, where: str = "") -> None:
+    """log + เก็บกฎ validation แบบเดียวกับ accept_alert (สำหรับ alert ที่ไม่ได้อ่านผ่าน accept_alert)"""
+    if not text:
+        return
+    log(f"   [alert{(' ' + where) if where else ''}] {text[:400]}")
+    try:
+        from .browser import harvest_rule
+        harvest_rule(text)
+    except Exception:
+        pass
+
+
+def _alert_from_exc(driver, e) -> str:
+    """alert เด้งระหว่างคำสั่งอื่น: ยังค้างอยู่ = อ่าน+กดตามกติกา accept_alert (confirm ทำลายข้อมูลยังถูกปฏิเสธ) ·
+    ChromeDriver ปิดไปแล้ว = ใช้ข้อความจาก exception (ห้ามรอ alert ใหม่ — ไม่มีแล้ว)"""
+    try:
+        return accept_alert(driver, timeout=0.5)
+    except TimeoutException:
+        pass
+    txt = _exc_alert_text(e)
+    _note_alert(txt, "ที่ ChromeDriver ปิดให้")
+    return txt
+
+
+def _startup_alert_text(driver) -> str:
+    """ข้อความ alert ที่ EMCS ฝังมากับหน้าที่เพิ่งโหลด (RegisterStartupScript) — '' ถ้าไม่มี
+    ⚠️ ใช้เฉพาะหลังรู้ว่าเอกสารถูกแทนที่แล้ว (_document_replaced) — หน้าเดิมก่อนคลิกอาจมีสคริปต์ของรอบก่อน"""
+    try:
+        msgs = driver.execute_script(_JS_STARTUP_ALERTS) or []
+    except UnexpectedAlertPresentException as e:
+        return _alert_from_exc(driver, e)
+    except Exception:
+        return ""
+    if not isinstance(msgs, (list, tuple)):
+        return ""
+    return " | ".join(str(m).strip() for m in msgs if str(m).strip())
+
+
+def _document_replaced(driver) -> bool:
+    """ตัวดักคลิก (window.__seClick ที่ _arm_click_probe ปักไว้) หายแล้ว + โหลดเสร็จ = หน้าใหม่จากการคลิกนี้มาแล้ว"""
+    try:   # ตอบเป็นคำ ไม่ใช่ true/false — ค่าแปลก ๆ (เช่น execute_script ที่ตอบ True ทุกอย่าง) ต้องไม่นับว่า "หน้าใหม่"
+        return driver.execute_script(
+            "return window.__seClick ? 'same' : (document.readyState === 'complete' ? 'replaced' : 'loading');") == "replaced"
+    except Exception:
+        return False
+
+
+def _stash_alert(driver, text: str) -> None:
+    """เก็บข้อความ alert ที่จับได้ระหว่างคลิก (ChromeDriver ปิดไปแล้ว) ให้ _wait_alert_or_refresh หยิบไปใช้"""
+    if text:
+        try:
+            driver._ak_pending_alert = text
+        except Exception:
+            pass
+
+
+def _take_pending_alert(driver) -> str:
+    txt = getattr(driver, "_ak_pending_alert", "") or ""
+    if txt:
+        try:
+            driver._ak_pending_alert = ""
+        except Exception:
+            pass
+    return txt
+
+
 def _wait_alert_or_refresh(driver, timeout: float, grace: float = 2.0):
     """หลังคลิกบันทึก: รอ alert หรือรู้ให้เร็วว่า "หน้าโหลดใหม่แล้วแต่ไม่มี alert"
 
@@ -3167,22 +3266,30 @@ def _wait_alert_or_refresh(driver, timeout: float, grace: float = 2.0):
     deadline = time.time() + timeout
     refreshed_at = None
     while time.time() < deadline:
+        pending = _take_pending_alert(driver)       # alert ที่เด้งระหว่างคลิก (ChromeDriver ปิดให้แล้ว)
+        if pending:
+            return "alert", pending
         try:
             WebDriverWait(driver, 0.5).until(EC.alert_is_present())
             return "alert", accept_alert(driver, timeout=2)
         except TimeoutException:
             pass
-        except UnexpectedAlertPresentException:
-            return "alert", accept_alert(driver, timeout=2)
+        except UnexpectedAlertPresentException as e:
+            return "alert", _alert_from_exc(driver, e)
         try:
             gone = driver.execute_script(
                 "return !window.__seClick && document.readyState === 'complete';")
-        except UnexpectedAlertPresentException:
-            return "alert", accept_alert(driver, timeout=2)
+        except UnexpectedAlertPresentException as e:
+            return "alert", _alert_from_exc(driver, e)
         except Exception:
             gone = False                     # กำลังเปลี่ยนหน้าอยู่
         if gone:
             refreshed_at = refreshed_at or time.time()
+            # หน้าใหม่โหลดเสร็จ — alert ที่เซิร์ฟเวอร์ฝังมาอาจถูกปิดไปก่อนบอทเห็น อ่านจากสคริปต์ในหน้าแทน (08/10/69)
+            startup = _startup_alert_text(driver)
+            if startup:
+                _note_alert(startup, "จากสคริปต์ในหน้าใหม่")
+                return "alert", startup
             if time.time() - refreshed_at >= grace:
                 return "refresh", ""
     return "none", ""
@@ -3199,7 +3306,10 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
     alert และ postback แล้วบอทไปรอ alert เก้อ 30 วิ
     ⚠️ verify ของจริง เคลม 2026013059072: บอทกดแล้วเงียบ แต่คนกดเองบนหน้าเดียวกัน
     ด้วยข้อมูลชุดเดิมผ่านทันที (ได้ S68426080794) — ไม่ใช่ปัญหาข้อมูล แต่เป็นจังหวะกด
+    08/10/69 (เคลม 2026013176757): "คนกดผ่านแต่บอทเงียบ" ส่วนหนึ่งคือ EMCS บันทึกแล้วจริง แต่ alert สำเร็จถูก ChromeDriver
+    ปิดทิ้งก่อนบอทอ่าน → alert ที่จับได้ระหว่างคลิกเก็บไว้ให้ _wait_alert_or_refresh (_stash_alert)
     """
+    _take_pending_alert(driver)          # ล้างของค้างจากรอบก่อน — alert ที่จะส่งต่อต้องเป็นของคลิกนี้เท่านั้น
     for i in range(1, tries + 1):
         # ⛔ **ถอดโฟกัสออกจากช่องสุดท้ายก่อนเสมอ** — ต้นเหตุจริงของ "คลิกบันทึกหาย"
         #
@@ -3234,11 +3344,12 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
         wait_postback_done(driver)
         try:
             btn = wait_clickable(driver, By.ID, button_id)
-        except UnexpectedAlertPresentException:
+        except UnexpectedAlertPresentException as e:
             # alert โผล่ระหว่างรอปุ่ม = คำสั่งก่อนหน้าถึง handler แล้ว (มักเป็นข้อความ
             # "บันทึก...เรียบร้อยแล้ว" ที่มาช้า) — ผู้เรียกอ่าน alert ต่อเอง
             # เดิมหลุดออกไปเป็น UnexpectedAlertPresentException ดิบ ล้มทั้งงาน
             log("   ↳ มี alert เด้งระหว่างรอปุ่ม — ถือว่าคลิกก่อนหน้าถึง EMCS แล้ว")
+            _stash_alert(driver, _alert_from_exc(driver, e))
             return True
         except TimeoutException:
             # ปุ่มไม่ขึ้น/ยังกดไม่ได้ — เดิมโยน TimeoutException ดิบออกไปล้มทั้งงาน
@@ -3260,10 +3371,17 @@ def _click_save_button(driver, button_id: str, tries: int = 3) -> bool:
             # ก่อนหน้านี้แล้วด้วย wait_postback_done (ไม่คลิกตอนมี submit ค้าง) —
             # เคยลองเช็คหลังคลิกด้วย marker บน window แล้วใช้ไม่ได้ (03/09/69) อย่าเอากลับมา
             return True
-        except UnexpectedAlertPresentException:
-            return True          # เด้ง alert = คลิกติดแน่นอน (ผู้เรียกอ่านต่อเอง)
+        except UnexpectedAlertPresentException as e:
+            # เด้ง alert = คลิกติดแน่นอน · ChromeDriver ปิด alert ให้แล้ว → เก็บข้อความไว้ให้ผู้เรียก (เดิมทิ้ง → กดซ้ำ 08/10/69)
+            _stash_alert(driver, _alert_from_exc(driver, e))
+            return True
         except Exception:
             pass
+        # หน้าใหม่มาแล้ว (ตัวดักหาย) = คลิกถึงเซิร์ฟเวอร์แล้ว — ปุ่มบนหน้าใหม่กลับเป็น 'แก้ไข' กดได้ จึงดูเหมือน "คลิกไม่ติด"
+        # ห้ามกดซ้ำ: ส่งต่อให้ผู้เรียกอ่านผล (alert ที่ฝังมากับหน้าใหม่ / refresh) — 08/10/69
+        if _document_replaced(driver):
+            _stash_alert(driver, _startup_alert_text(driver))
+            return True
         # คลิกไม่ติด = ได้ 2 อย่าง แยกให้ออกก่อนจะกดซ้ำ:
         #  ก) validForm() ปัดตก (ช่องบังคับขาด) → onclick return false ก่อนถึง disable
         #     กดซ้ำอีกกี่ครั้งก็ผลเดิม — ออกไปให้ผู้เรียกอ่านรายชื่อช่องที่ขาดเลย
@@ -3488,7 +3606,12 @@ def save_main_form(driver, data: ClaimData, button_id: str = "btnSave",
         except TimeoutException:
             alert_text, silent = "", True
             # ⚠️ "ไม่มี alert" ไม่ได้แปลว่าไม่ได้บันทึก — ถาม DOM ก่อนเสมอ
-            if _main_form_saved(driver, button_id):
+            # alert ตัวจริงอาจถูก ChromeDriver ปิดไปก่อนบอทเห็น แต่ข้อความยังฝังอยู่ในหน้าใหม่ (08/10/69 เคลม 2026013176757)
+            _late = _startup_alert_text(driver) if _document_replaced(driver) else ""
+            if _late:
+                _note_alert(_late, "จากสคริปต์ในหน้าใหม่")
+                alert_text, silent = _late, False
+            elif _main_form_saved(driver, button_id):
                 log("   ↳ หน้าเว็บบอกว่าบันทึกไปแล้ว (ปุ่ม 'บันทึก' กลายเป็น 'แก้ไข') "
                     "— ถือว่าสำเร็จ ไม่กดซ้ำ")
                 silent = False
