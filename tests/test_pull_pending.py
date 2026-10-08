@@ -39,8 +39,10 @@ class _Session:
 class FakeAPI:
     """ยืม _get_url ตัวจริง (list_pending อ่านรายงานผ่าน _get_url ตั้งแต่ 08/10/69 — ให้ตัวคุม session จับ "หลุด" ได้)"""
     _get_url = ISurveyAPI._get_url
+    _http_get = ISurveyAPI._http_get
     central = None
     central_reads = 0
+    req_lock = None
 
     def __init__(self, rows):
         self.s = _Session(rows)

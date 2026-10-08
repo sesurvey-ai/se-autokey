@@ -91,21 +91,29 @@ class ISurveyAPI:
         self.central = None
         self.central_gen = 0      # รอบล็อกอินของบัญชีกลางตอนเริ่มงานนี้ (CentralSession.intact เทียบ)
         self.central_reads = 0    # คำขอที่อ่านสำเร็จแล้วในงานนี้ — 0 = ยังไม่ได้อ่านอะไรด้วย session เก่า
+        self.req_lock = None      # บัญชีกลาง: คำขอ JSON ทีละคำขอบน session ที่ใช้ร่วม (ISURVEY/PHP ล็อก session ต่อคำขอ — isurvey_central)
 
     # ------------------------------------------------------------------ HTTP
     def _get(self, path, _timeout=30, **params):
         return self._get_url(f"{self.base}/{path}", _timeout, params)
 
+    def _http_get(self, url, params, timeout):
+        lock = self.req_lock
+        if lock is None:
+            return self.s.get(url, params=params, timeout=timeout)
+        with lock:      # timeout นับเฉพาะตอนคุยกับ ISURVEY — รอคิวฝั่งเราไม่ทำให้หมดเวลา
+            return self.s.get(url, params=params, timeout=timeout)
+
     def _get_url(self, url, _timeout=30, params=None):
         central = self.central
         gen = central.generation if central is not None else 0
-        r = self.s.get(url, params=params, timeout=_timeout)
+        r = self._http_get(url, params, _timeout)
         if central is not None and session_lost(r):
             where = url.rsplit("/", 1)[-1]
             central.recover(gen, where)          # ล็อกอินใหม่ (หรือ raise) แล้วลองคำขอเดิมอีกครั้ง
             if self.central_reads == 0:          # ยังไม่ได้อ่านอะไรด้วย session ที่หลุด = งานนี้ยังครบ นับรอบใหม่
                 self.central_gen = central.generation
-            r = self.s.get(url, params=params, timeout=_timeout)
+            r = self._http_get(url, params, _timeout)
             if session_lost(r):
                 raise RuntimeError(f"ISURVEY ตอบ session หลุดซ้ำหลังล็อกอินใหม่ ({where}) — ลองใหม่อีกครั้ง")
         r.raise_for_status()

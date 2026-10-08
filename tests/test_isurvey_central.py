@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """บัญชี ISURVEY กลาง (08/10/69) — ล็อกอินครั้งเดียวแล้วใช้ session เดิม · หลุดแล้วล็อกอินใหม่เอง · ไม่แย่งกับคนที่เปิดบัญชีกลางที่อื่น
-· session ไม่ต่อเนื่องระหว่างงาน = อ่านใหม่ (ISURVEY บางหน้าตอบ "ว่าง" เงียบ ๆ ตอนหลุด) · service ถอยไปบัญชีหัวหน้าเมื่อบัญชีกลางใช้ไม่ได้
+· session ไม่ต่อเนื่องระหว่างดึงงาน = อ่านใหม่ (ISURVEY บางหน้าตอบ "ว่าง" เงียบ ๆ) · service ถอยไปบัญชีหัวหน้าเมื่อบัญชีกลางใช้ไม่ได้
+· (รอบ 2 — เจอจริง 08/10/69 14:21–14:41) ISURVEY ช้าไม่ใช่ "หลุด" ไม่ใช่ "รหัสผิด" · คำขอบน session กลางวิ่งทีละคำขอ · ล็อกอินบน session ใหม่
 
 ISURVEY ปลอมในเครื่อง (ไม่แตะเครือข่าย): ล็อกอินใหม่ = session เก่าตาย (1 บัญชีใช้ได้ที่เดียว) · คำตอบตอน session หลุด
 ใช้รูปแบบที่ยิงดูจริงแบบไม่ล็อกอิน 08/10/69 (listcases "Session lose!" · get-images ว่างเงียบ · รายงาน PHP Notice)
@@ -11,12 +12,14 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -41,55 +44,79 @@ class _Resp:
 
 
 class FakeIsurvey:
-    """เซิร์ฟเวอร์ ISURVEY จำลอง: บัญชีละ 1 session — ล็อกอินใหม่ = session เก่าตาย"""
+    """เซิร์ฟเวอร์ ISURVEY จำลอง: บัญชีละ 1 session (cookie PHPSESSID) — ล็อกอินใหม่ = session เก่าตาย"""
 
     def __init__(self):
         self.current = None
         self.next_sid = 0
         self.logins = 0
-        self.login_error = None          # None | "bad" (รหัสผิด) | "net" (ISURVEY ไม่ตอบ)
+        self.login_error = None          # None | "bad" (รหัสผิด) | "net" (POST ไม่ตอบ) | "slow" (getUserData หลังล็อกอินค้าง)
+        self.check_error = None          # "slow" = getUserData ค้าง (คิวยาว) ทั้งที่ session ยังดี
         self.hits: list[str] = []
+        self.inflight = 0
+        self.max_inflight = 0
+        self.delay = 0.0
+        self.guard = threading.Lock()
 
     def kick(self):                      # มีคนล็อกอินบัญชีเดียวกันที่อื่น
         self.next_sid += 1
         self.current = f"other-{self.next_sid}"
 
     def valid(self, sess) -> bool:
-        return sess.sid is not None and sess.sid == self.current
+        sid = sess.cookies.get("PHPSESSID")
+        return sid is not None and sid == self.current
 
 
 class FakeHttp:
-    """แทน requests.Session ของ ISurveyAPI"""
+    """แทน requests.Session ของ ISurveyAPI — cookie อยู่ใน self.cookies (dict มี clear/update แบบ cookie jar)"""
 
     def __init__(self, server: FakeIsurvey):
         self.server = server
-        self.sid = None
+        self.cookies: dict = {}
+        self.just_logged_in = False
 
     def get(self, url, params=None, timeout=None):
         sv = self.server
         name = url.rsplit("/", 1)[-1]
-        sv.hits.append(name)
-        ok = sv.valid(self)
-        if name == "getUserData.php":
-            return _Resp({"success": 1, "message": "บัญชีกลาง ทดสอบ"} if ok else {"success": 0, "message": ""})
-        if name == "listcases.php":
-            return _Resp({"total": 1, "cases": [{"claim_no": "2026013000001"}]} if ok
-                         else {"total": 0, "message": "Session lose!"})
-        if name == "get-images.php":
-            return _Resp({"images": [{"name": "a.jpg"}]} if ok else {"images": []})      # หลุด = ว่างเงียบ ๆ
-        if name == "get_data_report.php":
-            return _Resp({"arr_data": []}) if ok else _Resp(
-                text="<br />\n<b>Notice</b>:  Undefined index: iSurvey-SE-6.2.0.981-ins_companyID in <b>x.php</b>")
-        return _Resp({"ok": True})                                                       # หน้าแรก (ก่อน POST login)
+        with sv.guard:
+            sv.hits.append(name)
+            sv.inflight += 1
+            sv.max_inflight = max(sv.max_inflight, sv.inflight)
+        try:
+            if sv.delay:
+                time.sleep(sv.delay)
+            ok = sv.valid(self)
+            if name == "getUserData.php":
+                if self.just_logged_in:                     # คำขอแรกหลังล็อกอิน
+                    if sv.login_error == "slow":
+                        raise requests.exceptions.ReadTimeout("ISURVEY ช้า")
+                    self.just_logged_in = False
+                elif sv.check_error == "slow":              # เช็คทีหลัง ค้างหลังคิว ทั้งที่ session ยังดี
+                    raise requests.exceptions.ReadTimeout("คิวยาว")
+                return _Resp({"success": 1, "message": "บัญชีกลาง ทดสอบ"} if ok else {"success": 0, "message": ""})
+            if name == "listcases.php":
+                return _Resp({"total": 1, "cases": [{"claim_no": "2026013000001"}]} if ok
+                             else {"total": 0, "message": "Session lose!"})
+            if name == "get-images.php":
+                return _Resp({"images": [{"name": "a.jpg"}]} if ok else {"images": []})      # หลุด = ว่างเงียบ ๆ
+            if name == "get_data_report.php":
+                return _Resp({"arr_data": []}) if ok else _Resp(
+                    text="<br />\n<b>Notice</b>:  Undefined index: iSurvey-SE-6.2.0.981-ins_companyID in <b>x.php</b>")
+            return _Resp({"ok": True})                                                       # หน้าแรก (ก่อน POST login)
+        finally:
+            with sv.guard:
+                sv.inflight -= 1
 
     def post(self, url, data=None, timeout=None):
         sv = self.server
         if sv.login_error == "net":
-            raise ConnectionError("ISURVEY ไม่ตอบ")
+            raise requests.exceptions.ConnectionError("ISURVEY ไม่ตอบ")
         if sv.login_error != "bad":
             sv.logins += 1
             sv.next_sid += 1
-            self.sid = sv.current = f"sid-{sv.next_sid}"
+            sv.current = f"sid-{sv.next_sid}"
+            self.cookies["PHPSESSID"] = sv.current
+        self.just_logged_in = True
         return _Resp({"success": sv.login_error != "bad"})
 
 
@@ -102,8 +129,7 @@ def _factory(server):
 
 
 def _central(server, now=None, **kw):
-    clock = (lambda: now[0]) if now is not None else None
-    extra = {"clock": clock} if clock else {}
+    extra = {"clock": (lambda: now[0])} if now is not None else {}
     return CentralSession("central", "pw", _factory(server), log=lambda m: None, **extra, **kw)
 
 
@@ -142,6 +168,18 @@ def test_session_lost_on_first_read_relogs_in_and_retries_transparently():
     assert c.intact(api)                    # ยังไม่ได้อ่านอะไรด้วย session ที่หลุด → งานนี้ยังครบ
 
 
+def test_relogin_moves_new_cookie_into_the_shared_session():
+    # ล็อกอินใหม่ทำบน session ใหม่ แล้วย้าย cookie เข้า session ที่ใช้ร่วม — งานที่ถือ client เดิมอยู่ใช้ต่อได้เลย
+    sv = FakeIsurvey()
+    c = _central(sv, min_relogin_gap_sec=0)
+    a = c.client()
+    shared = a.s
+    sv.kick()
+    c.recover(c.generation, "test")
+    assert a.s is shared and shared.cookies["PHPSESSID"] == sv.current
+    assert a._get("supervisor/listcases.php")["cases"]
+
+
 def test_session_lost_mid_job_marks_job_not_intact():
     sv = FakeIsurvey()
     c = _central(sv, min_relogin_gap_sec=0)
@@ -150,7 +188,7 @@ def test_session_lost_mid_job_marks_job_not_intact():
     sv.kick()
     assert api._get("supervisor/get-images.php")["images"] == []      # ว่างเงียบ ๆ — ตัวคำตอบไม่ฟ้อง
     assert not c.intact(api)                                           # แต่เช็คหลังงานจับได้
-    api2 = c.client(verify=True)                                       # รอบอ่านใหม่: เช็คก่อน → ล็อกอินใหม่
+    api2 = c.client(verify=True)                                       # รอบทำใหม่: เช็คก่อน → ล็อกอินใหม่
     assert api2._get("supervisor/get-images.php")["images"] and c.intact(api2)
 
 
@@ -166,6 +204,21 @@ def test_concurrent_jobs_seeing_the_same_loss_login_only_once():
     assert b._get("supervisor/listcases.php")["cases"]
 
 
+def test_requests_on_the_shared_session_run_one_at_a_time():
+    # ISURVEY (PHP) ล็อก session ต่อคำขอ — ยิงพร้อมกันบน session เดียวไปต่อคิวที่ ISURVEY จนหมดเวลา (เจอจริง 08/10/69)
+    sv = FakeIsurvey()
+    c = _central(sv)
+    clients = [c.client() for _ in range(4)]
+    sv.delay = 0.05
+    ts = [threading.Thread(target=lambda api=api: [api._get("supervisor/listcases.php") for _ in range(3)])
+          for api in clients]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(10)
+    assert sv.max_inflight == 1
+
+
 def test_lost_again_right_after_login_means_someone_else_uses_the_account():
     now = [1000.0]
     sv = FakeIsurvey()
@@ -177,8 +230,9 @@ def test_lost_again_right_after_login_means_someone_else_uses_the_account():
     assert sv.logins == 2
     now[0] += 10
     sv.kick()                               # หลุดอีกภายใน 1 นาที = มีคนใช้บัญชีกลางที่อื่น
-    with pytest.raises(CentralUnavailable):
+    with pytest.raises(CentralUnavailable) as ei:
         c.recover(c.generation, "y")
+    assert ei.value.fallback_ok is True     # ระหว่างพักใช้บัญชีหัวหน้า
     assert sv.logins == 2                   # ไม่แย่งกลับ
     assert c.status()["state"] == "paused" and "ที่อื่น" in c.status()["last_error"]
     with pytest.raises(CentralUnavailable):
@@ -187,23 +241,63 @@ def test_lost_again_right_after_login_means_someone_else_uses_the_account():
     assert c.available()
 
 
-def test_bad_password_pauses_long_and_network_error_pauses_short():
+def test_rejected_password_pauses_long_and_falls_back():
     now = [1000.0]
     sv = FakeIsurvey()
     sv.login_error = "bad"
     c = _central(sv, now=now)
-    with pytest.raises(CentralUnavailable, match="ไม่ผ่าน"):
+    with pytest.raises(CentralUnavailable, match="ไม่รับรหัส") as ei:
         c.client()
+    assert ei.value.fallback_ok is True
     now[0] += 600
     with pytest.raises(CentralUnavailable):                 # ยังพัก (15 นาที) — ไม่ลองรหัสผิดถี่ ๆ จนบัญชีโดนล็อก
         c.client()
-    now[0] += 301
-    sv.login_error = "net"
-    with pytest.raises(CentralUnavailable, match="ไม่ตอบ"):
+
+
+def test_slow_isurvey_at_login_is_not_a_wrong_password():
+    # เจอจริง 14:25:11: getUserData หลังล็อกอินค้าง → เดิมตีว่า "ล็อกอินไม่ผ่าน ตรวจรหัส" พัก 15 นาที ใช้บัญชีหัวหน้า (เตะหัวหน้า)
+    now = [1000.0]
+    sv = FakeIsurvey()
+    sv.login_error = "slow"
+    c = _central(sv, now=now)
+    with pytest.raises(CentralUnavailable, match="ไม่ตอบ") as ei:
         c.client()
-    now[0] += 121
+    assert ei.value.fallback_ok is False        # ไม่ถอยไปบัญชีหัวหน้า (ช้าเหมือนกัน แถมเตะหัวหน้า)
+    assert "ไม่รับรหัส" not in (c.status()["last_error"] or "")
+    now[0] += 61                                # พักสั้น 1 นาที
+    sv.login_error = None
+    assert c.client() and c.status()["state"] == "ready"
+
+
+def test_network_error_at_login_pauses_short_without_fallback():
+    now = [1000.0]
+    sv = FakeIsurvey()
+    sv.login_error = "net"
+    c = _central(sv, now=now)
+    with pytest.raises(CentralUnavailable, match="ไม่ตอบ") as ei:
+        c.client()
+    assert ei.value.fallback_ok is False
+    with pytest.raises(CentralUnavailable) as ei2:     # ระหว่างพัก — ชนิดเดิม (ไม่ถอย)
+        c.client()
+    assert ei2.value.fallback_ok is False
+    now[0] += 61
     sv.login_error = None
     assert c.client() and sv.logins == 1
+
+
+def test_slow_check_is_not_treated_as_session_lost():
+    # เช็ค getUserData ค้างหลังคิว (session ยังดี) — เดิมตีว่าหลุด → ล็อกอินใหม่วน (14:21–14:25)
+    now = [1000.0]
+    sv = FakeIsurvey()
+    c = _central(sv, now=now)
+    api = c.client()
+    sv.check_error = "slow"
+    now[0] += 3600                               # เกิน verify_ttl → client() เช็คก่อนเริ่ม
+    api2 = c.client()
+    assert sv.logins == 1 and api2 is not None   # ไม่รู้ = ใช้ต่อ ไม่ล็อกอินใหม่
+    assert c.intact(api)                         # ไม่รู้ตอนจบ = ถือว่าครบ (หลุดจริง ISURVEY ตอบ success:0 ทันที)
+    c.ping()
+    assert sv.logins == 1
 
 
 def test_keepalive_logs_in_once_then_only_touches_and_relogs_in_when_lost():
@@ -308,7 +402,7 @@ def test_service_reads_with_central_and_never_closes_with_it(monkeypatch):
         srv.server_close()
 
 
-def test_service_falls_back_to_own_account_or_412(monkeypatch):
+def test_service_falls_back_to_own_account_only_when_password_is_rejected(monkeypatch):
     sv = FakeIsurvey()
     sv.login_error = "bad"
     central = _central(sv)
@@ -317,9 +411,25 @@ def test_service_falls_back_to_own_account_or_412(monkeypatch):
     srv, post = _serve(monkeypatch, central)
     try:
         code, out = post("/search", {"use_central": True, "username": "head", "password": "x", "q": "2026013000001"})
-        assert code == 200 and out["account"] == "own"                                   # บัญชีกลางล็อกอินไม่ผ่าน → บัญชีหัวหน้า
+        assert code == 200 and out["account"] == "own"                                   # ISURVEY ไม่รับรหัสบัญชีกลาง → บัญชีหัวหน้า
         code, out = post("/search", {"use_central": True, "q": "2026013000001"})
         assert code == 412 and out["code"] == "no_account" and "บัญชี ISURVEY" in out["error"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_service_does_not_kick_heads_when_isurvey_is_just_slow(monkeypatch):
+    sv = FakeIsurvey()
+    sv.login_error = "slow"
+    central = _central(sv)
+    own = []
+    monkeypatch.setattr(pull_core, "search_jobs", lambda api, q: {"cases": [], "rounds": {}, "capped": False})
+    monkeypatch.setattr(pull_core, "make_client", lambda u, p: own.append(u) or object())
+    srv, post = _serve(monkeypatch, central)
+    try:
+        code, out = post("/search", {"use_central": True, "username": "head", "password": "x", "q": "2026013000001"})
+        assert code == 503 and "ลองใหม่" in out["error"] and own == []                  # ไม่ล็อกอินบัญชีหัวหน้า
     finally:
         srv.shutdown()
         srv.server_close()
@@ -342,7 +452,7 @@ def test_service_without_central_keeps_old_behaviour(monkeypatch):
         srv.server_close()
 
 
-def test_read_job_is_retried_when_session_broke_during_it(monkeypatch):
+def test_photo_job_is_redone_when_session_broke_during_it(monkeypatch):
     sv = FakeIsurvey()
     central = _central(sv, min_relogin_gap_sec=0)
     monkeypatch.setattr(pull_service, "CENTRAL", central)
@@ -355,8 +465,19 @@ def test_read_job_is_retried_when_session_broke_during_it(monkeypatch):
             sv.kick()                              # หลุดกลางงานรอบแรก → ผลรอบแรกเชื่อไม่ได้
         return 200, out
 
-    code, out = pull_service._read(lambda verify=False: central.client(verify=verify), True, fn)
+    code, out = pull_service._read(lambda verify=False: central.client(verify=verify), True, fn, check_intact=True)
     assert len(calls) == 2 and code == 200 and out["images"]
+
+
+def test_read_only_jobs_do_not_recheck_the_session(monkeypatch):
+    sv = FakeIsurvey()
+    central = _central(sv)
+    monkeypatch.setattr(pull_service, "CENTRAL", central)
+    central.client()                               # ล็อกอินก่อน
+    before = sv.hits.count("getUserData.php")
+    code, out = pull_service._read(lambda verify=False: central.client(verify=verify), True,
+                                   lambda api: (200, api._get("supervisor/listcases.php")))
+    assert code == 200 and sv.hits.count("getUserData.php") == before   # ไม่เพิ่มคำขอเช็คให้คิวยาว
 
 
 def test_pull_rereads_before_creating_the_case_when_session_broke(monkeypatch):

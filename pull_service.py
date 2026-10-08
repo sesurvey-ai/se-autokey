@@ -69,8 +69,10 @@ def _log(msg: str) -> None:
 # → ให้คำขอของบัญชีเดียวกันรอคิวทีละงาน · คนละบัญชียังทำพร้อมกันได้ตามเดิม
 _ACCOUNT_LOCKS: dict[str, threading.Lock] = {}
 _ACCOUNT_LOCKS_GUARD = threading.Lock()
-#: รอคิวบัญชีเดียวกันได้นานสุด (วินาที) — ต่ำกว่าที่ backend รอ /pull (300 วิ) ให้ตอบข้อความชัด ๆ ก่อนฝั่งนั้นตัดเอง
+#: รอคิวบัญชีเดียวกันได้นานสุด (วินาที) — ต่ำกว่าที่ backend รอเส้นนั้น ให้ตอบข้อความชัด ๆ ก่อนฝั่งนั้นตัดเอง
+#: (backend: /pull /photos 300 · /close 240 · /pending /rounds /search 150 · /login-test 30)
 ACCOUNT_WAIT_SEC = 240
+ACCOUNT_WAIT_BY_PATH = {"/pending": 100, "/rounds": 100, "/search": 100, "/close": 200, "/login-test": 20}
 
 
 CENTRAL = isurvey_central.CentralSession(
@@ -93,11 +95,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send(self, code: int, obj: dict) -> None:
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # backend ตัดสายไปก่อน (รอเกินเวลาของมัน) — ไม่ต้องพ่น traceback (08/10/69)
+            _log(f"[pull] {self.path.split('?')[0]} ตอบไม่ทัน — backend ตัดสายไปก่อน ({code})")
 
     def _authed(self) -> bool:
         got = self.headers.get("X-Service-Token", "")
@@ -133,6 +139,10 @@ class Handler(BaseHTTPRequestHandler):
                 code, obj = self._run(path, body, central=True)
                 return self._send(code, {**obj, "account": "central"})
             except isurvey_central.CentralUnavailable as e:
+                if not getattr(e, "fallback_ok", True):
+                    # ISURVEY ช้า/เน็ตล่ม — ถอยไปบัญชีหัวหน้าก็ช้าเหมือนกัน แถมเตะหน้า ISURVEY ของหัวหน้า → ให้ลองใหม่แทน (08/10/69)
+                    return self._send(503, {"ok": False, "account": "central",
+                                            "error": f"{e} — ลองใหม่อีกครั้งในอีกสักครู่"})
                 if not username or not password:
                     return self._send(412, {"ok": False, "code": "no_account", "account": "central",
                                             "error": f"{e} — และยังไม่ได้ตั้งบัญชี ISURVEY ของคุณไว้สำรอง (เมนู \"บัญชี ISURVEY\")"})
@@ -143,8 +153,9 @@ class Handler(BaseHTTPRequestHandler):
                                         "error": "ยังไม่ได้ตั้งบัญชี ISURVEY — ไปที่เมนู \"บัญชี ISURVEY\" ก่อน (บัญชีกลางของระบบยังไม่ได้ตั้ง)"})
             return self._send(400, {"ok": False, "error": "ต้องมี username และ password ของ ISURVEY"})
         lock = _account_lock(username)
-        if not lock.acquire(timeout=ACCOUNT_WAIT_SEC):
-            _log(f"[queue] {username}: รอคิวบัญชีเกิน {ACCOUNT_WAIT_SEC} วิ — {path}")
+        wait = ACCOUNT_WAIT_BY_PATH.get(path, ACCOUNT_WAIT_SEC)
+        if not lock.acquire(timeout=wait):
+            _log(f"[queue] {username}: รอคิวบัญชีเกิน {wait} วิ — {path}")
             return self._send(503, {"ok": False, "account": "own",
                                     "error": "บัญชี ISURVEY นี้กำลังทำงานอื่นค้างอยู่นาน — รอสักครู่แล้วลองใหม่"})
         try:
@@ -215,7 +226,7 @@ class Handler(BaseHTTPRequestHandler):
                 survey_no = str(body.get("survey_no") or "").strip()
                 # เติมรูปซ้ำได้ไม่ซ้อน (backend เทียบเนื้อไฟล์) → session ไม่ต่อเนื่อง = ทำอีกรอบเหมือนงานอ่าน
                 code, result = _read(make, central, lambda api: (200, pull_core.refetch_photos(
-                    api, claim, survey_no, int(case_id), SESURVEY_URL, SESURVEY_TOKEN)))
+                    api, claim, survey_no, int(case_id), SESURVEY_URL, SESURVEY_TOKEN)), check_intact=True)
                 if result.get("error"):
                     return 502, {"ok": False, "error": str(result["error"])}
                 _log(f"[photos] {who}: เคลม {claim} → เคส #{case_id} +{result.get('added')} ข้าม {result.get('skipped')} (ISURVEY มี {result.get('isurvey_photo_listed')})")
@@ -246,9 +257,12 @@ class Handler(BaseHTTPRequestHandler):
             return 500, {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
-def _read(make, central: bool, fn) -> tuple[int, dict]:
-    """งานอ่านอย่างเดียว fn(api) → (code, JSON) · บัญชีกลาง: session ไม่ต่อเนื่องระหว่างอ่าน = อ่านใหม่ 1 รอบด้วย session ที่เช็คแล้ว"""
-    if not central:
+def _read(make, central: bool, fn, check_intact: bool = False) -> tuple[int, dict]:
+    """งาน fn(api) → (code, JSON)
+    check_intact=True (ดึงรูป — หน้ารูปตอบ "ว่าง" เงียบ ๆ ตอน session หลุด): บัญชีกลาง session ไม่ต่อเนื่องระหว่างงาน = ทำใหม่ 1 รอบ
+    งานอ่านอย่างเดียว (รายการ/ครั้งที่/ค้น) ใช้แต่หน้าที่ฟ้อง "Session lose!" ได้ (จัดการใน _get_url แล้ว) — ไม่ต้องเช็คซ้ำ
+    (08/10/69: เช็คซ้ำทุกงานตอนคนใช้พร้อมกันหลายคน = getUserData ต่อคิวยาวจนหมดเวลา → นึกว่าหลุด วนล็อกอินใหม่)"""
+    if not central or not check_intact:
         return fn(make())
     for attempt in (1, 2):
         api = make(verify=attempt > 1)
