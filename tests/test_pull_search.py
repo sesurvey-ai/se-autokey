@@ -95,6 +95,37 @@ def test_search_round_error_does_not_break_results():
     assert len(out["cases"]) == 1 and "error" in out["rounds"][CLAIM]
 
 
+def test_search_cases_retries_once_on_read_timeout():
+    """08/10/69 หัวหน้าค้นบนเว็บแล้วได้ ReadTimeout 30 วิ (ISURVEY ค้างคำขอแรกหลังล็อกอิน) → รอ 45 วิ แล้วลองใหม่ 1 ครั้ง (75 วิ)"""
+    import requests
+    from autokey.isurvey_api import ISurveyAPI
+    api = ISurveyAPI.__new__(ISurveyAPI)                 # ไม่ล็อกอิน ไม่แตะเครือข่าย
+    api._masters = {"masterStatus": {"100": "จบงาน"}}
+    calls = []
+
+    def fake_get(path, _timeout=30, **params):
+        calls.append((path, _timeout, params.get("claim_no")))
+        if len(calls) == 1:
+            raise requests.exceptions.ReadTimeout("slow")
+        return {"cases": [{"claim_no": CLAIM, "sttcase_ID": "100"}]}
+
+    api._get = fake_get
+    rows = api.search_cases(CLAIM)
+    assert [c[1] for c in calls] == [45, 75] and all(c[0] == "supervisor/listcases.php" and c[2] == CLAIM for c in calls)
+    assert rows[0]["status_name"] == "จบงาน"
+
+
+def test_search_jobs_timeout_becomes_readable_message():
+    import pytest
+    import requests
+
+    class Slow(FakeAPI):
+        def search_cases(self, q, limit=50):
+            raise requests.exceptions.ReadTimeout("HTTPSConnectionPool(...): Read timed out.")
+    with pytest.raises(RuntimeError, match="ISURVEY ตอบช้ามาก"):
+        pull_core.search_jobs(Slow(), CLAIM)
+
+
 # ── pull_case(as_reference=True) ──
 def _harness(monkeypatch, web_has=()):
     posts, lookups = [], []

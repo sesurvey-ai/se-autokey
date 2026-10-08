@@ -24,6 +24,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import requests
+
 from .config import Config
 from .isurvey_api import ISurveyAPI
 from .isurvey_to_sesurvey import apply_visit_rules, build_case
@@ -158,7 +160,10 @@ def search_jobs(api: ISurveyAPI, q: str) -> dict:
     "ครั้งที่" ใช้ survey_order ตัวเดียวกับตอนดึงงาน — เคลมที่ค้นด้วยเลขเต็มเรียงจากแถวที่ได้เลย · ค้นด้วยเลขรับแจ้ง/เลขเซอร์เวย์
     ได้แถวเดียว ต้องถามทุกใบของเคลมนั้นเพิ่ม (สูงสุด SEARCH_ROUND_CLAIMS เคลม) · ไม่ตัดบริษัทนอก/งานที่ยังไม่จ่ายงานทิ้ง (หน้าเว็บบอกเองว่าดึงไม่ได้)"""
     q = _txt(q)
-    rows = api.search_cases(q, limit=SEARCH_LIMIT)
+    try:
+        rows = api.search_cases(q, limit=SEARCH_LIMIT)
+    except requests.exceptions.Timeout as e:
+        raise RuntimeError("ISURVEY ตอบช้ามาก (รอแล้ว 2 รอบ เกิน 2 นาที) — ลองค้นใหม่อีกครั้งในอีกสักครู่") from e
     claims: list[str] = []
     for r in rows:
         c = _txt(r.get("claim_no"))

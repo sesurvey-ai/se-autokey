@@ -71,8 +71,8 @@ class ISurveyAPI:
         self._host = f"{p.scheme}://{p.netloc}"   # โดเมนสำหรับโหลดไฟล์รูป
 
     # ------------------------------------------------------------------ HTTP
-    def _get(self, path, **params):
-        r = self.s.get(f"{self.base}/{path}", params=params, timeout=30)
+    def _get(self, path, _timeout=30, **params):
+        r = self.s.get(f"{self.base}/{path}", params=params, timeout=_timeout)
         r.raise_for_status()
         return r.json()
 
@@ -172,10 +172,16 @@ class ISurveyAPI:
         """ช่องค้นหาของหน้าตรวจงาน ISURVEY (listcases.php claim_no=...) — user สั่ง 08/10/69 ให้ค้นจากเว็บ se-survey ได้
         ช่องเดียวรับ **เลขเคลม / เลขรับแจ้ง / เลขเซอร์เวย์** และพิมพ์ไม่ครบได้ (ค้นแบบขึ้นต้น · ISURVEY ตันที่ 50 แถว)
         — ตรวจกับ ISURVEY จริง 08/10/69 (เคลม 2026013178804 · เลขรับแจ้ง 2026173344 · SEABI-112261000060 ได้แถวเดียวกัน)
-        คืนทุกแถวตามที่ ISURVEY ให้ + ชื่อสถานะ · ไม่กรองเลขเคลมตรงตัว (ต่างจาก list_claim_jobs)"""
-        d = self._get("supervisor/listcases.php", claim_no=str(q), claim_status="",
-                      claim_date="", page=1, start=0, limit=limit)
-        names = self.master("masterStatus", "sttcase_ID", "stt_desc")
+        คืนทุกแถวตามที่ ISURVEY ให้ + ชื่อสถานะ · ไม่กรองเลขเคลมตรงตัว (ต่างจาก list_claim_jobs)
+        ⚠️ ค้นทั้งประวัติ (ไม่มีช่วงวันที่) บางครั้ง ISURVEY ตอบช้าเกิน 30 วิ — เจอจริง 08/10/69 ทั้งตอนเทส (บัญชีบอท) และหัวหน้าค้นบนเว็บ
+        (คำขอแรกหลังล็อกอินค้าง ครั้งถัดมาเร็ว 1–3 วิ) → รอ 45 วิ ไม่มาลองใหม่ 1 ครั้ง (75 วิ) · ช้าอีก = ReadTimeout ให้ผู้เรียกแปลเป็นข้อความ"""
+        names = self.master("masterStatus", "sttcase_ID", "stt_desc")   # ลำดับเดียวกับหน้าเว็บ ISURVEY (โหลดตารางก่อนค้น)
+        params = dict(claim_no=str(q), claim_status="", claim_date="", page=1, start=0, limit=limit)
+        try:
+            d = self._get("supervisor/listcases.php", _timeout=45, **params)
+        except requests.exceptions.ReadTimeout:
+            log("ISURVEY-API: ค้นงานช้าเกิน 45 วิ — ลองอีกครั้ง")
+            d = self._get("supervisor/listcases.php", _timeout=75, **params)
         return [{**c, "status_name": names.get(str(c.get("sttcase_ID")), "")} for c in (d.get("cases") or [])]
 
     def get_tab(self, case_id, tab) -> dict:
