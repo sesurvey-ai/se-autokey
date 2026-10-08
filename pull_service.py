@@ -28,6 +28,7 @@ import hmac
 import json
 import os
 import sys
+import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -44,6 +45,25 @@ PORT = int(os.environ.get("PORT", "8790"))
 
 def _log(msg: str) -> None:
     print(msg, flush=True)
+
+
+# ── คิวต่อบัญชี ISURVEY (08/10/69) ──
+# ISURVEY ให้ 1 บัญชีล็อกอินได้ที่เดียว และทุกคำขอที่นี่ล็อกอินใหม่ → 2 คำขอของบัญชีเดียวกันพร้อมกัน (กด "ดึงเข้า" หลายแถวติดกัน /
+# หลายแท็บ / หลายเครื่อง — เจอจริง: เคส #1517–#1520 ถูกสร้างในวินาทีเดียวกัน) จะเตะ session กันเองกลางทาง เสี่ยงรูปไม่ครบ
+# → ให้คำขอของบัญชีเดียวกันรอคิวทีละงาน · คนละบัญชียังทำพร้อมกันได้ตามเดิม
+_ACCOUNT_LOCKS: dict[str, threading.Lock] = {}
+_ACCOUNT_LOCKS_GUARD = threading.Lock()
+#: รอคิวบัญชีเดียวกันได้นานสุด (วินาที) — ต่ำกว่าที่ backend รอ /pull (300 วิ) ให้ตอบข้อความชัด ๆ ก่อนฝั่งนั้นตัดเอง
+ACCOUNT_WAIT_SEC = 240
+
+
+def _account_lock(username: str) -> threading.Lock:
+    key = username.strip().lower()
+    with _ACCOUNT_LOCKS_GUARD:
+        lk = _ACCOUNT_LOCKS.get(key)
+        if lk is None:
+            lk = _ACCOUNT_LOCKS[key] = threading.Lock()
+        return lk
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -80,6 +100,17 @@ class Handler(BaseHTTPRequestHandler):
         password = str(body.get("password") or "")
         if not username or not password:
             return self._send(400, {"ok": False, "error": "ต้องมี username และ password ของ ISURVEY"})
+        lock = _account_lock(username)
+        if not lock.acquire(timeout=ACCOUNT_WAIT_SEC):
+            _log(f"[queue] {username}: รอคิวบัญชีเกิน {ACCOUNT_WAIT_SEC} วิ — {path}")
+            return self._send(503, {"ok": False, "error": "บัญชี ISURVEY นี้กำลังทำงานอื่นค้างอยู่นาน — รอสักครู่แล้วลองใหม่"})
+        try:
+            return self._dispatch(path, body, username, password)
+        finally:
+            lock.release()
+
+    def _dispatch(self, path: str, body: dict, username: str, password: str):
+        """งานจริงของแต่ละเส้น — เรียกตอนถือคิวของบัญชีนี้อยู่ (ดู _account_lock)"""
         try:
             if path == "/login-test":
                 api = pull_core.make_client(username, password)
