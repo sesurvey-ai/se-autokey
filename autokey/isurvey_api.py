@@ -53,6 +53,23 @@ def _money(v) -> float:
         return 0.0
 
 
+def session_lost(r) -> bool:
+    """คำตอบนี้คือ "session ใช้ไม่ได้" ไหม (ยิง ISURVEY แบบไม่ล็อกอินดู 08/10/69 — ไม่ใช้บัญชีใคร):
+    listcases.php → {"total":0,"message":"Session lose!"} (ข้อความเดียวกับที่หน้า ISURVEY ขึ้นตอนโดนเตะ) ·
+    รายงาน enquiry → PHP Notice "Undefined index: iSurvey-…" แทน JSON
+    ⚠️ get-images / list_parts / list_thirdPartyCar ตอบ "ว่าง" เงียบ ๆ ({"images":[]}) — จับจากคำตอบไม่ได้ ต้องเช็ค session หลังงาน
+    (ดู isurvey_central.CentralSession.intact) · getUserData ตอบ {"success":0} (ผู้เรียกเช็คเอง)"""
+    if r.status_code in (401, 403):
+        return True
+    try:
+        d = r.json()
+    except ValueError:
+        low = (r.text or "")[:4000].lower()
+        return "session lose" in low or "undefined index: isurvey-" in low
+    msg = d.get("message") if isinstance(d, dict) else None
+    return isinstance(msg, str) and "session lose" in msg.lower()
+
+
 class ISurveyAPI:
     """client บางๆ ของ ISURVEY PHP API — ใช้ requests.Session เก็บ PHPSESSID"""
 
@@ -69,12 +86,32 @@ class ISurveyAPI:
         self.last_case_id = ""   # caseID ของเคลมที่อ่านล่าสุด (ใช้โหลดรูปต่อ)
         p = urlparse(cfg.isurvey_url)
         self._host = f"{p.scheme}://{p.netloc}"   # โดเมนสำหรับโหลดไฟล์รูป
+        # ตัวคุม session ของ service ดึงงาน (08/10/69) — None = ไม่ตรวจ "Session lose!" (บอทบนเครื่องพนักงาน: พฤติกรรมเดิม)
+        # มีค่า = คำตอบ session หลุดต้องไม่ผ่านเงียบ: central.recover() ล็อกอินใหม่ให้ (บัญชีกลาง) หรือ raise ข้อความอ่านได้ (บัญชีหัวหน้า)
+        self.central = None
+        self.central_gen = 0      # รอบล็อกอินของบัญชีกลางตอนเริ่มงานนี้ (CentralSession.intact เทียบ)
+        self.central_reads = 0    # คำขอที่อ่านสำเร็จแล้วในงานนี้ — 0 = ยังไม่ได้อ่านอะไรด้วย session เก่า
 
     # ------------------------------------------------------------------ HTTP
     def _get(self, path, _timeout=30, **params):
-        r = self.s.get(f"{self.base}/{path}", params=params, timeout=_timeout)
+        return self._get_url(f"{self.base}/{path}", _timeout, params)
+
+    def _get_url(self, url, _timeout=30, params=None):
+        central = self.central
+        gen = central.generation if central is not None else 0
+        r = self.s.get(url, params=params, timeout=_timeout)
+        if central is not None and session_lost(r):
+            where = url.rsplit("/", 1)[-1]
+            central.recover(gen, where)          # ล็อกอินใหม่ (หรือ raise) แล้วลองคำขอเดิมอีกครั้ง
+            if self.central_reads == 0:          # ยังไม่ได้อ่านอะไรด้วย session ที่หลุด = งานนี้ยังครบ นับรอบใหม่
+                self.central_gen = central.generation
+            r = self.s.get(url, params=params, timeout=_timeout)
+            if session_lost(r):
+                raise RuntimeError(f"ISURVEY ตอบ session หลุดซ้ำหลังล็อกอินใหม่ ({where}) — ลองใหม่อีกครั้ง")
         r.raise_for_status()
-        return r.json()
+        out = r.json()
+        self.central_reads += 1
+        return out
 
     def login(self):
         log("ISURVEY-API: login")

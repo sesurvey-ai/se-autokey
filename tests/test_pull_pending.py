@@ -12,6 +12,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from autokey import pull_core  # noqa: E402
+from autokey.isurvey_api import ISurveyAPI  # noqa: E402
 
 
 class _Resp:
@@ -36,6 +37,11 @@ class _Session:
 
 
 class FakeAPI:
+    """ยืม _get_url ตัวจริง (list_pending อ่านรายงานผ่าน _get_url ตั้งแต่ 08/10/69 — ให้ตัวคุม session จับ "หลุด" ได้)"""
+    _get_url = ISurveyAPI._get_url
+    central = None
+    central_reads = 0
+
     def __init__(self, rows):
         self.s = _Session(rows)
 

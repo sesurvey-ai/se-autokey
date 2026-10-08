@@ -1,13 +1,19 @@
 # -*- coding: utf-8 -*-
 """service ดึงงาน ISURVEY → se-survey (รันบนเซิร์ฟเวอร์ ให้ backend se-survey เรียก)
 
-backend ส่งบัญชี ISURVEY ของหัวหน้าแต่ละคนมาต่อคำขอ (เก็บเข้ารหัสอยู่ฝั่ง se-survey) — ที่นี่ **ไม่เก็บอะไร**
-ไม่มี state ข้ามคำขอ ไม่เปิด Chrome ไม่แตะ EMCS
+backend ส่งบัญชี ISURVEY ของหัวหน้าแต่ละคนมาต่อคำขอ (เก็บเข้ารหัสอยู่ฝั่ง se-survey) — ที่นี่ไม่เก็บบัญชีหัวหน้า ไม่เปิด Chrome ไม่แตะ EMCS
+
+บัญชีกลาง (08/10/69): ถ้าตั้ง ISURVEY_CENTRAL_* งานอ่าน (/pending /rounds /search /pull /photos) ที่ backend ส่ง use_central=true
+ใช้ session ของบัญชีกลางที่ล็อกอินค้างไว้ (autokey/isurvey_central.py) — หน้า ISURVEY ที่หัวหน้าเปิดอยู่ไม่โดนเตะ "session lose"
+บัญชีกลางใช้ไม่ได้ = ใช้บัญชีหัวหน้าที่ส่งมาด้วยแทน (ไม่มี = 412 code no_account) · /close + /login-test ใช้บัญชีหัวหน้าเสมอ
+ทุกคำตอบบอก account: "central" | "own" (backend จดผลล็อกอินให้บัญชีหัวหน้าเฉพาะ "own")
 
 env:
   PULL_SERVICE_TOKEN   token ที่ backend ต้องส่งใน header X-Service-Token (บังคับ)
   SESURVEY_API_URL     backend se-survey (default https://api.sesurvey.cloud)
   SESURVEY_API_TOKEN   INTEGRATION_TOKEN ของ backend (บังคับ — ใช้สร้างเคส/อัปรูป)
+  ISURVEY_CENTRAL_USERNAME / ISURVEY_CENTRAL_PASSWORD   บัญชี ISURVEY กลาง (ไม่บังคับ · ⛔ ห้ามใช้บัญชีนี้ที่อื่น — เตะกันเอง)
+  ISURVEY_CENTRAL_KEEPALIVE_SEC   เช็ค/ต่ออายุ session กลางทุกกี่วินาที (default 600)
   PORT                 default 8790
 
 POST (JSON) — ทุกอันต้องมี X-Service-Token:
@@ -20,6 +26,9 @@ POST (JSON) — ทุกอันต้องมี X-Service-Token:
   /rounds      {username, password, claims: [...]} → {ok, rounds: {claim: [{survey_no, round, status_name}]}}  (ครั้งที่ของทุกใบในเคลม)
   /close       {username, password, claim, survey_no, comment?, rates?, checklist?, dry_run?} → {ok, result}
                = กด "ยืนยันการตรวจสอบ" (ปิดงาน → จบงาน) แทนหัวหน้า หลังอนุมัติบนเว็บ (08/09/69) · dry_run ไม่ส่ง = True
+  /central/status {} → {ok, central: {state, username, name, logged_in_at, last_ok_at, last_error, paused_until, logins}}
+  /central/test   {} → ล้างการพัก แล้วเช็ค/ล็อกอินบัญชีกลางเดี๋ยวนี้ (ปุ่มแอดมิน) → {ok, test: {ok, error?}, central}
+  (ทุกเส้นข้างบนรับ use_central: true — username/password ของหัวหน้ากลายเป็นตัวสำรอง ไม่ส่งก็ได้)
 GET /healthz → {ok: true}
 """
 from __future__ import annotations
@@ -34,13 +43,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from autokey import isurvey_close, pull_core  # noqa: E402
+from autokey import isurvey_central, isurvey_close, pull_core  # noqa: E402
 from autokey import __version__ as BOT_VERSION  # noqa: E402
 
 TOKEN = os.environ.get("PULL_SERVICE_TOKEN", "")
 SESURVEY_URL = os.environ.get("SESURVEY_API_URL", "https://api.sesurvey.cloud").rstrip("/")
 SESURVEY_TOKEN = os.environ.get("SESURVEY_API_TOKEN", "")
 PORT = int(os.environ.get("PORT", "8790"))
+# บัญชี ISURVEY กลางของระบบ (user เปิดให้ 08/10/69) — ไม่ตั้ง = ใช้บัญชีหัวหน้าทุกงานแบบเดิม
+CENTRAL_USERNAME = os.environ.get("ISURVEY_CENTRAL_USERNAME", "").strip()
+_CENTRAL_PASSWORD = os.environ.get("ISURVEY_CENTRAL_PASSWORD", "")
+CENTRAL_KEEPALIVE_SEC = int(os.environ.get("ISURVEY_CENTRAL_KEEPALIVE_SEC", "600") or 600)
+#: เส้นที่อ่าน ISURVEY อย่างเดียว ใช้บัญชีกลางได้ (backend ส่ง use_central) · /close (ปิดงาน — ISURVEY ต้องลงชื่อหัวหน้าที่อนุมัติ)
+#: กับ /login-test (ทดสอบบัญชีของหัวหน้าเอง) ใช้บัญชีหัวหน้าเสมอ
+CENTRAL_PATHS = {"/pending", "/rounds", "/search", "/pull", "/photos"}
 
 
 def _log(msg: str) -> None:
@@ -55,6 +71,11 @@ _ACCOUNT_LOCKS: dict[str, threading.Lock] = {}
 _ACCOUNT_LOCKS_GUARD = threading.Lock()
 #: รอคิวบัญชีเดียวกันได้นานสุด (วินาที) — ต่ำกว่าที่ backend รอ /pull (300 วิ) ให้ตอบข้อความชัด ๆ ก่อนฝั่งนั้นตัดเอง
 ACCOUNT_WAIT_SEC = 240
+
+
+CENTRAL = isurvey_central.CentralSession(
+    CENTRAL_USERNAME, _CENTRAL_PASSWORD, lambda: pull_core.new_client(CENTRAL_USERNAME, _CENTRAL_PASSWORD),
+    keepalive_sec=CENTRAL_KEEPALIVE_SEC, log=_log)
 
 
 def _account_lock(username: str) -> threading.Lock:
@@ -96,101 +117,192 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n).decode("utf-8") or "{}") if n else {}
         except Exception:
             return self._send(400, {"ok": False, "error": "body ต้องเป็น JSON"})
+        if path == "/central/status":
+            return self._send(200, {"ok": True, "central": CENTRAL.status()})
+        if path == "/central/test":
+            # ok ของคำตอบ = service ทำงานได้ · ผลทดสอบจริงอยู่ใน test (ไม่ผ่านก็ยังคืนสถานะให้หน้าเว็บโชว์)
+            try:
+                return self._send(200, {"ok": True, "test": {"ok": True}, "central": CENTRAL.test()})
+            except isurvey_central.CentralUnavailable as e:
+                return self._send(200, {"ok": True, "test": {"ok": False, "error": str(e)}, "central": CENTRAL.status()})
         username = str(body.get("username") or "").strip()
         password = str(body.get("password") or "")
+        # งานอ่าน ISURVEY → บัญชีกลาง (ไม่เตะ session หัวหน้า · 08/10/69) · ใช้ไม่ได้ = ถอยไปบัญชีหัวหน้าที่ส่งมาด้วย (ถ้ามี)
+        if body.get("use_central") and path in CENTRAL_PATHS and CENTRAL.configured():
+            try:
+                code, obj = self._run(path, body, central=True)
+                return self._send(code, {**obj, "account": "central"})
+            except isurvey_central.CentralUnavailable as e:
+                if not username or not password:
+                    return self._send(412, {"ok": False, "code": "no_account", "account": "central",
+                                            "error": f"{e} — และยังไม่ได้ตั้งบัญชี ISURVEY ของคุณไว้สำรอง (เมนู \"บัญชี ISURVEY\")"})
+                _log(f"[central] ใช้ไม่ได้ — {path} ใช้บัญชี {username} แทน: {e}")
         if not username or not password:
+            if body.get("use_central"):
+                return self._send(412, {"ok": False, "code": "no_account",
+                                        "error": "ยังไม่ได้ตั้งบัญชี ISURVEY — ไปที่เมนู \"บัญชี ISURVEY\" ก่อน (บัญชีกลางของระบบยังไม่ได้ตั้ง)"})
             return self._send(400, {"ok": False, "error": "ต้องมี username และ password ของ ISURVEY"})
         lock = _account_lock(username)
         if not lock.acquire(timeout=ACCOUNT_WAIT_SEC):
             _log(f"[queue] {username}: รอคิวบัญชีเกิน {ACCOUNT_WAIT_SEC} วิ — {path}")
-            return self._send(503, {"ok": False, "error": "บัญชี ISURVEY นี้กำลังทำงานอื่นค้างอยู่นาน — รอสักครู่แล้วลองใหม่"})
+            return self._send(503, {"ok": False, "account": "own",
+                                    "error": "บัญชี ISURVEY นี้กำลังทำงานอื่นค้างอยู่นาน — รอสักครู่แล้วลองใหม่"})
         try:
-            return self._dispatch(path, body, username, password)
+            code, obj = self._run(path, body, central=False, username=username, password=password)
+            return self._send(code, {**obj, "account": "own"})
         finally:
             lock.release()
 
-    def _dispatch(self, path: str, body: dict, username: str, password: str):
-        """งานจริงของแต่ละเส้น — เรียกตอนถือคิวของบัญชีนี้อยู่ (ดู _account_lock)"""
+    def _run(self, path: str, body: dict, central: bool, username: str = "", password: str = "") -> tuple[int, dict]:
+        """งานจริงของแต่ละเส้น → (HTTP code, JSON)
+        central=False: บัญชีหัวหน้า ล็อกอินใหม่ทุกคำขอ (เรียกตอนถือคิวของบัญชีนั้นอยู่ — _account_lock)
+        central=True: ยืม session บัญชีกลาง · session ไม่ต่อเนื่องระหว่างงาน (ISURVEY บางหน้าตอบว่างเงียบ ๆ ตอนหลุด) = อ่านใหม่"""
+        if central:
+            def make(verify: bool = False):
+                return CENTRAL.client(verify=verify)
+        else:
+            def make(verify: bool = False):
+                return pull_core.make_client(username, password)
+        who = "บัญชีกลาง" if central else username
         try:
             if path == "/login-test":
-                api = pull_core.make_client(username, password)
-                return self._send(200, {"ok": True, "name": pull_core.whoami(api)})
+                api = make()
+                return 200, {"ok": True, "name": pull_core.whoami(api)}
             if path == "/pending":
-                api = pull_core.make_client(username, password)
-                status = body.get("status", pull_core.ISURVEY_STATUS_PENDING)   # "" = ทุกสถานะ
-                rows = pull_core.list_pending(api, str(body.get("date_from") or ""), str(body.get("date_to") or ""),
-                                              status=str(status or ""))
-                return self._send(200, {"ok": True, "cases": rows})
+                status = str(body.get("status", pull_core.ISURVEY_STATUS_PENDING) or "")   # "" = ทุกสถานะ
+                return _read(make, central, lambda api: (200, {"ok": True, "cases": pull_core.list_pending(
+                    api, str(body.get("date_from") or ""), str(body.get("date_to") or ""), status=status)}))
             if path == "/rounds":
                 # "ครั้งที่" ของงานบนหน้างานรอตรวจ (22/09/69) — อ่าน ISURVEY อย่างเดียว 1 คำขอ/เคลม สูงสุด 200 เคลม/ครั้ง
                 claims = body.get("claims") if isinstance(body.get("claims"), list) else []
-                api = pull_core.make_client(username, password)
-                return self._send(200, {"ok": True, "rounds": pull_core.claim_rounds(api, [str(c) for c in claims[:200]])})
+                return _read(make, central, lambda api: (200, {"ok": True, "rounds": pull_core.claim_rounds(
+                    api, [str(c) for c in claims[:200]])}))
             if path == "/search":
                 # ค้นงานบน ISURVEY จากเว็บ se-survey (user สั่ง 08/10/69) — ช่องเดียวรับเลขเคลม/เลขรับแจ้ง/เลขเซอร์เวย์ (ค้นแบบขึ้นต้นได้)
                 # อ่านอย่างเดียว: 1 คำขอ + ถามทุกใบของเคลมเพิ่มไว้หา "ครั้งที่" (สูงสุด 3 เคลม)
                 q = str(body.get("q") or "").strip()
                 if len(q) < 6:
-                    return self._send(400, {"ok": False, "error": "พิมพ์เลขเคลม / เลขรับแจ้ง / เลขเซอร์เวย์ อย่างน้อย 6 ตัว"})
-                api = pull_core.make_client(username, password)
-                out = pull_core.search_jobs(api, q)
-                _log(f"[search] {username}: {len(out.get('cases') or [])} แถว{' (ครบ 50 — ตัด)' if out.get('capped') else ''}")
-                return self._send(200, {"ok": True, **out})
+                    return 400, {"ok": False, "error": "พิมพ์เลขเคลม / เลขรับแจ้ง / เลขเซอร์เวย์ อย่างน้อย 6 ตัว"}
+                code, out = _read(make, central, lambda api: (200, {"ok": True, **pull_core.search_jobs(api, q)}))
+                _log(f"[search] {who}: {len(out.get('cases') or [])} แถว{' (ครบ 50 — ตัด)' if out.get('capped') else ''}")
+                return code, out
             if path == "/pull":
                 if not SESURVEY_TOKEN:
-                    return self._send(503, {"ok": False, "error": "service ยังไม่ได้ตั้ง SESURVEY_API_TOKEN"})
+                    return 503, {"ok": False, "error": "service ยังไม่ได้ตั้ง SESURVEY_API_TOKEN"}
                 claim = str(body.get("claim") or "").strip()
                 survey_no = str(body.get("survey_no") or "").strip()
                 if not claim:
-                    return self._send(400, {"ok": False, "error": "ต้องมีเลขเคลม"})
-                api = pull_core.make_client(username, password)
+                    return 400, {"ok": False, "error": "ต้องมีเลขเคลม"}
                 created_by = body.get("created_by")
-                result, err = pull_core.pull_case(
-                    api, claim, survey_no, SESURVEY_URL, SESURVEY_TOKEN,
-                    created_by=int(created_by) if created_by else None,
-                    with_photos=bool(body.get("with_photos", True)),
-                    as_reference=bool(body.get("as_reference", False)))
+                kw = dict(created_by=int(created_by) if created_by else None,
+                          with_photos=bool(body.get("with_photos", True)),
+                          as_reference=bool(body.get("as_reference", False)))
+                result, err = (_pull_central(make, claim, survey_no, kw) if central else
+                               pull_core.pull_case(make(), claim, survey_no, SESURVEY_URL, SESURVEY_TOKEN, **kw))
                 if err:
-                    return self._send(502, {"ok": False, "error": err})
-                _log(f"[pull] {username}: เคลม {claim} → เคส #{(result or {}).get('caseId')}"
+                    return 502, {"ok": False, "error": err}
+                _log(f"[pull] {who}: เคลม {claim} → เคส #{(result or {}).get('caseId')}"
                      + (" (อ้างอิง ดูอย่างเดียว)" if body.get("as_reference") else ""))
-                return self._send(200, {"ok": True, "result": result})
+                return 200, {"ok": True, "result": result}
             if path == "/photos":
-                # "ดึงรูปเพิ่มจาก ISURVEY" ให้เคสเดิม (22/09/69) — บัญชีของคนกด · backend เป็นคนตัดสินว่าเคสยังรับรูปได้ไหม (ยังไม่เข้า EMCS)
+                # "ดึงรูปเพิ่มจาก ISURVEY" ให้เคสเดิม (22/09/69) · backend เป็นคนตัดสินว่าเคสยังรับรูปได้ไหม (ยังไม่เข้า EMCS)
                 if not SESURVEY_TOKEN:
-                    return self._send(503, {"ok": False, "error": "service ยังไม่ได้ตั้ง SESURVEY_API_TOKEN"})
+                    return 503, {"ok": False, "error": "service ยังไม่ได้ตั้ง SESURVEY_API_TOKEN"}
                 claim = str(body.get("claim") or "").strip()
                 case_id = body.get("case_id")
                 if not claim or not case_id:
-                    return self._send(400, {"ok": False, "error": "ต้องมีเลขเคลมและเลขเคส"})
-                api = pull_core.make_client(username, password)
-                result = pull_core.refetch_photos(api, claim, str(body.get("survey_no") or "").strip(), int(case_id), SESURVEY_URL, SESURVEY_TOKEN)
+                    return 400, {"ok": False, "error": "ต้องมีเลขเคลมและเลขเคส"}
+                survey_no = str(body.get("survey_no") or "").strip()
+                # เติมรูปซ้ำได้ไม่ซ้อน (backend เทียบเนื้อไฟล์) → session ไม่ต่อเนื่อง = ทำอีกรอบเหมือนงานอ่าน
+                code, result = _read(make, central, lambda api: (200, pull_core.refetch_photos(
+                    api, claim, survey_no, int(case_id), SESURVEY_URL, SESURVEY_TOKEN)))
                 if result.get("error"):
-                    return self._send(502, {"ok": False, "error": str(result["error"])})
-                _log(f"[photos] {username}: เคลม {claim} → เคส #{case_id} +{result.get('added')} ข้าม {result.get('skipped')} (ISURVEY มี {result.get('isurvey_photo_listed')})")
-                return self._send(200, {"ok": True, "result": result})
+                    return 502, {"ok": False, "error": str(result["error"])}
+                _log(f"[photos] {who}: เคลม {claim} → เคส #{case_id} +{result.get('added')} ข้าม {result.get('skipped')} (ISURVEY มี {result.get('isurvey_photo_listed')})")
+                return 200, {"ok": True, "result": result}
             if path == "/close":
-                # เขียนกลับ ISURVEY: ความเห็นหัวหน้า + ตารางค่าสำรวจ + "ปิดการตรวจสอบ" — ด้วยบัญชีของหัวหน้าที่อนุมัติ
+                # เขียนกลับ ISURVEY: ความเห็นหัวหน้า + ตารางค่าสำรวจ + "ปิดการตรวจสอบ" — ด้วยบัญชีของหัวหน้าที่อนุมัติเสมอ (ไม่ใช่บัญชีกลาง)
                 # dry_run เป็นค่าเริ่มต้น (ไม่ส่ง = ไม่ยิง) — ฝั่ง backend เป็นคนตัดสินว่าเปิดยิงจริงหรือยัง
                 claim = str(body.get("claim") or "").strip()
                 if not claim:
-                    return self._send(400, {"ok": False, "error": "ต้องมีเลขเคลม"})
-                api = pull_core.make_client(username, password)
+                    return 400, {"ok": False, "error": "ต้องมีเลขเคลม"}
+                api = make()
                 result = isurvey_close.close_case(
                     api, claim, str(body.get("survey_no") or "").strip(),
                     comment=body.get("comment"), rates=body.get("rates"),
                     dry_run=bool(body.get("dry_run", True)), checklist=body.get("checklist"))
-                _log(f"[close] {username}: เคลม {claim} → {'dry-run' if result.get('dry_run') else 'ปิดงานแล้ว'}")
-                return self._send(200, {"ok": True, "result": result})
-            return self._send(404, {"ok": False, "error": "not found"})
-        except RuntimeError as e:          # login ไม่ผ่าน / หาเคลมไม่เจอ — ข้อความอ่านได้ ส่งกลับตรง ๆ
+                _log(f"[close] {who}: เคลม {claim} → {'dry-run' if result.get('dry_run') else 'ปิดงานแล้ว'}")
+                return 200, {"ok": True, "result": result}
+            return 404, {"ok": False, "error": "not found"}
+        except isurvey_central.CentralUnavailable:
+            raise                          # do_POST ถอยไปบัญชีหัวหน้า (ถ้ามี)
+        except RuntimeError as e:          # login ไม่ผ่าน / หาเคลมไม่เจอ / session หลุด — ข้อความอ่านได้ ส่งกลับตรง ๆ
             msg = str(e)
             if "login" in msg and "ไม่สำเร็จ" in msg:   # ข้อความเดิมพูดถึง .env ของบอท — คนใช้เว็บไม่รู้จัก
                 msg = "ล็อกอิน ISURVEY ไม่สำเร็จ — ตรวจ username/password ของบัญชี ISURVEY"
-            return self._send(502, {"ok": False, "error": msg})
+            return 502, {"ok": False, "error": msg}
         except Exception as e:
             traceback.print_exc()
-            return self._send(500, {"ok": False, "error": f"{type(e).__name__}: {e}"})
+            return 500, {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def _read(make, central: bool, fn) -> tuple[int, dict]:
+    """งานอ่านอย่างเดียว fn(api) → (code, JSON) · บัญชีกลาง: session ไม่ต่อเนื่องระหว่างอ่าน = อ่านใหม่ 1 รอบด้วย session ที่เช็คแล้ว"""
+    if not central:
+        return fn(make())
+    for attempt in (1, 2):
+        api = make(verify=attempt > 1)
+        try:
+            out = fn(api)
+        except isurvey_central.CentralUnavailable:
+            raise
+        except Exception:
+            if attempt == 1 and not CENTRAL.intact(api):
+                _log("[central] งานพังระหว่าง session หลุด — อ่านใหม่อีกรอบ")
+                continue
+            raise
+        if CENTRAL.intact(api):
+            return out
+        _log("[central] session ไม่ต่อเนื่องระหว่างอ่าน (ISURVEY อาจตอบว่างเงียบ ๆ) — อ่านใหม่อีกรอบ")
+    raise RuntimeError("ISURVEY session หลุดระหว่างอ่าน 2 ครั้งติด — ลองใหม่อีกครั้งในอีกสักครู่")
+
+
+class _SessionBroke(Exception):
+    """session บัญชีกลางไม่ต่อเนื่องระหว่างอ่านงาน (ก่อนสร้างเคส) — อ่านใหม่ทั้งงาน"""
+
+
+def _pull_central(make, claim: str, survey_no: str, kw: dict) -> tuple[dict | None, str | None]:
+    """ดึง 1 งานด้วยบัญชีกลาง — เช็คก่อนสร้างเคสว่าอ่านด้วย session เดียวตลอด (หลุดกลางทาง ISURVEY ตอบคู่กรณี/ชิ้นส่วนว่างเงียบ ๆ)
+    ไม่ต่อเนื่อง = อ่านใหม่ทั้งงานก่อนมีเคส (เคสอ้างอิงที่สร้างไปแล้วรอบแรก รอบสองเจอ 409 = ข้าม) · หลุดหลังสร้างเคส (ช่วงโหลดรูป)
+    = เติมรูปอีกรอบด้วย session ใหม่ (เติมซ้ำไม่ซ้อน)"""
+    for attempt in (1, 2):
+        api = make(verify=attempt > 1)
+
+        def before_import(api=api):
+            if not CENTRAL.intact(api):
+                raise _SessionBroke()
+
+        try:
+            result, err = pull_core.pull_case(api, claim, survey_no, SESURVEY_URL, SESURVEY_TOKEN,
+                                              before_import=before_import, **kw)
+        except _SessionBroke:
+            _log(f"[central] session ไม่ต่อเนื่องระหว่างอ่านเคลม {claim} — อ่านใหม่ก่อนสร้างเคส")
+            continue
+        if err and attempt == 1 and not CENTRAL.intact(api):
+            # pull_case คืน err เฉพาะตอนยังไม่ได้สร้างเคสใบหลัก → อ่านใหม่ได้ปลอดภัย (เช่น ISURVEY ค้างเพราะ session หลุด)
+            _log(f"[central] ดึงเคลม {claim} พังระหว่าง session หลุด — อ่านใหม่อีกรอบ")
+            continue
+        if err or not result:
+            return result, err
+        if kw.get("with_photos") and result.get("caseId") and not CENTRAL.intact(api):
+            _log(f"[central] session ไม่ต่อเนื่องระหว่างโหลดรูปเคลม {claim} — เติมรูปอีกรอบ")
+            extra = pull_core.refetch_photos(make(verify=True), claim, survey_no, result["caseId"], SESURVEY_URL, SESURVEY_TOKEN)
+            result["photos_topup"] = extra
+            result.setdefault("warnings", []).append(
+                "ISURVEY session หลุดระหว่างโหลดรูป — เติมรูปให้อีกรอบแล้ว"
+                + (f" (+{extra.get('added')})" if not extra.get("error") else f" แต่ไม่สำเร็จ: {extra.get('error')}"))
+        return result, None
+    return None, "ISURVEY session หลุดระหว่างอ่านงาน 2 ครั้งติด — ยังไม่ได้สร้างเคส ลองใหม่อีกครั้งในอีกสักครู่"
 
 
 def main() -> None:
@@ -199,6 +311,11 @@ def main() -> None:
         sys.exit(2)
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     _log(f"[pull] ISURVEY pull service :{PORT} → se-survey {SESURVEY_URL}")
+    if CENTRAL.configured():
+        _log(f"[central] บัญชี ISURVEY กลาง {CENTRAL_USERNAME} — keep-alive ทุก {CENTRAL_KEEPALIVE_SEC} วิ")
+        CENTRAL.start_keepalive()
+    else:
+        _log("[central] ไม่ได้ตั้งบัญชี ISURVEY กลาง — ทุกงานใช้บัญชีของหัวหน้าที่กด (แบบเดิม)")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

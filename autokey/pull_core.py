@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""แกนดึงงาน ISURVEY → se-survey แบบ "บัญชีต่อครั้ง" — ไม่ผูกกับ .env / ไม่มี client กลาง
+"""แกนดึงงาน ISURVEY → se-survey — รับ ISurveyAPI ที่ล็อกอินแล้ว ไม่ผูกกับ .env
+(บัญชีหัวหน้าล็อกอินใหม่ต่อคำขอ ด้วย make_client · บัญชีกลางยืม session ที่ค้างไว้ ด้วย isurvey_central — 08/10/69)
 
 ใช้โดย `pull_service.py` (service บนเซิร์ฟเวอร์ ให้เว็บ se-survey เรียก) — หัวหน้าแต่ละคนกรอกบัญชี ISURVEY
 ของตัวเองไว้บนเว็บ แล้วเซิร์ฟเวอร์ใช้บัญชีนั้นดึงงาน "รอตรวจข้อมูล" ของคนนั้นเข้าเป็นเคส (user ตัดสิน 04/09/69)
@@ -28,6 +29,7 @@ import requests
 
 from .config import Config
 from .isurvey_api import ISurveyAPI
+from . import isurvey_central
 from .isurvey_to_sesurvey import apply_visit_rules, build_case
 from . import survey_order
 
@@ -54,15 +56,23 @@ INSURER_BY_PREFIX = {
 }
 
 
-def make_client(username: str, password: str) -> ISurveyAPI:
-    """ISurveyAPI ที่ล็อกอินด้วยบัญชีที่ส่งมา — ไม่อ่าน .env (ช่องบังคับอื่นของ Config ใส่ว่าง)"""
+def new_client(username: str, password: str) -> ISurveyAPI:
+    """ISurveyAPI ของบัญชีที่ส่งมา **ยังไม่ล็อกอิน** — ไม่อ่าน .env (ช่องบังคับอื่นของ Config ใส่ว่าง)
+    (บัญชีกลางใช้ตัวนี้ทำ client ต่องานที่ยืม session กลาง — isurvey_central.CentralSession)"""
     kw = {}
     for f in dataclasses.fields(Config):
         if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING:
             kw[f.name] = ""
     kw.update(isurvey_username=username, isurvey_password=password)
-    api = ISurveyAPI(Config(**kw))
+    return ISurveyAPI(Config(**kw))
+
+
+def make_client(username: str, password: str) -> ISurveyAPI:
+    """ISurveyAPI ที่ล็อกอินด้วยบัญชีที่ส่งมา (บัญชีหัวหน้า — ล็อกอินใหม่ทุกคำขอ)
+    08/10/69: ISURVEY ตอบ "Session lose!" กลางงาน (หัวหน้าเปิดหน้า ISURVEY ด้วยบัญชีเดียวกัน) = error อ่านได้ ไม่ใช่ผลว่างเงียบ ๆ"""
+    api = new_client(username, password)
     api.login()
+    api.central = isurvey_central.DETECT_ONLY
     return api
 
 
@@ -84,11 +94,10 @@ def list_pending(api: ISurveyAPI, date_from: str = "", date_to: str = "",
         date_to = datetime.now().strftime("%Y-%m-%d")
     if not date_from:
         date_from = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
-    r = api.s.get(REPORT_URL, timeout=120, params={
+    # ผ่าน _get_url (ไม่ใช่ api.s.get ตรง) — session หลุด รายงานนี้ตอบ PHP Notice แทน JSON ให้ตัวคุม session จับได้ (08/10/69)
+    d = api._get_url(REPORT_URL, 120, {
         "con_date": 2, "date_from": date_from, "date_to": date_to,
         "report_type": "enquiry", "page": 1, "start": 0, "limit": 5000})
-    r.raise_for_status()
-    d = r.json()
     rows = []
     for x in (d.get("arr_data") or d.get("data") or []):
         if status and str(x.get("stt_desc") or "").strip() != status:
@@ -389,11 +398,13 @@ def pull_references(api: ISurveyAPI, claim: str, survey_no: str, insurer: str, s
 
 def pull_case(api: ISurveyAPI, claim: str, survey_no: str, sesurvey_url: str, token: str,
               created_by: int | None = None, with_photos: bool = True,
-              as_reference: bool = False) -> tuple[dict | None, str | None]:
+              as_reference: bool = False, before_import=None) -> tuple[dict | None, str | None]:
     """ดึงงาน 1 เรื่อง → สร้างเคสบน se-survey (+รูป) — คืน (result, error)
     งานครั้งถัดไป: ดึงครั้งก่อนหน้าที่ยังไม่มีในเว็บมาเป็นเคสอ้างอิงก่อน แล้วใบนี้ได้ visit_no ตามเลขเซอร์เวย์ (13/09/69)
     as_reference=True (ปุ่ม "ดึงเข้า (ดูอย่างเดียว)" จากผลค้นหา — user เคาะ 08/10/69): **เฉพาะงานที่จบงานแล้ว** เข้ามาเป็นเคสอ้างอิง
-    พร้อมรูป (อนุมัติแล้ว/ถือว่าเข้า EMCS แล้วตั้งแต่สร้าง — ไม่เข้าคิวตรวจ ไม่เข้ารายการบอท) กันหัวหน้าอนุมัติซ้ำ/บอทเข้า EMCS ซ้ำ"""
+    พร้อมรูป (อนุมัติแล้ว/ถือว่าเข้า EMCS แล้วตั้งแต่สร้าง — ไม่เข้าคิวตรวจ ไม่เข้ารายการบอท) กันหัวหน้าอนุมัติซ้ำ/บอทเข้า EMCS ซ้ำ
+    before_import(): เรียกก่อนสร้างเคสใบหลัก (อ่าน ISURVEY ครบแล้ว) — บัญชีกลางใช้เช็คว่า session ไม่หลุดระหว่างอ่าน
+    (หลุด = ISURVEY ตอบคู่กรณี/ชิ้นส่วน "ว่าง" เงียบ ๆ) แล้ว raise ให้ผู้เรียกอ่านใหม่ก่อนมีเคส (08/10/69)"""
     prefix = str(survey_no or "").split("-")[0].strip().upper()
     insurer = INSURER_BY_PREFIX.get(prefix)
     if not insurer:
@@ -442,6 +453,8 @@ def pull_case(api: ISurveyAPI, claim: str, survey_no: str, sesurvey_url: str, to
         payload["reference"] = {"closed_at": _iso_bkk_dt(case.get("close_datetime")), "round": int(visit_no or 1),
                                 "status": "จบงาน"}
 
+    if before_import is not None:
+        before_import()
     data, err = sesurvey_post(sesurvey_url, token, "/api/integrations/cases/import", payload=payload)
     if err:
         return None, err
