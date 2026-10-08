@@ -13,7 +13,10 @@ env:
 POST (JSON) — ทุกอันต้องมี X-Service-Token:
   /login-test  {username, password}                          → {ok, name}
   /pending     {username, password, date_from?, date_to?, status?}  → {ok, cases: [...]}   (status "" = ทุกสถานะ · ไม่ส่ง = รอตรวจข้อมูล)
-  /pull        {username, password, claim, survey_no, created_by?, with_photos?} → {ok, result}
+  /pull        {username, password, claim, survey_no, created_by?, with_photos?, as_reference?} → {ok, result}
+               as_reference=true = งานที่จบงานแล้วเข้ามาเป็นเคสอ้างอิง ดูอย่างเดียว (ปุ่มจากผลค้นหา 08/10/69)
+  /search      {username, password, q} → {ok, cases: [...], rounds: {...}, capped}
+               ค้นงานด้วยเลขเคลม/เลขรับแจ้ง/เลขเซอร์เวย์ ช่องเดียวกับหน้าตรวจงาน ISURVEY (08/10/69) · อ่านอย่างเดียว
   /rounds      {username, password, claims: [...]} → {ok, rounds: {claim: [{survey_no, round, status_name}]}}  (ครั้งที่ของทุกใบในเคลม)
   /close       {username, password, claim, survey_no, comment?, rates?, checklist?, dry_run?} → {ok, result}
                = กด "ยืนยันการตรวจสอบ" (ปิดงาน → จบงาน) แทนหัวหน้า หลังอนุมัติบนเว็บ (08/09/69) · dry_run ไม่ส่ง = True
@@ -92,6 +95,16 @@ class Handler(BaseHTTPRequestHandler):
                 claims = body.get("claims") if isinstance(body.get("claims"), list) else []
                 api = pull_core.make_client(username, password)
                 return self._send(200, {"ok": True, "rounds": pull_core.claim_rounds(api, [str(c) for c in claims[:200]])})
+            if path == "/search":
+                # ค้นงานบน ISURVEY จากเว็บ se-survey (user สั่ง 08/10/69) — ช่องเดียวรับเลขเคลม/เลขรับแจ้ง/เลขเซอร์เวย์ (ค้นแบบขึ้นต้นได้)
+                # อ่านอย่างเดียว: 1 คำขอ + ถามทุกใบของเคลมเพิ่มไว้หา "ครั้งที่" (สูงสุด 3 เคลม)
+                q = str(body.get("q") or "").strip()
+                if len(q) < 6:
+                    return self._send(400, {"ok": False, "error": "พิมพ์เลขเคลม / เลขรับแจ้ง / เลขเซอร์เวย์ อย่างน้อย 6 ตัว"})
+                api = pull_core.make_client(username, password)
+                out = pull_core.search_jobs(api, q)
+                _log(f"[search] {username}: {len(out.get('cases') or [])} แถว{' (ครบ 50 — ตัด)' if out.get('capped') else ''}")
+                return self._send(200, {"ok": True, **out})
             if path == "/pull":
                 if not SESURVEY_TOKEN:
                     return self._send(503, {"ok": False, "error": "service ยังไม่ได้ตั้ง SESURVEY_API_TOKEN"})
@@ -104,10 +117,12 @@ class Handler(BaseHTTPRequestHandler):
                 result, err = pull_core.pull_case(
                     api, claim, survey_no, SESURVEY_URL, SESURVEY_TOKEN,
                     created_by=int(created_by) if created_by else None,
-                    with_photos=bool(body.get("with_photos", True)))
+                    with_photos=bool(body.get("with_photos", True)),
+                    as_reference=bool(body.get("as_reference", False)))
                 if err:
                     return self._send(502, {"ok": False, "error": err})
-                _log(f"[pull] {username}: เคลม {claim} → เคส #{(result or {}).get('caseId')}")
+                _log(f"[pull] {username}: เคลม {claim} → เคส #{(result or {}).get('caseId')}"
+                     + (" (อ้างอิง ดูอย่างเดียว)" if body.get("as_reference") else ""))
                 return self._send(200, {"ok": True, "result": result})
             if path == "/photos":
                 # "ดึงรูปเพิ่มจาก ISURVEY" ให้เคสเดิม (22/09/69) — บัญชีของคนกด · backend เป็นคนตัดสินว่าเคสยังรับรูปได้ไหม (ยังไม่เข้า EMCS)

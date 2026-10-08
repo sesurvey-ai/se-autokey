@@ -168,6 +168,16 @@ class ISurveyAPI:
         return [{**c, "status_name": names.get(str(c.get("sttcase_ID")), "")}
                 for c in d.get("cases", []) if str(c.get("claim_no")) == str(claim)]
 
+    def search_cases(self, q, limit: int = 50) -> list:
+        """ช่องค้นหาของหน้าตรวจงาน ISURVEY (listcases.php claim_no=...) — user สั่ง 08/10/69 ให้ค้นจากเว็บ se-survey ได้
+        ช่องเดียวรับ **เลขเคลม / เลขรับแจ้ง / เลขเซอร์เวย์** และพิมพ์ไม่ครบได้ (ค้นแบบขึ้นต้น · ISURVEY ตันที่ 50 แถว)
+        — ตรวจกับ ISURVEY จริง 08/10/69 (เคลม 2026013178804 · เลขรับแจ้ง 2026173344 · SEABI-112261000060 ได้แถวเดียวกัน)
+        คืนทุกแถวตามที่ ISURVEY ให้ + ชื่อสถานะ · ไม่กรองเลขเคลมตรงตัว (ต่างจาก list_claim_jobs)"""
+        d = self._get("supervisor/listcases.php", claim_no=str(q), claim_status="",
+                      claim_date="", page=1, start=0, limit=limit)
+        names = self.master("masterStatus", "sttcase_ID", "stt_desc")
+        return [{**c, "status_name": names.get(str(c.get("sttcase_ID")), "")} for c in (d.get("cases") or [])]
+
     def get_tab(self, case_id, tab) -> dict:
         return self._get("supervisor/getcaseinfo.php", caseID=case_id,
                          tab=f"tab-{tab}_clone").get("message", {}) or {}
