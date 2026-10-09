@@ -313,27 +313,27 @@ def _plate(s: str) -> str:
     return re.sub(r"[^0-9A-Za-z\u0e01-\u0e59]", "", "".join(toks))
 
 
-# \u0e0a\u0e48\u0e2d\u0e07\u0e40\u0e25\u0e02\u0e01\u0e23\u0e21\u0e18\u0e23\u0e23\u0e21\u0e4c\u0e02\u0e2d\u0e07 EMCS \u0e23\u0e31\u0e1a 30 \u0e15\u0e31\u0e27 \u2014 txtAcc_Policy_No / txtPolicyNo maxlength=30 (\u0e1e\u0e34\u0e21\u0e1e\u0e4c\u0e40\u0e01\u0e34\u0e19 = \u0e0a\u0e48\u0e2d\u0e07\u0e15\u0e31\u0e14\u0e17\u0e49\u0e32\u0e22\u0e17\u0e34\u0e49\u0e07\u0e40\u0e07\u0e35\u0e22\u0e1a \u0e46)
-# \u0e41\u0e25\u0e30\u0e44\u0e1f\u0e25\u0e4c XML \u0e17\u0e35\u0e48 ACC_POLICY_NO/POLICYNO \u0e40\u0e01\u0e34\u0e19 = \u0e1b\u0e31\u0e14\u0e15\u0e01\u0e17\u0e31\u0e49\u0e07\u0e44\u0e1f\u0e25\u0e4c (\u0e40\u0e04\u0e25\u0e21 2026013177918 \u0e04\u0e39\u0e48\u0e01\u0e23\u0e13\u0e35\u0e08\u0e32\u0e01 ISURVEY 32 \u0e15\u0e31\u0e27 08/10/69)
+# ช่องเลขกรมธรรม์ของ EMCS รับ 30 ตัว — txtAcc_Policy_No / txtPolicyNo maxlength=30 (พิมพ์เกิน = ช่องตัดท้ายทิ้งเงียบ ๆ)
+# และไฟล์ XML ที่ ACC_POLICY_NO/POLICYNO เกิน = ปัดตกทั้งไฟล์ (เคลม 2026013177918 คู่กรณีจาก ISURVEY 32 ตัว 08/10/69)
 EMCS_POLICY_MAX = 30
 
 
 def emcs_policy_no(v) -> str:
-    """\u0e40\u0e25\u0e02\u0e01\u0e23\u0e21\u0e18\u0e23\u0e23\u0e21\u0e4c\u0e41\u0e1a\u0e1a\u0e17\u0e35\u0e48 EMCS \u0e23\u0e31\u0e1a (user \u0e40\u0e04\u0e32\u0e30 09/10/69): \u0e40\u0e01\u0e34\u0e19 30 \u0e15\u0e31\u0e27 \u2192 \u0e15\u0e31\u0e14\u0e02\u0e35\u0e14\u0e01\u0e31\u0e1a\u0e0a\u0e48\u0e2d\u0e07\u0e27\u0e48\u0e32\u0e07\u0e2d\u0e2d\u0e01 (\u0e15\u0e31\u0e27\u0e2d\u0e31\u0e01\u0e29\u0e23/\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02\u0e04\u0e23\u0e1a\u0e17\u0e38\u0e01\u0e15\u0e31\u0e27)
-    \u00b7 \u0e44\u0e21\u0e48\u0e40\u0e01\u0e34\u0e19 = \u0e15\u0e32\u0e21\u0e40\u0e14\u0e34\u0e21 \u00b7 \u0e15\u0e31\u0e14\u0e41\u0e25\u0e49\u0e27\u0e22\u0e31\u0e07\u0e40\u0e01\u0e34\u0e19 = \u0e04\u0e37\u0e19\u0e15\u0e32\u0e21\u0e19\u0e31\u0e49\u0e19 \u0e44\u0e21\u0e48\u0e15\u0e31\u0e14\u0e17\u0e49\u0e32\u0e22 (\u0e40\u0e25\u0e02\u0e08\u0e30\u0e1c\u0e34\u0e14 \u2014 \u0e40\u0e27\u0e47\u0e1a\u0e01\u0e31\u0e49\u0e19\u0e2d\u0e19\u0e38\u0e21\u0e31\u0e15\u0e34\u0e44\u0e27\u0e49 \u0e14\u0e48\u0e32\u0e19\u0e01\u0e48\u0e2d\u0e19\u0e19\u0e33\u0e40\u0e02\u0e49\u0e32\u0e01\u0e31\u0e49\u0e19\u0e2d\u0e35\u0e01\u0e0a\u0e31\u0e49\u0e19)
-    \u26d4 \u0e2a\u0e39\u0e15\u0e23\u0e0b\u0e49\u0e33 3 \u0e17\u0e35\u0e48\u0e15\u0e49\u0e2d\u0e07\u0e15\u0e23\u0e07\u0e01\u0e31\u0e19: backend xmlExport.emcsPolicyNo \u00b7 web caseOptions.emcsPolicyNo \u00b7 \u0e17\u0e35\u0e48\u0e19\u0e35\u0e48 (contract test \u0e25\u0e47\u0e2d\u0e01)"""
+    """เลขกรมธรรม์แบบที่ EMCS รับ (user เคาะ 09/10/69): เกิน 30 ตัว → ตัดขีดกับช่องว่างออก (ตัวอักษร/ตัวเลขครบทุกตัว)
+    · ไม่เกิน = ตามเดิม · ตัดแล้วยังเกิน = คืนตามนั้น ไม่ตัดท้าย (เลขจะผิด — เว็บกั้นอนุมัติไว้ ด่านก่อนนำเข้ากั้นอีกชั้น)
+    ⛔ สูตรซ้ำ 3 ที่ต้องตรงกัน: backend xmlExport.emcsPolicyNo · web caseOptions.emcsPolicyNo · ที่นี่ (contract test ล็อก)"""
     s = "" if v is None else str(v).strip()
     return re.sub(r"[\s-]", "", s) if len(s) > EMCS_POLICY_MAX else s
 
 
 def _policy_for_emcs(v, label: str) -> str:
-    """\u0e40\u0e25\u0e02\u0e01\u0e23\u0e21\u0e18\u0e23\u0e23\u0e21\u0e4c\u0e01\u0e48\u0e2d\u0e19\u0e1e\u0e34\u0e21\u0e1e\u0e4c\u0e25\u0e07\u0e0a\u0e48\u0e2d\u0e07 EMCS \u2014 \u0e15\u0e31\u0e14\u0e15\u0e32\u0e21 emcs_policy_no \u0e41\u0e25\u0e49\u0e27\u0e1a\u0e2d\u0e01\u0e43\u0e19 log \u0e27\u0e48\u0e32\u0e15\u0e31\u0e14\u0e2d\u0e30\u0e44\u0e23"""
+    """เลขกรมธรรม์ก่อนพิมพ์ลงช่อง EMCS — ตัดตาม emcs_policy_no แล้วบอกใน log ว่าตัดอะไร"""
     s = "" if v is None else str(v).strip()
     fit = emcs_policy_no(s)
     if fit != s:
-        log(f"   \u2702\ufe0f {label} \u0e22\u0e32\u0e27 {len(s)} \u0e15\u0e31\u0e27 \u2014 \u0e0a\u0e48\u0e2d\u0e07 EMCS \u0e23\u0e31\u0e1a {EMCS_POLICY_MAX} \u0e15\u0e31\u0e14\u0e02\u0e35\u0e14/\u0e0a\u0e48\u0e2d\u0e07\u0e27\u0e48\u0e32\u0e07\u0e2d\u0e2d\u0e01\u0e40\u0e2b\u0e25\u0e37\u0e2d {len(fit)} \u0e15\u0e31\u0e27: {fit}")
+        log(f"   ✂️ {label} ยาว {len(s)} ตัว — ช่อง EMCS รับ {EMCS_POLICY_MAX} ตัดขีด/ช่องว่างออกเหลือ {len(fit)} ตัว: {fit}")
     if len(fit) > EMCS_POLICY_MAX:
-        log(f"   \u26a0\ufe0f {label} \u0e22\u0e32\u0e27 {len(fit)} \u0e15\u0e31\u0e27\u0e41\u0e21\u0e49\u0e15\u0e31\u0e14\u0e02\u0e35\u0e14\u0e41\u0e25\u0e49\u0e27 \u2014 \u0e0a\u0e48\u0e2d\u0e07 EMCS \u0e15\u0e31\u0e14\u0e17\u0e49\u0e32\u0e22\u0e40\u0e2b\u0e25\u0e37\u0e2d {EMCS_POLICY_MAX} \u0e15\u0e31\u0e27 \u0e15\u0e23\u0e27\u0e08\u0e40\u0e25\u0e02\u0e1a\u0e19 EMCS \u0e01\u0e48\u0e2d\u0e19\u0e2a\u0e48\u0e07\u0e07\u0e32\u0e19")
+        log(f"   ⚠️ {label} ยาว {len(fit)} ตัวแม้ตัดขีดแล้ว — ช่อง EMCS ตัดท้ายเหลือ {EMCS_POLICY_MAX} ตัว ตรวจเลขบน EMCS ก่อนส่งงาน")
     return fit
 
 
@@ -341,9 +341,9 @@ _POLICY_TAG_RE = re.compile(r"<(ACC_POLICY_NO|POLICYNO)>([^<]*)</\1>")
 
 
 def fit_policy_xml(text: str):
-    """\u0e44\u0e1f\u0e25\u0e4c XML \u0e01\u0e48\u0e2d\u0e19\u0e19\u0e33\u0e40\u0e02\u0e49\u0e32: ACC_POLICY_NO/POLICYNO \u0e17\u0e35\u0e48\u0e40\u0e01\u0e34\u0e19 30 \u2192 \u0e04\u0e48\u0e32\u0e08\u0e32\u0e01 emcs_policy_no \u2014 \u0e04\u0e37\u0e19 (\u0e02\u0e49\u0e2d\u0e04\u0e27\u0e32\u0e21\u0e43\u0e2b\u0e21\u0e48, [(tag, \u0e40\u0e14\u0e34\u0e21, \u0e43\u0e2b\u0e21\u0e48)])
-    \u0e44\u0e1f\u0e25\u0e4c\u0e02\u0e2d\u0e07\u0e40\u0e27\u0e47\u0e1a se-survey \u0e15\u0e31\u0e14\u0e21\u0e32\u0e41\u0e25\u0e49\u0e27\u0e15\u0e31\u0e49\u0e07\u0e41\u0e15\u0e48 backend (\u0e44\u0e21\u0e48\u0e21\u0e35\u0e2d\u0e30\u0e44\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19) \u00b7 \u0e44\u0e1f\u0e25\u0e4c\u0e17\u0e35\u0e48\u0e42\u0e2b\u0e25\u0e14\u0e08\u0e32\u0e01 ISURVEY \u0e2a\u0e48\u0e07\u0e40\u0e25\u0e02\u0e22\u0e32\u0e27\u0e21\u0e32\u0e15\u0e23\u0e07 \u0e46 \u2192 \u0e15\u0e31\u0e14\u0e17\u0e35\u0e48\u0e19\u0e35\u0e48
-    \u0e41\u0e15\u0e30\u0e40\u0e09\u0e1e\u0e32\u0e30 2 tag \u0e19\u0e35\u0e49\u0e41\u0e25\u0e30\u0e40\u0e09\u0e1e\u0e32\u0e30\u0e04\u0e48\u0e32\u0e17\u0e35\u0e48\u0e40\u0e01\u0e34\u0e19 \u0e17\u0e35\u0e48\u0e40\u0e2b\u0e25\u0e37\u0e2d\u0e04\u0e07\u0e17\u0e38\u0e01\u0e15\u0e31\u0e27\u0e2d\u0e31\u0e01\u0e29\u0e23"""
+    """ไฟล์ XML ก่อนนำเข้า: ACC_POLICY_NO/POLICYNO ที่เกิน 30 → ค่าจาก emcs_policy_no — คืน (ข้อความใหม่, [(tag, เดิม, ใหม่)])
+    ไฟล์ของเว็บ se-survey ตัดมาแล้วตั้งแต่ backend (ไม่มีอะไรเปลี่ยน) · ไฟล์ที่โหลดจาก ISURVEY ส่งเลขยาวมาตรง ๆ → ตัดที่นี่
+    แตะเฉพาะ 2 tag นี้และเฉพาะค่าที่เกิน ที่เหลือคงทุกตัวอักษร"""
     from xml.sax.saxutils import escape, unescape
     changed = []
 
@@ -1468,6 +1468,25 @@ def parse_import_reject(text: str) -> list:
     return rows
 
 
+def import_success_esurvey(text: str) -> str:
+    """ข้อความผลนำเข้าเป็น "สำเร็จ" ไหม → เลข e-Survey ของเรื่องที่ EMCS สร้าง ('' = ไม่ใช่ข้อความสำเร็จ)
+    EMCS resultCode "0": "สำเร็จ! Import ข้อมูลเข้าระบบเรียบร้อยแล้ว [เลขที่ eSurvey : S68426102288]" แล้วกด OK = ไปหน้าฟอร์ม
+    ⛔ ข้อความนี้ = มีเรื่องใน EMCS แล้ว (ลบไม่ได้) ห้ามตีเป็น "ปัดตก" (เคส #1441 #1410 09/10/69 บอทบอกปัดตก+ให้นำเข้าใหม่)"""
+    m = re.search(r"eSurvey\s*:\s*(S\d{9,13})", str(text or ""))
+    return m.group(1) if m else ""
+
+
+class ImportedFormError(RuntimeError):
+    """EMCS นำเข้าสำเร็จแล้ว (มีเลข e-Survey = มีเรื่องใน EMCS) แต่หน้าฟอร์มไม่ขึ้น และเปิดเรื่องจากหน้ารายการก็ไม่ได้
+    ผู้เรียก mark ฝั่ง se-survey ว่านำเข้าแล้ว + บอกให้ใช้ "เติมส่วนที่ขาด" — ⛔ ห้ามบอกให้นำเข้าใหม่ (จะได้เรื่องซ้ำ)"""
+
+    def __init__(self, esurvey: str, detail: str = ""):
+        self.esurvey = str(esurvey or "")
+        self.detail = str(detail or "").strip()
+        super().__init__(f"EMCS นำเข้าสำเร็จแล้ว (e-Survey {self.esurvey}) แต่เปิดหน้าฟอร์มกรอกต่อไม่ได้"
+                         + (f" — {self.detail[:200]}" if self.detail else ""))
+
+
 class ImportRejectedError(RuntimeError):
     """EMCS ปัดตกไฟล์ XML ตอนกด "นำเข้าข้อมูล" (ไม่เข้าหน้าฟอร์ม ไม่มี draft เกิดขึ้น) — เช่นข้อมูลยาวเกินขนาดช่อง
     (เคส #241 10/09/69: เลขบัตรผู้ขับขี่ 14 ตัว ช่องรับ 13) · `.rows` = ตารางที่แปลแล้ว · `.text` = ข้อความดิบของ EMCS
@@ -1775,9 +1794,15 @@ def _wait_import_dialog(driver, timeout: float = 60.0):
                 raise
         full = ""
         try:
+            # resultCode "2" (รูปแบบไฟล์ไม่ถูกต้อง) ใส่รายละเอียดใน <textarea> — innerText ไม่รวมค่าใน textarea
+            # (เคส #975 09/10/69 ได้แค่หัวเรื่อง "กรุณาตรวจสอบรายละเอียดดังนี้" ไม่มีรายละเอียด) → ต่อท้ายก่อนปุ่ม OK
             full = driver.execute_script(
                 "var m=document.querySelector('.swal-modal,.sweet-alert,.swal-overlay');"
-                "if(!m||!m.getClientRects().length)return '';return m.innerText||'';") or ""
+                "if(!m||!m.getClientRects().length)return '';var t=m.innerText||'';"
+                "var x=[];m.querySelectorAll('textarea').forEach(function(a){"
+                "var v=String(a.value||a.textContent||'').trim();if(v)x.push(v);});"
+                "if(x.length)t=t.replace(/\\s*OK\\s*$/,'')+'\\n'+x.join('\\n')+'\\nOK';"
+                "return t;") or ""
         except Exception:
             full = ""
         if full.strip():
@@ -1818,6 +1843,32 @@ def _wait_import_dialog(driver, timeout: float = 60.0):
     return "", native
 
 
+def _reopen_imported_draft(driver, cfg, data: ClaimData, esurvey: str, main_url: str = ""):
+    """นำเข้าสำเร็จ (ได้เลข e-Survey) แต่หน้าฟอร์มไม่ขึ้นเอง → เก็บภาพหน้าจอไว้ดูสาเหตุ แล้วเปิดเรื่องนั้นจากหน้ารายการ
+    (ค้นเลขเคลม → กดเลข e-Survey → รอ btnUpdate — ทางเดียวกับ fill_existing_report) ให้ผู้เรียกกรอกต่อตามปกติ
+    เปิดไม่ได้ = ImportedFormError — ผู้เรียก mark นำเข้าแล้ว + บอกให้ใช้ "เติมส่วนที่ขาด" """
+    log(f"   ⚠️ EMCS นำเข้าสำเร็จแล้ว (e-Survey {esurvey}) แต่หน้าฟอร์มไม่ขึ้น — เปิดเรื่องนี้จากหน้ารายการแทน")
+    try:
+        save_debug_snapshot(driver, Path(cfg.runs_dir) / "logs", tag=f"error_import_form_{data.claim_value}")
+    except Exception:
+        pass
+    try:
+        if main_url:
+            driver.get(main_url)
+        try:
+            wait_visible(driver, By.ID, "txtRef_Claim_No", 20)
+        except TimeoutException:
+            login(driver, cfg)          # session หลุด/ไม่รู้หน้ารายการ → ล็อกอินใหม่ (เข้าหน้ารายการเอง)
+        reports = find_existing_reports(driver, data.claim_value)
+        if not any(r.get("esurvey") == esurvey for r in reports):
+            raise RuntimeError(f"ค้นเลขเคลม {data.claim_value} แล้วไม่เจอเรื่อง {esurvey} ในหน้ารายการ")
+        wait_clickable(driver, By.XPATH, f"//a[normalize-space(text())='{esurvey}']", 20).click()
+        wait_visible(driver, By.ID, "btnUpdate", 40)
+    except Exception as e:
+        raise ImportedFormError(esurvey, f"{type(e).__name__}: {str(e).strip()[:160]}") from e
+    log(f"   ✓ เปิดเรื่อง {esurvey} จากหน้ารายการแล้ว — กรอกต่อตามปกติ")
+
+
 def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) -> str:
     """นำเข้า SURV_REPORT XML เข้า EMCS แทนการกรอกฟอร์มหลักเอง (ปุ่ม imbFileImport_XML)
 
@@ -1838,6 +1889,7 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
     xml_path = xml_path.resolve()
     log(f"EMCS: นำเข้าข้อมูลแบบ XML — {xml_path.name}")
 
+    main_url = driver.current_url if "frmMainPage.aspx" in driver.current_url else ""
     wait_clickable(driver, By.ID, "imbFileImport_XML").click()
     wait_present(driver, By.ID, "inpImport", 30)        # frmFileImportXML โหลดแล้ว
     # รหัสบริษัท: ผู้เรียกส่ง insurer_code มา (resolve จากชื่อบริษัทของเคส) — ไม่งั้น fallback
@@ -1911,13 +1963,24 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
     elif swal:
         log(f"   [import] {swal[:200]}")
 
+    # EMCS บอก "สำเร็จ" + เลข e-Survey = มีเรื่องใน EMCS แล้ว (ลบไม่ได้) — จดเลขไว้ก่อนทำอะไรต่อ
+    # ขั้นไหนพังหลังจากนี้ ผู้เรียก mark ฝั่ง se-survey ด้วยเลขนี้ (กันกดนำเข้าซ้ำได้เรื่องที่สอง)
+    done_no = import_success_esurvey(swal_full or swal)
+    if done_no:
+        fill_imported.last_draft_esurvey = done_no
+
     # ต้องเข้าหน้าฟอร์ม (frmSurvey) จริง — ไม่งั้น import ล้มเหลว
     try:
         WebDriverWait(driver, 30).until(
             lambda d: "frmSurvey.aspx" in d.current_url)
-        wait_visible(driver, By.ID, "btnUpdate", 20)
+        wait_visible(driver, By.ID, "btnUpdate", 40 if done_no else 20)
     except TimeoutException as e:
         msg = (swal_full or swal or "").strip()
+        if done_no:
+            # นำเข้าสำเร็จแต่หน้าฟอร์มไม่ขึ้นเอง (เคส #1441 #1410 09/10/69 — ปกติขึ้นใน 1 วิ) → เปิดเรื่องจากหน้ารายการ
+            # ทางเดียวกับโหมด "เติมส่วนที่ขาด" แล้วกรอกต่อตามปกติ · เปิดไม่ได้ = ImportedFormError (ไม่ใช่ "ปัดตก")
+            _reopen_imported_draft(driver, cfg, data, done_no, main_url)
+            return done_no
         if msg:
             # EMCS ตอบเหตุผลมาแล้ว (ตาราง "ข้อมูลนำเข้ามีขนาดเกิน" ฯลฯ) = ข้อมูลต้นทางผิด ไม่ใช่บอทพัง
             # → error ชนิดเฉพาะ ผู้เรียกโชว์สะอาด ๆ ไม่ต้องพ่น traceback (เคส #241 10/09/69)
@@ -5986,6 +6049,8 @@ def fill_imported(driver, cfg, data: ClaimData, images_folder=None,
     ประเภทเคลม/บริษัท/กรมธรรม์ (import ตั้งให้แล้ว) + บันทึกหน้าหลักด้วย btnUpdate
     ข้อดี: popup ความเสียหายเป็น free-text 20 ช่อง (vs cmdNewReport 8) → รองรับ >8
     ได้ดีกว่าเมื่อชิ้นส่วน match checklist ไม่ได้ / import ลดงานกรอกฟอร์มหลักลงมาก"""
+    # เลข draft ของงานก่อนในโปรเซสเดียวกัน (โหมดสถานีวนหลายงาน) ต้องไม่ค้างมา — ค้าง = พังแล้ว mark เลขผิดเคส
+    fill_imported.last_draft_esurvey = ""
     # งานต่อเนื่อง (มีเรื่องเดิม + invoice ใหม่) → ใช้ flow เดิม (ไม่ import — แก้ครั้งถัดไป)
     if not force_new:
         searched = True

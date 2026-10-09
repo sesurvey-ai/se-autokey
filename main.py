@@ -1695,6 +1695,20 @@ def run_sesurvey_import(cfg, args):
         except Exception:
             pass
         return
+    except emcs.ImportedFormError as e:
+        # EMCS นำเข้าสำเร็จแล้ว (มีเลข e-Survey) แต่หน้าฟอร์มไม่ขึ้นและเปิดจากหน้ารายการไม่ได้ — ⛔ ไม่ใช่ "ปัดตก"
+        # (เคส #1441 #1410 09/10/69: บอทเคยบอกปัดตก + ให้นำเข้าใหม่ ทั้งที่เรื่องอยู่ใน EMCS แล้ว)
+        # mark ฝั่ง se-survey ให้ตรงความจริง แล้วบอกทางกรอกต่อ · exit 2 ให้การ์ดขึ้น ❌
+        log("")
+        log(f"⛔ {e}")
+        _mark_emcs_imported(cfg, case_id, hdrs, e.esurvey)
+        log(f"   → เรื่อง {e.esurvey} อยู่ใน EMCS แล้ว ห้ามกดนำเข้าใหม่ · กรอกต่อด้วยปุ่ม \"เติมส่วนที่ขาด\" ที่แถวเคสนี้ "
+            "(เอาติ๊ก \"ซ่อนที่นำเข้าแล้ว\" ออกก่อน) แล้วตรวจบน EMCS + กดส่งงานเอง")
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        sys.exit(2)
     except emcs.ImportRejectedError as e:
         # EMCS ปัดตกไฟล์ตั้งแต่กด "นำเข้าข้อมูล" (ยังไม่มี draft) = ข้อมูลบนเว็บผิด ไม่ใช่บอทพัง — แสดงสะอาด
         # ไม่พ่น traceback (เคส #241 10/09/69: เลขบัตรผู้ขับขี่ 14 ตัว ช่องรับ 13) · หน้าเว็บได้ marker →
