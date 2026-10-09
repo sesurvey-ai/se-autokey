@@ -556,6 +556,7 @@ def check_sesurvey_case(case_id: str):
         if not str(d.driver_title or "").strip():
             warnings.append("ไม่มีคำนำหน้าผู้ขับขี่ (บอทจะลองอนุมานจากชื่อผู้เอาประกัน)")
         blockers += _id_length_blockers(rep)
+        blockers += _policy_length_blockers(rep)
         blockers += _vehicle_blockers(rep, url, token)
         blockers += _damage_level_blockers(rep)
         # งานต่อเนื่อง (13/09/69): meta ของเคสบอก "ครั้งที่" (visit_no จากตัวดึงงาน/งานครั้งถัดไป) — บอกคนก่อนกด
@@ -719,6 +720,24 @@ def _id_length_blockers(rep: dict) -> list:
     for i, p in enumerate(rep.get("injured_persons") or [], 1):
         if isinstance(p, dict):
             chk(f"เลขบัตรผู้บาดเจ็บคนที่ {i}", p.get("cid"), 20)
+    return out
+
+
+def _policy_length_blockers(rep: dict) -> list:
+    """เลขกรมธรรม์ที่ตัดขีด/ช่องว่างแล้วยังเกิน 30 ตัว (ช่อง EMCS รับ 30 · เกิน = ไฟล์ปัดตกทั้งไฟล์ — 09/10/69 เคลม 2026013177918)
+    เลขเกิน 30 ที่ตัดแล้วพอดี ระบบตัดให้เองตอนส่ง (backend xmlExport + emcs_policy_no) ไม่กั้น · เว็บกั้นอนุมัติไว้แล้ว ตรงนี้กันเคสที่อนุมัติไปก่อนมีด่าน"""
+    from autokey.emcs import EMCS_POLICY_MAX, emcs_policy_no
+    out = []
+
+    def chk(label, val):
+        fit = emcs_policy_no(val)
+        if len(fit) > EMCS_POLICY_MAX:
+            out.append(f"{label} ยาว {len(fit)} ตัวแม้ตัดขีด/ช่องว่างแล้ว ('{fit}') — ช่อง EMCS รับ {EMCS_POLICY_MAX} ตัว "
+                       "นำเข้าไฟล์ไม่ผ่านทั้งไฟล์ แก้บนเว็บ se-survey ก่อน")
+    chk("เลขกรมธรรม์รถประกัน", rep.get("policy_no"))
+    for i, o in enumerate(rep.get("opposing_parties") or [], 1):
+        if isinstance(o, dict):
+            chk(f"เลขกรมธรรม์คู่กรณีคันที่ {i}", o.get("policy_no"))
     return out
 
 

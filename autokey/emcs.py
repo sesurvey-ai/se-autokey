@@ -313,6 +313,51 @@ def _plate(s: str) -> str:
     return re.sub(r"[^0-9A-Za-z\u0e01-\u0e59]", "", "".join(toks))
 
 
+# \u0e0a\u0e48\u0e2d\u0e07\u0e40\u0e25\u0e02\u0e01\u0e23\u0e21\u0e18\u0e23\u0e23\u0e21\u0e4c\u0e02\u0e2d\u0e07 EMCS \u0e23\u0e31\u0e1a 30 \u0e15\u0e31\u0e27 \u2014 txtAcc_Policy_No / txtPolicyNo maxlength=30 (\u0e1e\u0e34\u0e21\u0e1e\u0e4c\u0e40\u0e01\u0e34\u0e19 = \u0e0a\u0e48\u0e2d\u0e07\u0e15\u0e31\u0e14\u0e17\u0e49\u0e32\u0e22\u0e17\u0e34\u0e49\u0e07\u0e40\u0e07\u0e35\u0e22\u0e1a \u0e46)
+# \u0e41\u0e25\u0e30\u0e44\u0e1f\u0e25\u0e4c XML \u0e17\u0e35\u0e48 ACC_POLICY_NO/POLICYNO \u0e40\u0e01\u0e34\u0e19 = \u0e1b\u0e31\u0e14\u0e15\u0e01\u0e17\u0e31\u0e49\u0e07\u0e44\u0e1f\u0e25\u0e4c (\u0e40\u0e04\u0e25\u0e21 2026013177918 \u0e04\u0e39\u0e48\u0e01\u0e23\u0e13\u0e35\u0e08\u0e32\u0e01 ISURVEY 32 \u0e15\u0e31\u0e27 08/10/69)
+EMCS_POLICY_MAX = 30
+
+
+def emcs_policy_no(v) -> str:
+    """\u0e40\u0e25\u0e02\u0e01\u0e23\u0e21\u0e18\u0e23\u0e23\u0e21\u0e4c\u0e41\u0e1a\u0e1a\u0e17\u0e35\u0e48 EMCS \u0e23\u0e31\u0e1a (user \u0e40\u0e04\u0e32\u0e30 09/10/69): \u0e40\u0e01\u0e34\u0e19 30 \u0e15\u0e31\u0e27 \u2192 \u0e15\u0e31\u0e14\u0e02\u0e35\u0e14\u0e01\u0e31\u0e1a\u0e0a\u0e48\u0e2d\u0e07\u0e27\u0e48\u0e32\u0e07\u0e2d\u0e2d\u0e01 (\u0e15\u0e31\u0e27\u0e2d\u0e31\u0e01\u0e29\u0e23/\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02\u0e04\u0e23\u0e1a\u0e17\u0e38\u0e01\u0e15\u0e31\u0e27)
+    \u00b7 \u0e44\u0e21\u0e48\u0e40\u0e01\u0e34\u0e19 = \u0e15\u0e32\u0e21\u0e40\u0e14\u0e34\u0e21 \u00b7 \u0e15\u0e31\u0e14\u0e41\u0e25\u0e49\u0e27\u0e22\u0e31\u0e07\u0e40\u0e01\u0e34\u0e19 = \u0e04\u0e37\u0e19\u0e15\u0e32\u0e21\u0e19\u0e31\u0e49\u0e19 \u0e44\u0e21\u0e48\u0e15\u0e31\u0e14\u0e17\u0e49\u0e32\u0e22 (\u0e40\u0e25\u0e02\u0e08\u0e30\u0e1c\u0e34\u0e14 \u2014 \u0e40\u0e27\u0e47\u0e1a\u0e01\u0e31\u0e49\u0e19\u0e2d\u0e19\u0e38\u0e21\u0e31\u0e15\u0e34\u0e44\u0e27\u0e49 \u0e14\u0e48\u0e32\u0e19\u0e01\u0e48\u0e2d\u0e19\u0e19\u0e33\u0e40\u0e02\u0e49\u0e32\u0e01\u0e31\u0e49\u0e19\u0e2d\u0e35\u0e01\u0e0a\u0e31\u0e49\u0e19)
+    \u26d4 \u0e2a\u0e39\u0e15\u0e23\u0e0b\u0e49\u0e33 3 \u0e17\u0e35\u0e48\u0e15\u0e49\u0e2d\u0e07\u0e15\u0e23\u0e07\u0e01\u0e31\u0e19: backend xmlExport.emcsPolicyNo \u00b7 web caseOptions.emcsPolicyNo \u00b7 \u0e17\u0e35\u0e48\u0e19\u0e35\u0e48 (contract test \u0e25\u0e47\u0e2d\u0e01)"""
+    s = "" if v is None else str(v).strip()
+    return re.sub(r"[\s-]", "", s) if len(s) > EMCS_POLICY_MAX else s
+
+
+def _policy_for_emcs(v, label: str) -> str:
+    """\u0e40\u0e25\u0e02\u0e01\u0e23\u0e21\u0e18\u0e23\u0e23\u0e21\u0e4c\u0e01\u0e48\u0e2d\u0e19\u0e1e\u0e34\u0e21\u0e1e\u0e4c\u0e25\u0e07\u0e0a\u0e48\u0e2d\u0e07 EMCS \u2014 \u0e15\u0e31\u0e14\u0e15\u0e32\u0e21 emcs_policy_no \u0e41\u0e25\u0e49\u0e27\u0e1a\u0e2d\u0e01\u0e43\u0e19 log \u0e27\u0e48\u0e32\u0e15\u0e31\u0e14\u0e2d\u0e30\u0e44\u0e23"""
+    s = "" if v is None else str(v).strip()
+    fit = emcs_policy_no(s)
+    if fit != s:
+        log(f"   \u2702\ufe0f {label} \u0e22\u0e32\u0e27 {len(s)} \u0e15\u0e31\u0e27 \u2014 \u0e0a\u0e48\u0e2d\u0e07 EMCS \u0e23\u0e31\u0e1a {EMCS_POLICY_MAX} \u0e15\u0e31\u0e14\u0e02\u0e35\u0e14/\u0e0a\u0e48\u0e2d\u0e07\u0e27\u0e48\u0e32\u0e07\u0e2d\u0e2d\u0e01\u0e40\u0e2b\u0e25\u0e37\u0e2d {len(fit)} \u0e15\u0e31\u0e27: {fit}")
+    if len(fit) > EMCS_POLICY_MAX:
+        log(f"   \u26a0\ufe0f {label} \u0e22\u0e32\u0e27 {len(fit)} \u0e15\u0e31\u0e27\u0e41\u0e21\u0e49\u0e15\u0e31\u0e14\u0e02\u0e35\u0e14\u0e41\u0e25\u0e49\u0e27 \u2014 \u0e0a\u0e48\u0e2d\u0e07 EMCS \u0e15\u0e31\u0e14\u0e17\u0e49\u0e32\u0e22\u0e40\u0e2b\u0e25\u0e37\u0e2d {EMCS_POLICY_MAX} \u0e15\u0e31\u0e27 \u0e15\u0e23\u0e27\u0e08\u0e40\u0e25\u0e02\u0e1a\u0e19 EMCS \u0e01\u0e48\u0e2d\u0e19\u0e2a\u0e48\u0e07\u0e07\u0e32\u0e19")
+    return fit
+
+
+_POLICY_TAG_RE = re.compile(r"<(ACC_POLICY_NO|POLICYNO)>([^<]*)</\1>")
+
+
+def fit_policy_xml(text: str):
+    """\u0e44\u0e1f\u0e25\u0e4c XML \u0e01\u0e48\u0e2d\u0e19\u0e19\u0e33\u0e40\u0e02\u0e49\u0e32: ACC_POLICY_NO/POLICYNO \u0e17\u0e35\u0e48\u0e40\u0e01\u0e34\u0e19 30 \u2192 \u0e04\u0e48\u0e32\u0e08\u0e32\u0e01 emcs_policy_no \u2014 \u0e04\u0e37\u0e19 (\u0e02\u0e49\u0e2d\u0e04\u0e27\u0e32\u0e21\u0e43\u0e2b\u0e21\u0e48, [(tag, \u0e40\u0e14\u0e34\u0e21, \u0e43\u0e2b\u0e21\u0e48)])
+    \u0e44\u0e1f\u0e25\u0e4c\u0e02\u0e2d\u0e07\u0e40\u0e27\u0e47\u0e1a se-survey \u0e15\u0e31\u0e14\u0e21\u0e32\u0e41\u0e25\u0e49\u0e27\u0e15\u0e31\u0e49\u0e07\u0e41\u0e15\u0e48 backend (\u0e44\u0e21\u0e48\u0e21\u0e35\u0e2d\u0e30\u0e44\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19) \u00b7 \u0e44\u0e1f\u0e25\u0e4c\u0e17\u0e35\u0e48\u0e42\u0e2b\u0e25\u0e14\u0e08\u0e32\u0e01 ISURVEY \u0e2a\u0e48\u0e07\u0e40\u0e25\u0e02\u0e22\u0e32\u0e27\u0e21\u0e32\u0e15\u0e23\u0e07 \u0e46 \u2192 \u0e15\u0e31\u0e14\u0e17\u0e35\u0e48\u0e19\u0e35\u0e48
+    \u0e41\u0e15\u0e30\u0e40\u0e09\u0e1e\u0e32\u0e30 2 tag \u0e19\u0e35\u0e49\u0e41\u0e25\u0e30\u0e40\u0e09\u0e1e\u0e32\u0e30\u0e04\u0e48\u0e32\u0e17\u0e35\u0e48\u0e40\u0e01\u0e34\u0e19 \u0e17\u0e35\u0e48\u0e40\u0e2b\u0e25\u0e37\u0e2d\u0e04\u0e07\u0e17\u0e38\u0e01\u0e15\u0e31\u0e27\u0e2d\u0e31\u0e01\u0e29\u0e23"""
+    from xml.sax.saxutils import escape, unescape
+    changed = []
+
+    def sub(m):
+        val = unescape(m.group(2)).strip()
+        if len(val) <= EMCS_POLICY_MAX:
+            return m.group(0)
+        fit = emcs_policy_no(val)
+        changed.append((m.group(1), val, fit))
+        return f"<{m.group(1)}>{escape(fit)}</{m.group(1)}>"
+
+    return _POLICY_TAG_RE.sub(sub, str(text or "")), changed
+
+
 def resolve_loss_type(data, requested: str) -> str:
     """เลือกค่า 'ลักษณะความเสียหาย' (ddlLoss_ID) เมื่อ requested='auto'
 
@@ -757,7 +802,7 @@ def fill_third_parties(driver, data: ClaimData):
         else:
             fuzzy_select(driver, p + "ddlHave_Insurance", insurer,
                          label=f"บริษัทประกันคู่กรณี {n + 1}")
-            set_text(driver, p + "txtPolicyNo", _dash(policy_no))
+            set_text(driver, p + "txtPolicyNo", _dash(_policy_for_emcs(policy_no, f"เลขกรมธรรม์คู่กรณี {n + 1}")))
             set_text(driver, p + "txtPolicy_Type", _dash(insure_type))  # ประกันประเภท
             set_text(driver, p + "txtClaimNo", _dash(claim_no))
 
@@ -1819,6 +1864,19 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
         except Exception as _e:
             log(f"   ⚠️ patch INSURERBRID ไม่สำเร็จ: {_e}")
 
+    # เลขกรมธรรม์เกิน 30 ตัว = EMCS ปัดตกทั้งไฟล์ → ตัดขีด/ช่องว่าง (09/10/69 เคลม 2026013177918)
+    # ไฟล์จากเว็บ se-survey ตัดมาแล้ว — ตรงนี้กันไฟล์ของ ISURVEY (แท็บ นำเข้า XML(จบงาน)) ที่ส่งเลขยาวมาตรง ๆ
+    try:
+        _t = xml_path.read_text(encoding="utf-8", errors="replace")
+        _new, _changed = fit_policy_xml(_t)
+        if _changed:
+            xml_path.write_text(_new, encoding="utf-8")
+            for _tag, _old, _fit in _changed:
+                log(f"   ✂️ เลขกรมธรรม์ในไฟล์ ({_tag}) ยาว {len(_old)} ตัว — ช่อง EMCS รับ {EMCS_POLICY_MAX} "
+                    f"ตัดขีด/ช่องว่างออกเหลือ {len(_fit)} ตัว: {_fit}")
+    except Exception as _e:
+        log(f"   ⚠️ ตรวจความยาวเลขกรมธรรม์ในไฟล์ไม่สำเร็จ: {_e}")
+
     # แนบไฟล์ แล้ว "ยืนยันว่าติดจริง" ก่อนกดนำเข้า (กัน import ทั้งที่ไฟล์ไม่ติด → EMCS สร้างเรื่องเปล่า)
     # หมายเหตุสำคัญ: EMCS มี change handler validate นามสกุล — รับเฉพาะ .txt เท่านั้น
     # ไฟล์นามสกุลอื่น (เช่น .xml) จะโดน $("#inpImport").val("") ล้างทิ้งทันที + swal เตือน
@@ -2123,8 +2181,9 @@ def fill_policy(driver, data: ClaimData):
         set_text(driver, "txtPrb_Number", _dash(data.prb_number))
     elif str(data.prb_number or "").strip():
         log("   – มีเลข พ.ร.บ. แต่ EMCS ไม่ได้ติ๊ก 'มี พ.ร.บ.' → ข้ามช่องนี้ หัวหน้าติ๊กเองได้")
-    set_text(driver, "txtAcc_Policy_No", data.policy_value)
-    _warn_format(driver, "txtAcc_Policy_No", data.policy_value, "กรมธรรม์เลขที่")
+    policy_value = _policy_for_emcs(data.policy_value, "กรมธรรม์เลขที่")   # เกิน 30 ตัดขีด/ช่องว่าง (09/10/69)
+    set_text(driver, "txtAcc_Policy_No", policy_value)
+    _warn_format(driver, "txtAcc_Policy_No", policy_value, "กรมธรรม์เลขที่")
     set_text(driver, "wuCale_Policy_Start_txtCalendar", to_buddhist_date(data.effective_date))
     set_text(driver, "wuCale_Policy_End_txtCalendar", to_buddhist_date(data.expiry_date))
     set_text(driver, "txtAssured_Name", data.insure_name)
