@@ -57,7 +57,9 @@ from .claim_data import (  # noqa: F401
     age_from_date,
     birth_placeholder_if_this_year,
     name_or_unknown,
+    normalize_hour24,
     parse_real_date,
+    roll_hour24,
     CLAIM_TYPE_NAMES,
     DRY_CLAIM_TYPE,
     THAI_TITLES,
@@ -356,6 +358,26 @@ def fit_policy_xml(text: str):
         return f"<{m.group(1)}>{escape(fit)}</{m.group(1)}>"
 
     return _POLICY_TAG_RE.sub(sub, str(text or "")), changed
+
+
+_XML_HOUR24_RE = re.compile(r">(\d{4}-\d{1,2}-\d{1,2})[ T]24:(\d{1,2})(?::(\d{1,2}))?<")
+
+
+def fit_hour24_xml(text: str):
+    """ไฟล์ XML ก่อนนำเข้า: ค่าวันเวลา "2026-09-25 24:18:00" → "2026-09-26 00:18:00" — คืน (ข้อความใหม่, [(เดิม, ใหม่)])
+    EMCS ปัดตกทั้งไฟล์เมื่อชั่วโมงเป็น 24 ("…not supported in calendar GregorianCalendar" — เคลม 2026013079700 09/10/69)
+    ไฟล์ของเว็บ se-survey ปรับมาแล้วตั้งแต่ backend · ไฟล์ที่โหลดจาก ISURVEY (แท็บ นำเข้า XML(จบงาน)) ส่ง 24:xx มาตรง ๆ ได้ → ปรับที่นี่"""
+    changed = []
+
+    def sub(m):
+        nd, nt = roll_hour24(m.group(1), f"24:{m.group(2)}" + (f":{m.group(3)}" if m.group(3) else ""))
+        if nt.startswith("24:"):
+            return m.group(0)
+        new = f">{nd} {nt}<"
+        changed.append((m.group(0)[1:-1], new[1:-1]))
+        return new
+
+    return _XML_HOUR24_RE.sub(sub, str(text or "")), changed
 
 
 def resolve_loss_type(data, requested: str) -> str:
@@ -1929,6 +1951,17 @@ def import_xml_report(driver, cfg, data: ClaimData, insurer_code: str = None) ->
     except Exception as _e:
         log(f"   ⚠️ ตรวจความยาวเลขกรมธรรม์ในไฟล์ไม่สำเร็จ: {_e}")
 
+    # เวลา 24:xx = EMCS ปัดตกทั้งไฟล์ → 00:xx ของวันถัดไป (09/10/69 เคลม 2026013079700 · ไฟล์จาก ISURVEY ส่งมาตรง ๆ ได้)
+    try:
+        _t = xml_path.read_text(encoding="utf-8", errors="replace")
+        _new, _changed = fit_hour24_xml(_t)
+        if _changed:
+            xml_path.write_text(_new, encoding="utf-8")
+            for _old, _fit in _changed:
+                log(f"   ⏰ เวลาในไฟล์ {_old} — EMCS ไม่รับชั่วโมง 24 ปรับเป็น {_fit} (หลังเที่ยงคืน = วันถัดไป)")
+    except Exception as _e:
+        log(f"   ⚠️ ตรวจเวลา 24:xx ในไฟล์ไม่สำเร็จ: {_e}")
+
     # แนบไฟล์ แล้ว "ยืนยันว่าติดจริง" ก่อนกดนำเข้า (กัน import ทั้งที่ไฟล์ไม่ติด → EMCS สร้างเรื่องเปล่า)
     # หมายเหตุสำคัญ: EMCS มี change handler validate นามสกุล — รับเฉพาะ .txt เท่านั้น
     # ไฟล์นามสกุลอื่น (เช่น .xml) จะโดน $("#inpImport").val("") ล้างทิ้งทันที + swal เตือน
@@ -2669,6 +2702,10 @@ def _pause_for_survey_times(driver, data) -> bool:
 def fill_accident(driver, data: ClaimData, loss_type: str = "เคลมแห้ง"):
     log("EMCS: กรอกรายละเอียดอุบัติเหตุ")
     wait_visible(driver, By.ID, "wuCale_Acc_Date_txtCalendar")
+    # ช่องชั่วโมง EMCS ไม่รับ 24 — ISURVEY ส่ง "24:18" มาได้ (เคลม 2026013079700 09/10/69) → 00:18 วันถัดไป
+    # แก้ใน data ตรง ๆ ก่อนพิมพ์ ตัวตรวจกลับหลังบันทึกจะได้เทียบกับค่าเดียวกัน
+    for _n in normalize_hour24(data):
+        log(f"   ⏰ {_n} (EMCS ไม่รับชั่วโมง 24 — หลังเที่ยงคืน = วันถัดไป)")
 
     # วัน-เวลาเกิดเหตุ
     set_text(driver, "wuCale_Acc_Date_txtCalendar", to_buddhist_date(data.acc_date))

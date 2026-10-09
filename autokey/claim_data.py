@@ -754,3 +754,84 @@ def age_from_date(s, today=None) -> str:
     if (t.month, t.day) < (mo, d):
         a -= 1
     return str(a) if 0 < a < 130 else ""
+
+# ── เวลา "24:MM" (09/10/69) ──────────────────────────────────────────────────────────────
+# ISURVEY รับเวลา "24:18" (เคลม 2026013079700: สำรวจเสร็จ 25/09/2569 24:18) แต่ EMCS ไม่รับชั่วโมง 24 —
+# ไฟล์ XML ปัดตกทั้งไฟล์ ("The DateTime represented by the string is not supported in calendar GregorianCalendar")
+# และช่องชั่วโมงบนฟอร์มก็ไม่รับ → 24:MM = MM นาทีหลังเที่ยงคืน = 00:MM ของวันถัดไป (ค่าเดียวกัน)
+# ⛔ กติกาเดียวกับ se-survey backend (xmlExport parseSe/rollMidnight) — ปรับตรงนี้ต้องปรับที่นั่น
+_HOUR24_RE = re.compile(r"^24:(\d{1,2})(?::(\d{1,2}))?$")
+
+
+def _next_day(date_str: str) -> str:
+    """วันถัดไปในรูปแบบเดิม (dd/mm/yyyy พ.ศ./ค.ศ. หรือ yyyy-mm-dd) — อ่านไม่ออก/ไม่ใช่วันจริง = '' """
+    from datetime import date, timedelta
+    s = str(date_str or "").strip()
+    m = _THAI_DATE_RE.match(s)
+    iso = False
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        m = re.match(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})\s*$", s)
+        if not m:
+            return ""
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        iso = True
+    if y < 100:
+        return ""
+    be = y >= 2400
+    try:
+        n = date(y - 543 if be else y, mo, d) + timedelta(days=1)
+    except ValueError:
+        return ""
+    ny = n.year + 543 if be else n.year
+    return f"{ny}-{n.month:02d}-{n.day:02d}" if iso else f"{n.day:02d}/{n.month:02d}/{ny}"
+
+
+def roll_hour24(date_str, time_str):
+    """(วัน, "24:MM") → (วันถัดไป, "00:MM") — ไม่ใช่ 24:MM / นาทีเกิน 59 / อ่านวันไม่ออก = คืนเดิม"""
+    m = _HOUR24_RE.match(str(time_str or "").strip())
+    if not m or int(m.group(1)) > 59 or (m.group(2) and int(m.group(2)) > 59):
+        return date_str, time_str
+    nd = _next_day(date_str)
+    if not nd:
+        return date_str, time_str
+    return nd, f"00:{int(m.group(1)):02d}" + (f":{int(m.group(2)):02d}" if m.group(2) else "")
+
+
+def roll_hour24_dt(v: str) -> str:
+    """ค่ารวม 'dd/mm/yyyy|24:MM' (แบบที่ se-survey เก็บ) → 'วันถัดไป|00:MM' · ค่าอื่นคืนเดิม"""
+    s = str(v or "")
+    if "|" not in s:
+        return v
+    d, t = s.split("|", 1)
+    nd, nt = roll_hour24(d.strip(), t.strip())
+    return v if (nd, nt) == (d.strip(), t.strip()) else f"{nd}|{nt}"
+
+
+HOUR24_PAIRS = (
+    ("acc_date", "acc_time", "เวลาเกิดเหตุ"),
+    ("call_date", "call_time", "เวลาลูกค้าแจ้ง"),
+    ("noti_date", "noti_time", "เวลารับแจ้ง"),
+    ("arrive_date", "arrive_time", "เวลาถึงที่เกิดเหตุ"),
+    ("finish_date", "finish_time", "เวลาสำรวจภัยเสร็จ"),
+)
+
+
+def normalize_hour24(d) -> list:
+    """ปรับเวลา 24:MM ทุกจังหวะของเคสเป็น 00:MM วันถัดไป (แก้ใน ClaimData ตรง ๆ) — คืนข้อความว่าปรับอะไรไว้ลง log"""
+    notes = []
+    for df, tf, label in HOUR24_PAIRS:
+        od, ot = getattr(d, df, ""), getattr(d, tf, "")
+        nd, nt = roll_hour24(od, ot)
+        if (nd, nt) != (od, ot):
+            setattr(d, df, nd)
+            setattr(d, tf, nt)
+            notes.append(f"{label} {od} {ot} → {nd} {nt}")
+    for f, label in (("police_date", "เวลาแจ้งความ"), ("followup_date", "เวลานัดหมาย")):
+        ov = getattr(d, f, "")
+        nv = roll_hour24_dt(ov)
+        if nv != ov:
+            setattr(d, f, nv)
+            notes.append(f"{label} {str(ov).replace('|', ' ')} → {str(nv).replace('|', ' ')}")
+    return notes
