@@ -4266,8 +4266,9 @@ check("คู่กรณี: กรุงเทพ = แขวง/เขต/ก
 # ---- ตัวดึงงาน: กติกาช่องความเห็นตามครั้งที่ (user เคาะ 22/09/69, v1.1.33) ----
 _pc = __import__("autokey.pull_core", fromlist=["pull_case"])
 _src_pc = _inspect.getsource(_pc)
-check("pull_core เรียก apply_visit_rules ทั้งเคสอ้างอิง (หลังรู้ round) และใบหลัก (หลัง pull_references) ก่อน POST",
-      _src_pc.count("apply_visit_rules(payload, ") == 2
+check("pull_core เรียก apply_visit_rules ทั้งเคสอ้างอิง (หลังรู้ round) ใบหลัก (หลัง pull_references) และอัปเดตงานติดตาม ก่อน POST",
+      _src_pc.count("apply_visit_rules(payload, ") == 3   # 09/10/69 +refresh_case (งานติดตาม — ครั้งที่จาก backend)
+      and _src_pc.index("apply_visit_rules(payload, visit_no)", _src_pc.index("def refresh_case(")) < _src_pc.index('/refresh", payload=payload)')
       and _src_pc.index('apply_visit_rules(payload, it["round"])') < _src_pc.index('payload["reference"] = {')
       and _src_pc.index("apply_visit_rules(payload, visit_no)") < _src_pc.rindex('"/api/integrations/cases/import", payload=payload)'))
 

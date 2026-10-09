@@ -101,7 +101,8 @@ def service(monkeypatch):
     port = srv.server_address[1]
 
     def post(path, body):
-        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode("utf-8"),
+        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}",
+                                     data=b"" if body is None else json.dumps(body).encode("utf-8"),
                                      headers={"X-Service-Token": "t", "Content-Type": "application/json"}, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
@@ -149,5 +150,6 @@ def test_preview_photo_needs_token(service, monkeypatch):
     j = json.loads(post("/preview", {"username": "u", "password": "p", "claim": "2026013199999",
                                      "survey_no": "SEABI-110261000777"})[2])
     monkeypatch.setattr(pull_service, "TOKEN", "other")                 # token ไม่ตรง = 401 เหมือนเส้นอื่น
-    assert post("/preview-photo", {"pid": j["pid"], "i": 0})[0] == 401
+    # ส่ง body ว่าง — service ตอบ 401 ก่อนอ่าน body (ส่ง body ค้างไว้ = connection reset แบบสุ่มในเทส)
+    assert post("/preview-photo", None)[0] == 401
     assert "/preview" in pull_service.CENTRAL_PATHS and "/preview-photo" not in pull_service.CENTRAL_PATHS

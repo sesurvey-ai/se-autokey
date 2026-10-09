@@ -45,6 +45,20 @@ CLOSED_STATUS_ID = "100"
 REVIEW_STATUS_ID = "40"
 
 
+def status_kind(status_id, status_name="") -> str:
+    """ประเภทสถานะ ISURVEY ของงาน "ติดตาม" (user สั่ง 09/10/69) — review = รอตรวจข้อมูล (40) · closed = จบงาน (100) ·
+    cancelled = ยกเลิกเคลม/ไม่รับงาน (99/60 ชุดเดียวกับ survey_order.EXCLUDED_STATUS) · working = ที่เหลือ (ช่างยังทำงานอยู่)
+    ⛔ backend ตัดสินด้วยกติกาเดียวกัน (isurveyPull.service isurveyStatusKind) — แก้ที่นี่ต้องแก้ที่นั่น"""
+    sid, name = _txt(status_id), _txt(status_name)
+    if sid == REVIEW_STATUS_ID or name == ISURVEY_STATUS_PENDING:
+        return "review"
+    if sid == CLOSED_STATUS_ID or name == "จบงาน":
+        return "closed"
+    if sid in survey_order.EXCLUDED_STATUS or "ยกเลิก" in name or "ไม่รับงาน" in name:
+        return "cancelled"
+    return "working"
+
+
 class OpenRoundError(RuntimeError):
     """ครั้งก่อนหน้ายังไม่จบงานบน ISURVEY และยังไม่มีในเว็บ — ต้องดึงใบนั้นเข้าตรวจก่อน (ข้อความอ่านได้ ส่งกลับหน้าเว็บตรง ๆ)"""
 
@@ -346,12 +360,76 @@ def preview_case(api: ISurveyAPI, claim: str, survey_no: str) -> dict:
     case = api.find_case(claim, survey_no)
     cid = case["caseID"]
     st_id = str(case.get("sttcase_ID") or "").strip()
-    try:
-        st_name = api.master("masterStatus", "sttcase_ID", "stt_desc").get(st_id, st_id)
-    except Exception:
-        st_name = st_id
-    return {"status_id": st_id, "status_name": st_name, "data": build_case(api, cid, case),
+    return {"status_id": st_id, "status_name": _status_name(api, st_id), "data": build_case(api, cid, case),
             "photos": list_photos(api, cid)}
+
+
+def _status_name(api: ISurveyAPI, status_id: str) -> str:
+    """ชื่อสถานะไทยจาก masterStatus · อ่านไม่ได้ = รหัสเดิม"""
+    try:
+        return _txt(api.master("masterStatus", "sttcase_ID", "stt_desc").get(status_id, status_id))
+    except Exception:
+        return _txt(status_id)
+
+
+# ── งาน "ติดตาม" (user สั่ง 09/10/69): ดึงงานที่ช่างยังทำอยู่เข้าเว็บแบบดูอย่างเดียว แล้วอัปเดตเองเมื่อสถานะเปลี่ยน ──
+#: เช็คสถานะได้สูงสุดกี่เคลมต่อรอบ (backend ส่งเคสที่เช็คนานที่สุดมาก่อน)
+STATUS_CHECK_LIMIT = 50
+
+
+def job_statuses(api: ISurveyAPI, items: list) -> dict:
+    """สถานะปัจจุบันของงานติดตาม (ตัวเช็คทุก 15 นาทีของ backend) — ถาม ISURVEY **1 ครั้งต่อเลขเคลม** (listcases) อ่านอย่างเดียว
+    items = [{claim, survey_no}] · คืน {เลขเซอร์เวย์: {status_id, status_name}} · หาไม่เจอ/เคลมที่ถามพลาด = ไม่มีใน dict (ผู้เรียกข้าม)"""
+    claims: list[str] = []
+    for it in (items or [])[:STATUS_CHECK_LIMIT]:
+        c = _txt((it or {}).get("claim"))
+        if c and c not in claims:
+            claims.append(c)
+    out: dict = {}
+    for c in claims:
+        try:
+            for j in api.list_claim_jobs(c):
+                sn = _txt(j.get("survey_no"))
+                if sn:
+                    out[sn] = {"status_id": _txt(j.get("sttcase_ID")), "status_name": _txt(j.get("status_name"))}
+        except Exception:   # noqa: BLE001 — เคลมเดียวพลาดไม่ล้มทั้งรอบ (รอบหน้าลองใหม่)
+            continue
+    return out
+
+
+def refresh_case(api: ISurveyAPI, claim: str, survey_no: str, case_id, sesurvey_url: str, token: str,
+                 visit_no=None, before_post=None) -> tuple[dict | None, str | None]:
+    """อัปเดตเคส "ติดตาม" จาก ISURVEY — อ่านใหม่ทั้งใบ (ชุดเดียวกับ pull_case) + สถานะปัจจุบัน ส่งให้ backend เขียนทับ
+    (เคสติดตามแก้บนเว็บไม่ได้ จึงทับได้ทั้งใบ ไม่มีของหัวหน้าหาย) แล้วเติมรูปที่ยังไม่มี · คืน (result, error) ไม่ raise
+    backend ตัดสินจากสถานะ: ยังทำงาน = ติดตามต่อ · รอตรวจข้อมูล = เข้าคิวรอตรวจ · จบงาน = เคสอ้างอิง · ยกเลิก = ยกเลิก
+    before_post(): เรียกหลังอ่านครบ ก่อนส่งให้ backend — บัญชีกลางใช้เช็คว่า session ไม่หลุดระหว่างอ่าน (หลุด = ข้อมูลว่างเงียบ ๆ ห้ามทับ)"""
+    prefix = str(survey_no or "").split("-")[0].strip().upper()
+    insurer = INSURER_BY_PREFIX.get(prefix)
+    if not insurer:
+        return None, f"ไม่รู้จักคำนำหน้าเลขเซอร์เวย์ {prefix or '(ว่าง)'}"
+    try:
+        case = api.find_case(claim, survey_no)
+        cid = case["caseID"]
+        st_id = _txt(case.get("sttcase_ID"))
+        payload = build_case(api, cid, case)
+    except Exception as e:
+        return None, f"อ่านงานจาก ISURVEY ไม่ได้: {type(e).__name__}: {e}"
+    payload["insurance_company"] = insurer
+    apply_visit_rules(payload, visit_no)
+    payload["isurvey_status"] = {"id": st_id, "name": _status_name(api, st_id),
+                                 "closed_at": _iso_bkk_dt(case.get("close_datetime"))}
+    if before_post is not None:
+        before_post()
+    data, err = sesurvey_post(sesurvey_url, token, f"/api/integrations/cases/{case_id}/refresh", payload=payload)
+    if err:
+        return None, err
+    result = (data or {}).get("data") or {}
+    ph = _push_photos(api, cid, case_id, sesurvey_url, token, topup=True)
+    counts = ph.pop("isurvey_photo_counts", None)
+    if counts is not None:
+        result["isurvey_photo_counts"] = counts
+    result["photos"] = ph
+    return result, None
 
 
 def pull_references(api: ISurveyAPI, claim: str, survey_no: str, insurer: str, sesurvey_url: str, token: str,
@@ -433,7 +511,7 @@ def pull_references(api: ISurveyAPI, claim: str, survey_no: str, insurer: str, s
 
 def pull_case(api: ISurveyAPI, claim: str, survey_no: str, sesurvey_url: str, token: str,
               created_by: int | None = None, with_photos: bool = True,
-              as_reference: bool = False, before_import=None) -> tuple[dict | None, str | None]:
+              as_reference: bool = False, before_import=None, tracking: bool = False) -> tuple[dict | None, str | None]:
     """ดึงงาน 1 เรื่อง → สร้างเคสบน se-survey (+รูป) — คืน (result, error)
     งานครั้งถัดไป: ดึงครั้งก่อนหน้าที่ยังไม่มีในเว็บมาเป็นเคสอ้างอิงก่อน แล้วใบนี้ได้ visit_no ตามเลขเซอร์เวย์ (13/09/69)
     as_reference=True (ปุ่ม "ดึงเข้า (ดูอย่างเดียว)" จากผลค้นหา — user เคาะ 08/10/69): **เฉพาะงานที่จบงานแล้ว** เข้ามาเป็นเคสอ้างอิง
@@ -455,12 +533,22 @@ def pull_case(api: ISurveyAPI, claim: str, survey_no: str, sesurvey_url: str, to
     st_id = str(case.get("sttcase_ID") or "").strip()
     if as_reference and st_id != CLOSED_STATUS_ID:
         return None, 'ดึงแบบดูอย่างเดียวได้เฉพาะงานที่ "จบงาน" บน ISURVEY แล้ว — งานที่ยังไม่จบใช้ปุ่ม "ดึงเข้า" ตามปกติ'
-    if st_id and st_id not in PULLABLE_STATUS_IDS:
+    # งาน "ติดตาม" (user สั่ง 09/10/69): ช่างยังทำงานอยู่ → เคสดูอย่างเดียว อัปเดตเองเมื่อสถานะบน ISURVEY เปลี่ยน
+    # ช่างส่งงานไปแล้วระหว่างที่หัวหน้ากด (รอตรวจข้อมูล) = ดึงเข้าแบบปกติเลย · จบงาน/ยกเลิก = ไม่มีอะไรให้ติดตาม
+    kind = status_kind(st_id)
+    if tracking and kind == "closed":
+        return None, 'งานนี้ "จบงาน" บน ISURVEY แล้ว — ใช้ปุ่ม "ดึงเข้า (ดูอย่างเดียว)"'
+    if tracking and kind == "cancelled":
+        return None, 'งานนี้ถูกยกเลิกบน ISURVEY แล้ว — ไม่มีอะไรให้ติดตาม (ดูข้อมูลได้ที่ปุ่ม "ดู")'
+    if tracking and kind == "review":
+        tracking = False
+    if st_id and st_id not in PULLABLE_STATUS_IDS and not tracking:
         try:
             st_name = api.master("masterStatus", "sttcase_ID", "stt_desc").get(st_id, st_id)
         except Exception:
             st_name = st_id
-        return None, f'งานนี้สถานะ "{st_name}" บน ISURVEY — ดึงได้เฉพาะ "รอตรวจข้อมูล" หรือ "จบงาน"'
+        return None, (f'งานนี้สถานะ "{st_name}" บน ISURVEY — ดึงเข้าตรวจได้เฉพาะ "รอตรวจข้อมูล" หรือ "จบงาน" '
+                      '(งานที่ช่างยังทำอยู่ใช้ปุ่ม "ดึงเข้า (ติดตาม)")')
     try:
         payload = build_case(api, cid, case)
     except Exception as e:
@@ -487,6 +575,9 @@ def pull_case(api: ISurveyAPI, claim: str, survey_no: str, sesurvey_url: str, to
         # เวลาปิดบน ISURVEY = เวลาที่ถือว่า "ตรวจแล้ว/เข้า EMCS แล้ว" ของเคสอ้างอิง (backend ใช้ closed_at + round เท่านั้น)
         payload["reference"] = {"closed_at": _iso_bkk_dt(case.get("close_datetime")), "round": int(visit_no or 1),
                                 "status": "จบงาน"}
+    if tracking:
+        # backend สร้างเคสสถานะ 'tracking' (ดูอย่างเดียว ไม่เข้าคิวตรวจ ไม่โผล่บนแอปช่าง) + จำสถานะ ISURVEY ไว้เทียบตอนเช็ค
+        payload["tracking"] = {"status_id": st_id, "status_name": _status_name(api, st_id)}
 
     if before_import is not None:
         before_import()
@@ -498,6 +589,7 @@ def pull_case(api: ISurveyAPI, claim: str, survey_no: str, sesurvey_url: str, to
     result["visit_no"] = visit_no
     result["references"] = refs
     result["as_reference"] = bool(as_reference)
+    result["tracking"] = bool(tracking)
 
     if with_photos and case_id:
         ph = _push_photos(api, cid, case_id, sesurvey_url, token)

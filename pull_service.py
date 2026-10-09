@@ -27,6 +27,10 @@ POST (JSON) — ทุกอันต้องมี X-Service-Token:
   /preview     {username, password, claim, survey_no} → {ok, preview: {status_id, status_name, data, photos: [{category, group, name}]}, pid}
                หน้าต่าง "ดูอย่างเดียว" จากผลค้นหา (09/10/69): อ่านงาน+รายการรูปทุกสถานะ ไม่สร้างเคส ไม่บันทึกอะไร · url รูปเก็บไว้ที่นี่ 30 นาที
   /preview-photo {pid, i} → ไฟล์รูปลำดับ i ของหน้าต่างนั้น (image/*) · หมดอายุ = 410 · ไม่ต้องส่งบัญชี (session ผูกกับ pid)
+  งาน "ติดตาม" (09/10/69 — ช่างยังทำอยู่ ดึงเข้าแบบดูอย่างเดียว อัปเดตเองเมื่อสถานะเปลี่ยน):
+  /pull {..., tracking: true} → เคสสถานะติดตาม (ช่างส่งงานแล้ว = ดึงปกติ)
+  /refresh {claim, survey_no, case_id, visit_no?} → อ่านใหม่ทั้งใบ + สถานะ ส่ง backend เขียนทับ (/api/integrations/cases/:id/refresh) + เติมรูป
+  /status {items: [{claim, survey_no}]} → {statuses: {เลขเซอร์เวย์: {status_id, status_name}}} 1 คำขอต่อเลขเคลม (ตัวเช็คทุก 15 นาที)
   /close       {username, password, claim, survey_no, comment?, rates?, checklist?, dry_run?} → {ok, result}
                = กด "ยืนยันการตรวจสอบ" (ปิดงาน → จบงาน) แทนหัวหน้า หลังอนุมัติบนเว็บ (08/09/69) · dry_run ไม่ส่ง = True
   /central/status {} → {ok, central: {state, username, name, logged_in_at, last_ok_at, last_error, paused_until, logins}}
@@ -61,7 +65,7 @@ _CENTRAL_PASSWORD = os.environ.get("ISURVEY_CENTRAL_PASSWORD", "")
 CENTRAL_KEEPALIVE_SEC = int(os.environ.get("ISURVEY_CENTRAL_KEEPALIVE_SEC", "600") or 600)
 #: เส้นที่อ่าน ISURVEY อย่างเดียว ใช้บัญชีกลางได้ (backend ส่ง use_central) · /close (ปิดงาน — ISURVEY ต้องลงชื่อหัวหน้าที่อนุมัติ)
 #: กับ /login-test (ทดสอบบัญชีของหัวหน้าเอง) ใช้บัญชีหัวหน้าเสมอ
-CENTRAL_PATHS = {"/pending", "/rounds", "/search", "/pull", "/photos", "/preview"}
+CENTRAL_PATHS = {"/pending", "/rounds", "/search", "/pull", "/photos", "/preview", "/refresh", "/status"}
 
 # ── หน้าต่าง "ดูอย่างเดียว" (09/10/69): url รูปของงานที่เปิดดูอยู่ที่นี่ — backend/หน้าเว็บได้แค่ pid + ลำดับรูป (กันขอ url อื่นผ่าน service)
 #    เก็บ client ที่อ่านงานไว้ด้วย (บัญชีกลาง = session กลางตัวเดียวกัน · บัญชีหัวหน้า = session ที่ล็อกอินไว้แล้ว ไม่ล็อกอินซ้ำต่อรูป)
@@ -117,7 +121,8 @@ _ACCOUNT_LOCKS_GUARD = threading.Lock()
 #: รอคิวบัญชีเดียวกันได้นานสุด (วินาที) — ต่ำกว่าที่ backend รอเส้นนั้น ให้ตอบข้อความชัด ๆ ก่อนฝั่งนั้นตัดเอง
 #: (backend: /pull /photos 300 · /close 240 · /pending /rounds /search 150 · /login-test 30)
 ACCOUNT_WAIT_SEC = 240
-ACCOUNT_WAIT_BY_PATH = {"/pending": 100, "/rounds": 100, "/search": 100, "/preview": 100, "/close": 200, "/login-test": 20}
+ACCOUNT_WAIT_BY_PATH = {"/pending": 100, "/rounds": 100, "/search": 100, "/preview": 100, "/status": 100,
+                        "/close": 200, "/login-test": 20}
 
 
 CENTRAL = isurvey_central.CentralSession(
@@ -285,14 +290,39 @@ class Handler(BaseHTTPRequestHandler):
                 created_by = body.get("created_by")
                 kw = dict(created_by=int(created_by) if created_by else None,
                           with_photos=bool(body.get("with_photos", True)),
-                          as_reference=bool(body.get("as_reference", False)))
+                          as_reference=bool(body.get("as_reference", False)),
+                          tracking=bool(body.get("tracking", False)))
                 result, err = (_pull_central(make, claim, survey_no, kw) if central else
                                pull_core.pull_case(make(), claim, survey_no, SESURVEY_URL, SESURVEY_TOKEN, **kw))
                 if err:
                     return 502, {"ok": False, "error": err}
                 _log(f"[pull] {who}: เคลม {claim} → เคส #{(result or {}).get('caseId')}"
-                     + (" (อ้างอิง ดูอย่างเดียว)" if body.get("as_reference") else ""))
+                     + (" (อ้างอิง ดูอย่างเดียว)" if body.get("as_reference") else "")
+                     + (" (ติดตาม)" if (result or {}).get("tracking") else ""))
                 return 200, {"ok": True, "result": result}
+            if path == "/refresh":
+                # อัปเดตเคส "ติดตาม" (09/10/69) — ตัวเช็คทุก 15 นาที/ปุ่ม "อัปเดต" บนหน้าเคส · backend กันเองว่าเคสยังติดตามอยู่
+                if not SESURVEY_TOKEN:
+                    return 503, {"ok": False, "error": "service ยังไม่ได้ตั้ง SESURVEY_API_TOKEN"}
+                claim = str(body.get("claim") or "").strip()
+                survey_no = str(body.get("survey_no") or "").strip()
+                case_id = body.get("case_id")
+                if not claim or not survey_no or not case_id:
+                    return 400, {"ok": False, "error": "ต้องมีเลขเคลม เลขเซอร์เวย์ และเลขเคส"}
+                visit_no = body.get("visit_no")
+                result, err = (_refresh_central(make, claim, survey_no, int(case_id), visit_no) if central else
+                               pull_core.refresh_case(make(), claim, survey_no, int(case_id), SESURVEY_URL, SESURVEY_TOKEN,
+                                                      visit_no=visit_no))
+                if err:
+                    return 502, {"ok": False, "error": err}
+                _log(f"[refresh] {who}: เคลม {claim} → เคส #{case_id} {(result or {}).get('transition')} "
+                     f"({(result or {}).get('isurvey_status_name')})")
+                return 200, {"ok": True, "result": result}
+            if path == "/status":
+                items = body.get("items") if isinstance(body.get("items"), list) else []
+                code, out = _read(make, central, lambda api: (200, {"ok": True, "statuses": pull_core.job_statuses(api, items)}))
+                _log(f"[status] {who}: {len(items)} งาน → พบ {len(out.get('statuses') or {})}")
+                return code, out
             if path == "/photos":
                 # "ดึงรูปเพิ่มจาก ISURVEY" ให้เคสเดิม (22/09/69) · backend เป็นคนตัดสินว่าเคสยังรับรูปได้ไหม (ยังไม่เข้า EMCS)
                 if not SESURVEY_TOKEN:
@@ -395,6 +425,29 @@ def _pull_central(make, claim: str, survey_no: str, kw: dict) -> tuple[dict | No
                 + (f" (+{extra.get('added')})" if not extra.get("error") else f" แต่ไม่สำเร็จ: {extra.get('error')}"))
         return result, None
     return None, "ISURVEY session หลุดระหว่างอ่านงาน 2 ครั้งติด — ยังไม่ได้สร้างเคส ลองใหม่อีกครั้งในอีกสักครู่"
+
+
+def _refresh_central(make, claim: str, survey_no: str, case_id: int, visit_no) -> tuple[dict | None, str | None]:
+    """อัปเดตเคสติดตามด้วยบัญชีกลาง — ⛔ เขียนทับทั้งใบ จึงต้องอ่านด้วย session เดียวตลอดก่อนส่ง (หลุดกลางทาง ISURVEY ตอบ
+    คู่กรณี/ชิ้นส่วนว่างเงียบ ๆ → ทับข้อมูลดีด้วยของว่าง) · ไม่ต่อเนื่อง = อ่านใหม่ทั้งใบ 1 รอบ แบบ _pull_central"""
+    for attempt in (1, 2):
+        api = make(verify=attempt > 1)
+
+        def before_post(api=api):
+            if not CENTRAL.intact(api):
+                raise _SessionBroke()
+
+        try:
+            result, err = pull_core.refresh_case(api, claim, survey_no, case_id, SESURVEY_URL, SESURVEY_TOKEN,
+                                                 visit_no=visit_no, before_post=before_post)
+        except _SessionBroke:
+            _log(f"[central] session ไม่ต่อเนื่องระหว่างอ่านเคลม {claim} — อ่านใหม่ก่อนอัปเดตเคส #{case_id}")
+            continue
+        if err and attempt == 1 and not CENTRAL.intact(api):
+            _log(f"[central] อัปเดตเคส #{case_id} พังระหว่าง session หลุด — อ่านใหม่อีกรอบ")
+            continue
+        return result, err
+    return None, "ISURVEY session หลุดระหว่างอ่านงาน 2 ครั้งติด — ยังไม่ได้อัปเดต ลองใหม่อีกครั้งในอีกสักครู่"
 
 
 def main() -> None:
