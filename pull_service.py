@@ -24,6 +24,9 @@ POST (JSON) — ทุกอันต้องมี X-Service-Token:
   /search      {username, password, q} → {ok, cases: [...], rounds: {...}, capped}
                ค้นงานด้วยเลขเคลม/เลขรับแจ้ง/เลขเซอร์เวย์ ช่องเดียวกับหน้าตรวจงาน ISURVEY (08/10/69) · อ่านอย่างเดียว
   /rounds      {username, password, claims: [...]} → {ok, rounds: {claim: [{survey_no, round, status_name}]}}  (ครั้งที่ของทุกใบในเคลม)
+  /preview     {username, password, claim, survey_no} → {ok, preview: {status_id, status_name, data, photos: [{category, group, name}]}, pid}
+               หน้าต่าง "ดูอย่างเดียว" จากผลค้นหา (09/10/69): อ่านงาน+รายการรูปทุกสถานะ ไม่สร้างเคส ไม่บันทึกอะไร · url รูปเก็บไว้ที่นี่ 30 นาที
+  /preview-photo {pid, i} → ไฟล์รูปลำดับ i ของหน้าต่างนั้น (image/*) · หมดอายุ = 410 · ไม่ต้องส่งบัญชี (session ผูกกับ pid)
   /close       {username, password, claim, survey_no, comment?, rates?, checklist?, dry_run?} → {ok, result}
                = กด "ยืนยันการตรวจสอบ" (ปิดงาน → จบงาน) แทนหัวหน้า หลังอนุมัติบนเว็บ (08/09/69) · dry_run ไม่ส่ง = True
   /central/status {} → {ok, central: {state, username, name, logged_in_at, last_ok_at, last_error, paused_until, logins}}
@@ -36,8 +39,10 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import secrets
 import sys
 import threading
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -56,7 +61,47 @@ _CENTRAL_PASSWORD = os.environ.get("ISURVEY_CENTRAL_PASSWORD", "")
 CENTRAL_KEEPALIVE_SEC = int(os.environ.get("ISURVEY_CENTRAL_KEEPALIVE_SEC", "600") or 600)
 #: เส้นที่อ่าน ISURVEY อย่างเดียว ใช้บัญชีกลางได้ (backend ส่ง use_central) · /close (ปิดงาน — ISURVEY ต้องลงชื่อหัวหน้าที่อนุมัติ)
 #: กับ /login-test (ทดสอบบัญชีของหัวหน้าเอง) ใช้บัญชีหัวหน้าเสมอ
-CENTRAL_PATHS = {"/pending", "/rounds", "/search", "/pull", "/photos"}
+CENTRAL_PATHS = {"/pending", "/rounds", "/search", "/pull", "/photos", "/preview"}
+
+# ── หน้าต่าง "ดูอย่างเดียว" (09/10/69): url รูปของงานที่เปิดดูอยู่ที่นี่ — backend/หน้าเว็บได้แค่ pid + ลำดับรูป (กันขอ url อื่นผ่าน service)
+#    เก็บ client ที่อ่านงานไว้ด้วย (บัญชีกลาง = session กลางตัวเดียวกัน · บัญชีหัวหน้า = session ที่ล็อกอินไว้แล้ว ไม่ล็อกอินซ้ำต่อรูป)
+PREVIEW_TTL_SEC = 1800
+_PREVIEWS: dict[str, dict] = {}
+_PREVIEWS_GUARD = threading.Lock()
+
+
+def _preview_put(api, photos: list) -> str:
+    pid = secrets.token_urlsafe(16)
+    now = time.time()
+    with _PREVIEWS_GUARD:
+        for k in [k for k, v in _PREVIEWS.items() if v["expires"] < now]:
+            del _PREVIEWS[k]
+        _PREVIEWS[pid] = {"api": api, "urls": [p["url"] for p in photos], "expires": now + PREVIEW_TTL_SEC}
+    return pid
+
+
+def _preview_photo(pid: str, i) -> tuple[int, dict | None, bytes | None, str]:
+    """รูปลำดับ i ของหน้าต่าง pid → (code, error-json|None, bytes|None, content-type)"""
+    try:
+        i = int(i)
+    except (TypeError, ValueError):
+        return 400, {"ok": False, "error": "ต้องมีลำดับรูป"}, None, ""
+    with _PREVIEWS_GUARD:
+        pv = _PREVIEWS.get(str(pid or ""))
+    if not pv or pv["expires"] < time.time():
+        return 410, {"ok": False, "error": "หน้าต่างดูอย่างเดียวหมดอายุ — ปิดแล้วเปิดใหม่"}, None, ""
+    if not 0 <= i < len(pv["urls"]):
+        return 404, {"ok": False, "error": "ไม่มีรูปลำดับนี้"}, None, ""
+    api = pv["api"]
+    try:
+        r = api.s.get(f"{api._host}/{pv['urls'][i].lstrip('/')}", timeout=60)
+    except Exception as e:
+        return 502, {"ok": False, "error": f"โหลดรูปจาก ISURVEY ไม่ได้: {type(e).__name__}"}, None, ""
+    ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    if r.status_code != 200 or not r.content or not ctype.startswith("image/"):
+        # session หลุด = ISURVEY ตอบหน้า HTML แทนรูป — ไม่ส่งต่อ
+        return 502, {"ok": False, "error": f"ISURVEY ไม่ได้ส่งรูปมา ({r.status_code}) — ปิดหน้าต่างแล้วเปิดใหม่"}, None, ""
+    return 200, None, r.content, ctype
 
 
 def _log(msg: str) -> None:
@@ -72,7 +117,7 @@ _ACCOUNT_LOCKS_GUARD = threading.Lock()
 #: รอคิวบัญชีเดียวกันได้นานสุด (วินาที) — ต่ำกว่าที่ backend รอเส้นนั้น ให้ตอบข้อความชัด ๆ ก่อนฝั่งนั้นตัดเอง
 #: (backend: /pull /photos 300 · /close 240 · /pending /rounds /search 150 · /login-test 30)
 ACCOUNT_WAIT_SEC = 240
-ACCOUNT_WAIT_BY_PATH = {"/pending": 100, "/rounds": 100, "/search": 100, "/close": 200, "/login-test": 20}
+ACCOUNT_WAIT_BY_PATH = {"/pending": 100, "/rounds": 100, "/search": 100, "/preview": 100, "/close": 200, "/login-test": 20}
 
 
 CENTRAL = isurvey_central.CentralSession(
@@ -105,6 +150,16 @@ class Handler(BaseHTTPRequestHandler):
             # backend ตัดสายไปก่อน (รอเกินเวลาของมัน) — ไม่ต้องพ่น traceback (08/10/69)
             _log(f"[pull] {self.path.split('?')[0]} ตอบไม่ทัน — backend ตัดสายไปก่อน ({code})")
 
+    def _send_bytes(self, data: bytes, ctype: str) -> None:
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            _log("[pull] /preview-photo ตอบไม่ทัน — backend ตัดสายไปก่อน")
+
     def _authed(self) -> bool:
         got = self.headers.get("X-Service-Token", "")
         return bool(TOKEN) and hmac.compare_digest(got, TOKEN)
@@ -131,6 +186,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, "test": {"ok": True}, "central": CENTRAL.test()})
             except isurvey_central.CentralUnavailable as e:
                 return self._send(200, {"ok": True, "test": {"ok": False, "error": str(e)}, "central": CENTRAL.status()})
+        if path == "/preview-photo":
+            # รูปของหน้าต่างดูอย่างเดียว — session ผูกกับ pid ตั้งแต่ /preview (ไม่ต้องใช้บัญชี ไม่เข้าคิวบัญชี)
+            code, err, data, ctype = _preview_photo(body.get("pid"), body.get("i"))
+            return self._send(code, err) if err else self._send_bytes(data, ctype)
         username = str(body.get("username") or "").strip()
         password = str(body.get("password") or "")
         # งานอ่าน ISURVEY → บัญชีกลาง (ไม่เตะ session หัวหน้า · 08/10/69) · ใช้ไม่ได้ = ถอยไปบัญชีหัวหน้าที่ส่งมาด้วย (ถ้ามี)
@@ -197,6 +256,25 @@ class Handler(BaseHTTPRequestHandler):
                 code, out = _read(make, central, lambda api: (200, {"ok": True, **pull_core.search_jobs(api, q)}))
                 _log(f"[search] {who}: {len(out.get('cases') or [])} แถว{' (ครบ 50 — ตัด)' if out.get('capped') else ''}")
                 return code, out
+            if path == "/preview":
+                # หน้าต่าง "ดูอย่างเดียว" จากผลค้นหา (user สั่ง 09/10/69): ข้อมูล+รายการรูปจาก ISURVEY ทุกสถานะ — ไม่สร้างเคส ไม่บันทึกอะไร
+                # หน้ารูป/คู่กรณีตอบ "ว่าง" เงียบ ๆ ตอน session หลุด → เช็คความต่อเนื่องแบบงานดึงรูป (check_intact)
+                claim = str(body.get("claim") or "").strip()
+                if not claim:
+                    return 400, {"ok": False, "error": "ต้องมีเลขเคลม"}
+                survey_no = str(body.get("survey_no") or "").strip()
+                used = {}
+
+                def read_preview(api):
+                    used["api"] = api
+                    return 200, pull_core.preview_case(api, claim, survey_no)
+
+                _, out = _read(make, central, read_preview, check_intact=True)
+                photos = out.pop("photos", [])
+                pid = _preview_put(used["api"], photos)
+                out["photos"] = [{"category": p["category"], "group": p["group"], "name": p["name"]} for p in photos]
+                _log(f"[preview] {who}: เคลม {claim} {survey_no} สถานะ {out.get('status_name')} · รูป {len(photos)}")
+                return 200, {"ok": True, "preview": out, "pid": pid}
             if path == "/pull":
                 if not SESURVEY_TOKEN:
                     return 503, {"ok": False, "error": "service ยังไม่ได้ตั้ง SESURVEY_API_TOKEN"}

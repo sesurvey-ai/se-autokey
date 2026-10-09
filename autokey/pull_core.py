@@ -319,6 +319,41 @@ def refetch_photos(api: ISurveyAPI, claim: str, survey_no: str, case_id, sesurve
     return _push_photos(api, case["caseID"], case_id, sesurvey_url, token, topup=True, exclude_docs=True)
 
 
+# ── หน้าต่าง "ดูอย่างเดียว" จากผลค้นหาบนเว็บ (user สั่ง 09/10/69) ──
+def list_photos(api: ISurveyAPI, isurvey_case_id: str) -> list[dict]:
+    """รายการรูปทุกหมวดของงาน **ไม่โหลดไฟล์** — กันซ้ำด้วย path แบบเดียวกับ download_images
+    คืน [{category, group, name, url}] (url เก็บไว้ฝั่ง service เท่านั้น ไม่ส่งออกไปหน้าเว็บ)"""
+    out, seen = [], set()
+    for t in (1, 2, 3, 4, 5, 6):
+        for im in api.get_images_list(isurvey_case_id, t):
+            name, url = im.get("name"), im.get("url")
+            if not name or not url:
+                continue
+            key = str(url).split("?")[0].lstrip("/")
+            if key in seen:
+                continue
+            seen.add(key)
+            cat = api._img_category(url)
+            out.append({"category": cat, "group": api._img_group(url) if cat.startswith("TP_") else "",
+                        "name": str(name), "url": str(url)})
+    return out
+
+
+def preview_case(api: ISurveyAPI, claim: str, survey_no: str) -> dict:
+    """อ่านงาน 1 ใบจาก ISURVEY มาให้ดู — **ไม่สร้างเคส ไม่บันทึกอะไร ไม่แตะ ISURVEY** · ได้ทุกสถานะ
+    (ช่างยังทำงานอยู่ / ยกเลิก / รอตรวจ / จบงาน) · ข้อมูลชุดเดียวกับที่ "ดึงเข้า" จะสร้างเคส (build_case)
+    คืน {status_id, status_name, data, photos} — photos มี url (ผู้เรียกเก็บไว้ ส่งออกแค่ลำดับ)"""
+    case = api.find_case(claim, survey_no)
+    cid = case["caseID"]
+    st_id = str(case.get("sttcase_ID") or "").strip()
+    try:
+        st_name = api.master("masterStatus", "sttcase_ID", "stt_desc").get(st_id, st_id)
+    except Exception:
+        st_name = st_id
+    return {"status_id": st_id, "status_name": st_name, "data": build_case(api, cid, case),
+            "photos": list_photos(api, cid)}
+
+
 def pull_references(api: ISurveyAPI, claim: str, survey_no: str, insurer: str, sesurvey_url: str, token: str,
                     created_by: int | None = None, with_photos: bool = True,
                     strict: bool = True) -> tuple[list[dict], int | None]:
